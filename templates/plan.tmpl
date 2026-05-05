@@ -1,0 +1,72 @@
+{{/* Template: plan — used by zforge plan */}}
+You are a senior Rust backend engineer.
+
+## Task
+{{task_file}}
+
+## Specification
+{{spec_file}}
+
+## Test Specification
+{{testspec_file}}
+
+## Your Job
+Create a detailed implementation plan.
+Specific enough that another engineer implements without guessing.
+Save to: {{output_file}}
+
+## Output Format
+
+```
+---
+id: "{{task_id}}"
+type: plan
+reviewed: false
+---
+```
+
+## Implementation Steps
+1. [Step]: [what exactly to do]
+   - Files: [list files]
+   - Details: [specific notes]
+
+## Files to Create
+| File | Purpose |
+|------|---------|
+| [path] | [what it does] |
+
+## Files to Modify
+| File | Change | Reason |
+|------|--------|--------|
+
+## Data Model
+### New Types
+```rust
+// Key structs, enums, and traits
+```
+
+### Modified Types
+[What changes and why]
+
+## Test Implementation Guide
+For each test in testspec.md:
+- Test file location
+- Mock/stub strategy (mockall? manual impl?)
+- Key assertions
+
+## Migration & Rollout
+### Database Migrations
+[SQL if needed]
+
+### Kafka Schema Changes
+[Breaking vs non-breaking]
+
+### Rollback Plan
+
+## Risk Assessment
+| Risk | Likelihood | Impact | Mitigation |
+
+{{if patterns}}
+## Reference: Patterns
+{{patterns}}
+{{end}}

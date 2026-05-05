@@ -1,0 +1,71 @@
+{{/* Template: review — used by zforge review */}}
+You are doing a final review of a completed Rust implementation.
+
+## All Artifacts
+
+### Task
+{{task_file}}
+
+### Specification
+{{spec_file}}
+
+### Test Specification
+{{testspec_file}}
+
+### Implementation Plan
+{{plan_file}}
+
+### Verify Results
+{{verify_file}}
+
+## Your Job
+Generate a comprehensive review summary.
+Save to: {{output_file}}
+
+## Output Format
+
+```
+---
+id: "{{task_id}}"
+type: review-summary
+reviewed: false
+---
+```
+
+## Executive Summary
+[2-3 sentences: what was built, outcome]
+
+## Plan vs Reality
+### Matched
+- [item]
+
+### Deviated
+- [item]: [reason]
+
+### Unplanned
+- [item]: [why needed]
+
+## Test Coverage Assessment
+- Test count: [X passed / Y total]
+- Critical paths covered: [yes/gaps]
+- Edge cases: [covered/missing]
+
+## Code Structure Review
+- Types/structs: clear and minimal? [yes/issues]
+- Shared logic: extracted appropriately? [yes/over-engineered/under-extracted]
+- Module organization: easy to navigate? [yes/issues]
+
+## Rust-specific Notes
+- Error handling: [Result usage correct?]
+- Ownership: [any unnecessary clones?]
+- Unsafe: [any unsafe blocks? justified?]
+
+## Patterns Learned
+### New approved patterns (→ memory/patterns.md)
+- [pattern]: [when to use]
+
+### Anti-patterns discovered (→ memory/anti-patterns.md)
+- [anti-pattern]: [what went wrong]
+
+## Recommendations for Next Tasks
+- [recommendation]

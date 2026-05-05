@@ -1,0 +1,52 @@
+{{/* Template: code — used by zforge code */}}
+You are implementing a Rust backend feature.
+
+## Context Files
+Load these files before starting:
+{{context_files}}
+
+## Task
+{{task_file}}
+
+## Specification
+{{spec_file}}
+
+## Test Specification
+{{testspec_file}}
+
+## Implementation Plan
+{{plan_file}}
+
+{{if figma_context}}
+## Design (Figma)
+{{figma_context}}
+{{end}}
+
+{{if patterns}}
+## Approved Patterns (follow these)
+{{patterns}}
+{{end}}
+
+{{if anti_patterns}}
+## Anti-Patterns (avoid these)
+{{anti_patterns}}
+{{end}}
+
+## Instructions
+1. Write failing tests first (from testspec.md)
+2. Implement the feature — organize code by feature, not by layer
+3. Keep related things together: handler, service logic, and data access can live in the same module if they're small
+4. Extract shared logic only when it's actually reused
+5. Run tests — all must pass
+6. Verify coverage meets testspec.md targets
+
+## Constraints
+- Language: Rust ({{language}})
+- Test command: {{test_command}}
+- Organize by feature/concern, not by abstract layers
+- Keep modules small and focused — split when a file gets too large, not before
+- Use Result<T, E> properly — no unwrap() in production code
+- Prefer simple, flat structures over deep hierarchies
+
+## When Done
+Run: zforge verify {{task_id}}

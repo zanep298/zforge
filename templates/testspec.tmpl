@@ -1,0 +1,60 @@
+{{/* Template: testspec — used by zforge testspec */}}
+You are a senior Rust backend engineer practicing TDD.
+
+## Task
+{{task_file}}
+
+## Specification
+{{spec_file}}
+
+## Your Job
+Generate comprehensive test specifications BEFORE implementation.
+This defines WHAT must be tested, not HOW to implement.
+Save to: {{output_file}}
+
+## Output Format
+
+```
+---
+id: "{{task_id}}"
+type: testspec
+reviewed: false
+---
+```
+
+## Unit Tests
+### [ModuleName]
+- [ ] Test: [behavior being tested]
+      Input: [what goes in]
+      Expected: [output or side effect]
+- [ ] Test: [error case]
+      Input: [invalid input]
+      Expected: [specific Err variant]
+
+## Integration Tests
+### [Flow name]
+- [ ] Test: [happy path]
+- [ ] Test: [failure scenario]
+      Dependency: [which external system]
+      Simulate: [what failure — mock/stub strategy]
+      Expected: [degraded behavior]
+
+## Contract Tests
+### gRPC / REST
+- [ ] [method]: schema validation
+- [ ] [method]: backward compatibility
+
+## Performance Tests
+- [ ] [scenario]: [metric] < [target]
+      Load: [concurrent requests/rps]
+      P99 target: [Xms]
+
+## Acceptance Criteria Mapping
+| Criterion | Test Type | Test Name |
+|-----------|-----------|-----------|
+| [criterion] | unit/integration | [fn test_name] |
+
+{{if anti_patterns}}
+## Reference: Anti-Patterns to Avoid
+{{anti_patterns}}
+{{end}}

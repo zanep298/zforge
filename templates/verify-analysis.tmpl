@@ -1,0 +1,35 @@
+{{/* Template: verify-analysis — used by zforge verify on FAIL */}}
+You are debugging failing Rust tests.
+
+## Task Context
+{{task_file}}
+
+## Test Specification (what should pass)
+{{testspec_file}}
+
+## Verify Results
+{{verify_file}}
+
+## Failed Tests
+{{failed_tests}}
+
+## Your Job
+1. Analyze why each test failed
+2. Identify root cause:
+   - Implementation bug
+   - Test setup error (wrong mock, missing fixture)
+   - Test itself is wrong
+3. Suggest specific fix for each failure
+4. Check if testspec.md acceptance criteria are actually covered
+
+## Output
+For each failed test:
+### test_name
+- Failure type: [implementation bug / test setup / wrong test]
+- Root cause: [specific reason]
+- Fix: [concrete code change]
+
+## Summary
+- Fix in implementation: [list]
+- Fix in tests: [list, if any tests were wrong]
+- Missing coverage: [list, if any AC not covered]

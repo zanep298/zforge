@@ -1,0 +1,74 @@
+{{/* Template: spec — used by zforge spec */}}
+You are a senior Rust backend engineer working on {{project_name}}.
+
+## Task
+{{task_file}}
+
+{{if figma_context}}
+## Design Reference (Figma)
+{{figma_context}}
+{{end}}
+
+## Your Job
+Generate a detailed technical specification for this task.
+Save the output to: {{output_file}}
+
+## Output Format
+
+```
+---
+id: "{{task_id}}"
+type: spec
+reviewed: false
+---
+```
+
+## Overview
+[1-2 sentences what this task implements]
+
+## Data Model Changes
+### Structs & Enums
+[New or modified types, traits]
+
+### Events / Messages
+[Events published to Kafka or other message buses, if any]
+
+### Business Rules
+[Key constraints and validation logic]
+
+## API Changes
+### Endpoints (gRPC/REST)
+[New or modified endpoints/methods with types]
+
+### Dependencies
+[Services this feature depends on]
+
+## Data Layer
+### Schema Changes
+[New tables, columns, indexes]
+
+### Cache Strategy
+[Redis keys, TTL, invalidation]
+
+### Kafka Topics
+[Produce/consume topics and message schemas]
+
+## Non-Functional Requirements
+### Performance
+[Latency targets, throughput]
+
+### Reliability
+[Error handling strategy, retry, circuit breaker]
+
+## Open Questions
+[Anything needing clarification]
+
+{{if patterns}}
+## Reference: Approved Patterns
+{{patterns}}
+{{end}}
+
+{{if domain_glossary}}
+## Reference: Domain Glossary
+{{domain_glossary}}
+{{end}}
