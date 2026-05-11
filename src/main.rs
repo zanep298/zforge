@@ -12,7 +12,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "zf", version, about = "TDD-first AI development workflow")]
+#[command(name = "zforge", version, about = "TDD-first AI development workflow")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

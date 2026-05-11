@@ -43,26 +43,26 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/zf dist/
+          cp target/${{ matrix.target }}/release/zforge dist/
           cp README.md LICENSE dist/ 2>/dev/null || true
           cd dist
-          tar czf ../zf-${{ matrix.target }}.tar.gz *
+          tar czf ../zforge-${{ matrix.target }}.tar.gz *
 
       - name: Package (windows)
         if: matrix.archive == 'zip'
         run: |
           mkdir dist
-          copy target\${{ matrix.target }}\release\zf.exe dist\
+          copy target\${{ matrix.target }}\release\zforge.exe dist\
           copy README.md dist\ 2>nul || true
           cd dist
-          7z a ..\zf-${{ matrix.target }}.zip *
+          7z a ..\zforge-${{ matrix.target }}.zip *
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zf-${{ matrix.target }}
+          name: zforge-${{ matrix.target }}
           path: |
-            zf-${{ matrix.target }}.*
+            zforge-${{ matrix.target }}.*
 
   release:
     name: Create Release
@@ -97,9 +97,9 @@ jobs:
       - name: Compute SHA256s
         id: sha
         run: |
-          echo "arm64=$(sha256sum artifacts/zf-aarch64-apple-darwin.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
-          echo "x86_darwin=$(sha256sum artifacts/zf-x86_64-apple-darwin.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
-          echo "linux=$(sha256sum artifacts/zf-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "arm64=$(sha256sum artifacts/zforge-aarch64-apple-darwin.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "x86_darwin=$(sha256sum artifacts/zforge-x86_64-apple-darwin.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux=$(sha256sum artifacts/zforge-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew tap
         uses: actions/checkout@v4

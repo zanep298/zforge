@@ -28,7 +28,7 @@ const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
 const MCP_JSON: &str = r#"{
   "mcpServers": {
     "zforge": {
-      "command": "zf",
+      "command": "zforge",
       "args": ["mcp"]
     }
   }
@@ -38,7 +38,7 @@ const MCP_JSON: &str = r#"{
 const CLAUDE_SETTINGS_JSON: &str = r#"{
   "permissions": {
     "allow": [
-      "Bash(zf *)",
+      "Bash(zforge *)",
       "mcp__zforge__task_import",
       "mcp__zforge__get_prompt",
       "mcp__zforge__approve",

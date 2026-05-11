@@ -10,7 +10,7 @@ categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.74"
 
 [[bin]]
-name = "zf"
+name = "zforge"
 path = "src/main.rs"
 
 [dependencies]
