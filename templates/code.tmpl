@@ -20,11 +20,10 @@ Open these only if the plan or testspec is ambiguous:
 8. Append a concise implementation summary to {{output_file}}
 
 ## Constraints
-- Language: Rust ({{language}})
+- Language: {{language}}
 - Test command: {{test_command}}
 - Organize by feature/concern, not by abstract layers
 - Keep modules small and focused — split when a file gets too large, not before
-- Use Result<T, E> properly — no unwrap() in production code
 - Prefer simple, flat structures over deep hierarchies
 - Do not open spec.md or task.md unless the approved plan/testspec leaves a gap.
 

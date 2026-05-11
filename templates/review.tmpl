@@ -1,5 +1,5 @@
 {{/* Template: review — used by zforge review */}}
-You are doing a final review of a completed Rust implementation.
+You are doing a final review of a completed {{language}} implementation.
 
 ## Input Files
 {{context_files}}
@@ -42,10 +42,10 @@ reviewed: false
 - Shared logic: extracted appropriately? [yes/over-engineered/under-extracted]
 - Module organization: easy to navigate? [yes/issues]
 
-## Rust-specific Notes
-- Error handling: [Result usage correct?]
-- Ownership: [any unnecessary clones?]
-- Unsafe: [any unsafe blocks? justified?]
+## Language-specific Notes
+- Error handling: [errors propagated correctly?]
+- Idioms: [language conventions followed?]
+- Resource management: [any leaks or unnecessary allocations?]
 
 ## Patterns Learned
 ### New approved patterns (→ memory/patterns.md)

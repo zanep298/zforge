@@ -88,7 +88,7 @@ during each pipeline phase:
 - **Tests first** — write the failing test before any production code
 - **Minimal patch** — only change what is required by the approved spec
 - **No scope creep** — if you need to change something outside the plan, flag it first
-- **No `unwrap()` in production paths** — use `Result<T, E>` and `?`
+- **No silent errors** — propagate errors explicitly; never swallow them
 - **Preserve public interfaces** — do not change signatures or error types unless the spec says so
 
 ---
