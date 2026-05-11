@@ -8,22 +8,12 @@ Works with **Claude Code**, **OpenCode**, and **Codex**.
 
 ## Install
 
-### From source (requires Rust)
+### Homebrew (macOS & Linux) — recommended
 
 ```bash
-cargo install zf
-zf --version
+brew install zanep298/homebrew/zforge
+zforge --version
 ```
-
-Or install the latest from git:
-
-```bash
-cargo install --git https://github.com/zanep298/zforge
-```
-
-### Prebuilt binaries
-
-Download the latest release for your platform from the [releases page](https://github.com/zanep298/zforge/releases), extract it, and move the `zf` binary to a directory in your `PATH` (e.g. `~/.local/bin` or `/usr/local/bin`).
 
 ### Install script (macOS & Linux)
 
@@ -34,7 +24,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/zanep298/
 To install to a custom directory:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/zanep298/zforge/main/install.sh | ZF_INSTALL=$HOME/bin sh
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/zanep298/zforge/main/install.sh | ZFORGE_INSTALL=$HOME/bin sh
+```
+
+### Prebuilt binaries
+
+Download the latest release for your platform from the [releases page](https://github.com/zanep298/zforge/releases), extract it, and move the `zforge` binary to a directory in your `PATH` (e.g. `~/.local/bin` or `/usr/local/bin`).
+
+### From source (requires Rust)
+
+```bash
+cargo install --git https://github.com/zanep298/zforge
+zforge --version
 ```
 
 ## Quick start
@@ -43,59 +44,59 @@ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/zanep298/
 
 ```bash
 # 1. Scaffold + wire Claude Code
-zf init
+zforge init
 
-# 2. Open project in Claude Code — zf MCP server loads automatically
+# 2. Open project in Claude Code — zforge MCP server loads automatically
 
 # 3. Run your first task
-zf task import TASK-001 --title "Your task title"
+zforge task import TASK-001 --title "Your task title"
 # edit tasks/TASK-001/task.md, then ask Claude Code:
-# "run zf spec TASK-001" → review → "zf approve TASK-001 spec" → ...
-zf spec TASK-001
-zf approve TASK-001 spec
-zf testspec TASK-001
-zf approve TASK-001 testspec
-zf plan TASK-001
-zf code TASK-001
-zf verify TASK-001
-zf review TASK-001
+# "run zforge spec TASK-001" → review → "zforge approve TASK-001 spec" → ...
+zforge spec TASK-001
+zforge approve TASK-001 spec
+zforge testspec TASK-001
+zforge approve TASK-001 testspec
+zforge plan TASK-001
+zforge code TASK-001
+zforge verify TASK-001
+zforge review TASK-001
 ```
 
 **Session starter prompt for Claude Code:**
 
 ```
-We're using zforge (zf) for this project. Run `zf status` to see current task
-progress, then help me work through the pipeline. For each phase, run the zf
+We're using zforge for this project. Run `zforge status` to see current task
+progress, then help me work through the pipeline. For each phase, run the zforge
 command, wait for my approval before proceeding, and follow the artifacts in
-tasks/<ID>/. Use the zf MCP tools when available.
+tasks/<ID>/. Use the zforge MCP tools when available.
 ```
 
 ### With OpenCode
 
 ```bash
 # 1. Scaffold shared project files
-zf init
+zforge init
 
-# 2. Open project in OpenCode and register local MCP command `zf mcp`
+# 2. Open project in OpenCode and register local MCP command `zforge mcp`
 
 # 3. Run your first task (same pipeline)
-zf task import TASK-001 --title "Your task title"
+zforge task import TASK-001 --title "Your task title"
 # edit tasks/TASK-001/task.md, then:
-zf spec TASK-001
-zf approve TASK-001 spec
-zf testspec TASK-001
-zf approve TASK-001 testspec
-zf plan TASK-001
-zf code TASK-001
-zf verify TASK-001
-zf review TASK-001
+zforge spec TASK-001
+zforge approve TASK-001 spec
+zforge testspec TASK-001
+zforge approve TASK-001 testspec
+zforge plan TASK-001
+zforge code TASK-001
+zforge verify TASK-001
+zforge review TASK-001
 ```
 
 **Session starter prompt for OpenCode:**
 
 ```
-We're using zforge (zf) for this project. Run `zf status` to see current task
-progress, then help me work through the pipeline. For each phase, run the zf
+We're using zforge for this project. Run `zforge status` to see current task
+progress, then help me work through the pipeline. For each phase, run the zforge
 command, wait for my approval before proceeding, and follow the artifacts in
 tasks/<ID>/. Use the zforge agents in .opencode/ for phase-specific guidance.
 ```
@@ -117,29 +118,29 @@ Figma MCP → figma_context → task import → figma.md → spec prompt
 
 | Command | What it creates |
 |---------|----------------|
-| `zf init` | `.zforge/`, `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` |
+| `zforge init` | `.zforge/`, `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` |
 
 Agents live in `.zforge/agents/` and are linked into `.claude/agents/`.
-The project-local MCP entrypoints use `zf mcp`.
+The project-local MCP entrypoints use `zforge mcp`.
 
 ## All commands
 
 | Command | Description |
 |---------|-------------|
-| `zf init` | Scaffold `.zforge/`, Claude Code files, and local MCP registration |
-| `zf task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`) |
-| `zf spec <ID>` | Generate spec prompt |
-| `zf approve <ID> spec` | Approve spec (human gate) |
-| `zf testspec <ID>` | Generate test spec prompt |
-| `zf approve <ID> testspec` | Approve testspec (human gate) |
-| `zf plan <ID>` | Generate implementation plan prompt |
-| `zf code <ID>` | Generate coding prompt (AI writes tests first) |
-| `zf verify <ID>` | Run tests, record results |
-| `zf review <ID>` | Generate review prompt, extract patterns |
-| `zf status` | Show all task progress |
-| `zf status <ID>` | Show single task status |
-| `zf retry <ID> --from <phase>` | Reset and retry from a phase |
-| `zf mcp` | Start MCP server (stdio) — called by AI tools automatically |
+| `zforge init` | Scaffold `.zforge/`, Claude Code files, and local MCP registration |
+| `zforge task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`) |
+| `zforge spec <ID>` | Generate spec prompt |
+| `zforge approve <ID> spec` | Approve spec (human gate) |
+| `zforge testspec <ID>` | Generate test spec prompt |
+| `zforge approve <ID> testspec` | Approve testspec (human gate) |
+| `zforge plan <ID>` | Generate implementation plan prompt |
+| `zforge code <ID>` | Generate coding prompt (AI writes tests first) |
+| `zforge verify <ID>` | Run tests, record results |
+| `zforge review <ID>` | Generate review prompt, extract patterns |
+| `zforge status` | Show all task progress |
+| `zforge status <ID>` | Show single task status |
+| `zforge retry <ID> --from <phase>` | Reset and retry from a phase |
+| `zforge mcp` | Start MCP server (stdio) — called by AI tools automatically |
 
 ## Documentation
 

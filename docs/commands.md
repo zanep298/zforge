@@ -1,12 +1,12 @@
 # Command Reference
 
-## zf init
+## zforge init
 
 Initialize zforge in the current project.
 
 ```bash
-zf init          # scaffold .zforge/, .mcp.json, CLAUDE.md, and .claude/
-zf init --force  # overwrite existing zforge/Claude Code files
+zforge init          # scaffold .zforge/, .mcp.json, CLAUDE.md, and .claude/
+zforge init --force  # overwrite existing zforge/Claude Code files
 ```
 
 Detects project language automatically from `Cargo.toml`, `go.mod`,
@@ -14,27 +14,27 @@ Detects project language automatically from `Cargo.toml`, `go.mod`,
 
 ---
 
-## zf task import
+## zforge task import
 
 Create a new task from the template.
 
 ```bash
-zf task import                                        # auto-generate ID (TASK-001, TASK-002, ...)
-zf task import TASK-001                               # explicit ID
-zf task import --title "Add health check endpoint"    # auto ID + title
-zf task import TASK-001 --title "Add health check endpoint"
-zf task import TASK-001 --title "..." --domain "api"
+zforge task import                                        # auto-generate ID (TASK-001, TASK-002, ...)
+zforge task import TASK-001                               # explicit ID
+zforge task import --title "Add health check endpoint"    # auto ID + title
+zforge task import TASK-001 --title "Add health check endpoint"
+zforge task import TASK-001 --title "..." --domain "api"
 
 # Import from Jira (fetches summary + description via JIRA_EMAIL / JIRA_API_TOKEN)
-zf task import --jira https://company.atlassian.net/browse/PROJ-123
+zforge task import --jira https://company.atlassian.net/browse/PROJ-123
 
 # UI task: pass Figma design context (pre-fetched via Figma MCP)
-zf task import TASK-001 --title "Login screen" \
+zforge task import TASK-001 --title "Login screen" \
   --figma "https://figma.com/design/FILE/Login?node-id=1" \
   --figma-context "$(cat figma_export.md)"
 ```
 
-When no ID is given, zf scans the tasks directory and assigns the next available
+When no ID is given, zforge scans the tasks directory and assigns the next available
 `TASK-NNN` number. Explicit IDs must match `[A-Z]+-[0-9]+` (e.g. `AUTH-42`).
 
 Creates `tasks/<TASK-ID>/task.md`. For UI tasks with Figma context, also creates
@@ -56,7 +56,7 @@ to fetch design context, then pass it to `task import`:
 **Via CLI:**
 ```bash
 # Fetch from Figma MCP yourself, save to a file, then:
-zf task import TASK-001 \
+zforge task import TASK-001 \
   --figma "https://figma.com/design/FILE/Screen?node-id=42" \
   --figma-context "$(cat figma_node.md)"
 ```
@@ -67,14 +67,14 @@ Empty when no Figma context was provided — no effect on non-UI tasks.
 
 ---
 
-## zf spec
+## zforge spec
 
 Generate a spec prompt and print it to stdout.
 
 ```bash
-zf spec TASK-001          # print prompt (paste into AI)
-zf spec TASK-001 --copy   # copy prompt to clipboard
-zf spec TASK-001 --done   # mark spec phase complete
+zforge spec TASK-001          # print prompt (paste into AI)
+zforge spec TASK-001 --copy   # copy prompt to clipboard
+zforge spec TASK-001 --done   # mark spec phase complete
 ```
 
 **AI writes:** `tasks/TASK-001/spec.md`
@@ -82,15 +82,15 @@ zf spec TASK-001 --done   # mark spec phase complete
 
 ---
 
-## zf approve
+## zforge approve
 
 Human approval gate. Marks an artifact as reviewed.
 
 ```bash
-zf approve TASK-001 spec
-zf approve TASK-001 testspec
-zf approve TASK-001 spec --note "AC looks good"
-zf approve TASK-001 spec --yes    # skip confirmation prompt
+zforge approve TASK-001 spec
+zforge approve TASK-001 testspec
+zforge approve TASK-001 spec --note "AC looks good"
+zforge approve TASK-001 spec --yes    # skip confirmation prompt
 ```
 
 Sets `reviewed: true` in the artifact's YAML frontmatter.
@@ -98,13 +98,13 @@ Downstream phases are blocked until required approvals are in place.
 
 ---
 
-## zf testspec
+## zforge testspec
 
 Generate a test specification prompt.
 
 ```bash
-zf testspec TASK-001
-zf testspec TASK-001 --done
+zforge testspec TASK-001
+zforge testspec TASK-001 --done
 ```
 
 **Requires:** approved `spec.md`
@@ -112,13 +112,13 @@ zf testspec TASK-001 --done
 
 ---
 
-## zf plan
+## zforge plan
 
 Generate an implementation plan prompt.
 
 ```bash
-zf plan TASK-001
-zf plan TASK-001 --done
+zforge plan TASK-001
+zforge plan TASK-001 --done
 ```
 
 **Requires:** approved `spec.md` and `testspec.md`
@@ -126,13 +126,13 @@ zf plan TASK-001 --done
 
 ---
 
-## zf code
+## zforge code
 
 Generate an implementation prompt. AI writes tests first, then production code.
 
 ```bash
-zf code TASK-001
-zf code TASK-001 --done
+zforge code TASK-001
+zforge code TASK-001 --done
 ```
 
 **Requires:** approved `spec.md`, `testspec.md`, and completed `plan.md`
@@ -140,14 +140,14 @@ zf code TASK-001 --done
 
 ---
 
-## zf verify
+## zforge verify
 
 Run the project's test command and record results.
 
 ```bash
-zf verify TASK-001
-zf verify TASK-001 --command "cargo test --features otel"
-zf verify TASK-001 --timeout 120
+zforge verify TASK-001
+zforge verify TASK-001 --command "cargo test --features otel"
+zforge verify TASK-001 --timeout 120
 ```
 
 Runs the `test_command` from `.zforge/config.yaml` by default.
@@ -155,13 +155,13 @@ Records pass/fail to `tasks/TASK-001/verify.md`.
 
 ---
 
-## zf review
+## zforge review
 
 Generate a review prompt. AI checks spec drift and extracts patterns.
 
 ```bash
-zf review TASK-001
-zf review TASK-001 --done
+zforge review TASK-001
+zforge review TASK-001 --done
 ```
 
 **AI writes:** `tasks/TASK-001/review.md`
@@ -169,15 +169,15 @@ zf review TASK-001 --done
 
 ---
 
-## zf status
+## zforge status
 
 Show task progress.
 
 ```bash
-zf status                 # all tasks with phase indicators
-zf status TASK-001        # detailed status for one task
-zf status TASK-001 --json # machine-readable output
-zf status TASK-001 --short
+zforge status                 # all tasks with phase indicators
+zforge status TASK-001        # detailed status for one task
+zforge status TASK-001 --json # machine-readable output
+zforge status TASK-001 --short
 ```
 
 Phase indicators:
@@ -187,15 +187,15 @@ Phase indicators:
 
 ---
 
-## zf retry
+## zforge retry
 
 Reset a task to an earlier phase and redo from there.
 
 ```bash
-zf retry TASK-001 --from spec       # redo everything from spec onward
-zf retry TASK-001 --from testspec   # redo testspec, plan, code, verify, review
-zf retry TASK-001 --from code       # redo code and verify only
-zf retry TASK-001 --from spec --yes # skip confirmation
+zforge retry TASK-001 --from spec       # redo everything from spec onward
+zforge retry TASK-001 --from testspec   # redo testspec, plan, code, verify, review
+zforge retry TASK-001 --from code       # redo code and verify only
+zforge retry TASK-001 --from spec --yes # skip confirmation
 ```
 
 Backs up current artifacts before resetting.
@@ -207,7 +207,7 @@ Backs up current artifacts before resetting.
 | Flag | Description |
 |------|-------------|
 | `--help` | Print help for any command |
-| `--version` | Print zf version |
+| `--version` | Print zforge version |
 
 ---
 

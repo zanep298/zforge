@@ -6,7 +6,7 @@ OpenCode loads automatically at startup.
 
 ## Setup
 
-### 1. Install zf globally
+### 1. Install zforge globally
 
 ```bash
 cargo install --path .
@@ -17,7 +17,7 @@ cargo install --path .
 Run this in your project root:
 
 ```bash
-zf init opencode
+zforge init opencode
 ```
 
 This creates:
@@ -48,13 +48,13 @@ This creates:
 > `~/.claude/rules/`) when available, so your personal standards flow in
 > automatically.
 
-`opencode.json` registers `zf mcp` as a local MCP server so OpenCode's AI
+`opencode.json` registers `zforge mcp` as a local MCP server so OpenCode's AI
 can call zforge tools directly from inside the TUI.
 
 ### 2. Initialize the zforge pipeline
 
 ```bash
-zf init
+zforge init
 ```
 
 This creates `.zforge/` with prompt templates and the memory store.
@@ -64,10 +64,10 @@ This creates `.zforge/` with prompt templates and the memory store.
 ## How it works
 
 When `.opencode/agents/` exists in the project and the `opencode` binary is
-available, `zf` calls OpenCode directly — no copy-paste needed.
+available, `zforge` calls OpenCode directly — no copy-paste needed.
 
 ```
-zf spec TASK-001
+zforge spec TASK-001
      │
      ▼  auto-detects .opencode/agents/spec-agent.md
      │
@@ -84,11 +84,11 @@ zf spec TASK-001
          control returns to your terminal
                │
                ▼
-     zf approve TASK-001 spec   (you review, then approve)
+     zforge approve TASK-001 spec   (you review, then approve)
 ```
 
 **Fallback:** if `opencode` is not installed or `.opencode/` does not exist,
-`zf` prints the prompt to stdout so you can paste it manually.
+`zforge` prints the prompt to stdout so you can paste it manually.
 
 ---
 
@@ -99,7 +99,7 @@ zf spec TASK-001
 #### Step 1 — Import the task
 
 ```bash
-zf task import TASK-001 --title "Implement logging metrics for OpenTelemetry"
+zforge task import TASK-001 --title "Implement logging metrics for OpenTelemetry"
 ```
 
 Open `tasks/TASK-001/task.md` and describe the task:
@@ -129,7 +129,7 @@ configured via the OTLP_ENDPOINT environment variable.
 #### Step 2 — Spec phase
 
 ```bash
-zf spec TASK-001
+zforge spec TASK-001
 ```
 
 zforge detects `.opencode/agents/spec-agent.md` and calls:
@@ -144,7 +144,7 @@ OpenCode runs non-interactively, reads `tasks/TASK-001/task.md`, and writes
 Review `spec.md`, then approve:
 
 ```bash
-zf approve TASK-001 spec
+zforge approve TASK-001 spec
 ```
 
 ---
@@ -152,7 +152,7 @@ zf approve TASK-001 spec
 #### Step 3 — Test spec phase
 
 ```bash
-zf testspec TASK-001
+zforge testspec TASK-001
 ```
 
 Paste prompt into OpenCode → OpenCode writes `tasks/TASK-001/testspec.md`:
@@ -169,7 +169,7 @@ Paste prompt into OpenCode → OpenCode writes `tasks/TASK-001/testspec.md`:
 Approve:
 
 ```bash
-zf approve TASK-001 testspec
+zforge approve TASK-001 testspec
 ```
 
 ---
@@ -177,7 +177,7 @@ zf approve TASK-001 testspec
 #### Step 4 — Plan phase
 
 ```bash
-zf plan TASK-001
+zforge plan TASK-001
 ```
 
 Paste prompt → OpenCode writes `tasks/TASK-001/plan.md` with ordered
@@ -188,7 +188,7 @@ implementation steps, file paths, and function signatures. No code yet.
 #### Step 5 — Code phase
 
 ```bash
-zf code TASK-001
+zforge code TASK-001
 ```
 
 Paste prompt → OpenCode:
@@ -202,19 +202,19 @@ Paste prompt → OpenCode:
 #### Step 6 — Verify
 
 ```bash
-zf verify TASK-001
+zforge verify TASK-001
 ```
 
 zforge runs `cargo test` automatically and shows results. If tests fail,
 copy the failure output back into OpenCode and ask the code-agent to fix it,
-then re-run `zf verify`.
+then re-run `zforge verify`.
 
 ---
 
 #### Step 7 — Review
 
 ```bash
-zf review TASK-001
+zforge review TASK-001
 ```
 
 Paste prompt → OpenCode checks for spec drift, missing coverage, and extracts
@@ -226,7 +226,7 @@ reusable patterns into `.zforge/memory/patterns.md` for future tasks.
 
 ## Running zforge inside OpenCode TUI (MCP)
 
-`zf mcp` starts a stdio MCP server. OpenCode connects to it automatically
+`zforge mcp` starts a stdio MCP server. OpenCode connects to it automatically
 when you open the project, giving its AI access to these tools:
 
 | Tool | What it does |
@@ -261,7 +261,7 @@ You never leave the OpenCode TUI. The entire pipeline runs through conversation.
 
 ### The opencode.json MCP entry
 
-`zf init opencode` generates this automatically:
+`zforge init opencode` generates this automatically:
 
 ```json
 {
@@ -279,14 +279,14 @@ You never leave the OpenCode TUI. The entire pipeline runs through conversation.
   "mcp": {
     "zforge": {
       "type": "local",
-      "command": ["zf", "mcp"],
+      "command": ["zforge", "mcp"],
       "enabled": true
     }
   }
 }
 ```
 
-OpenCode starts `zf mcp` as a subprocess when the project opens and connects
+OpenCode starts `zforge mcp` as a subprocess when the project opens and connects
 via stdio. No separate server management required.
 
 ---
@@ -296,7 +296,7 @@ via stdio. No separate server management required.
 If you add ECC skills to `~/.claude/skills/` and want them reflected:
 
 ```bash
-zf init opencode --force
+zforge init opencode --force
 ```
 
 This overwrites all files in `.opencode/` with the latest content.
@@ -311,17 +311,17 @@ Agent frontmatter had `tools` as a YAML array. Fixed in current version.
 Regenerate:
 
 ```bash
-zf init opencode --force
+zforge init opencode --force
 ```
 
 ### "Configuration is invalid — Unrecognized key: context_files"
 
-Old version of `zf` generated `context_files` which is not a valid OpenCode key.
+Old version of `zforge` generated `context_files` which is not a valid OpenCode key.
 The correct keys are `instructions` (file list) and `skills.paths` (directory list).
 Regenerate:
 
 ```bash
-zf init opencode --force
+zforge init opencode --force
 ```
 
 ### OpenCode does not load instruction files
@@ -357,5 +357,5 @@ cp -r /tmp/ecc/skills/rust-testing ~/.claude/skills/
 Then regenerate:
 
 ```bash
-zf init opencode --force
+zforge init opencode --force
 ```

@@ -11,12 +11,12 @@ task import
     ▼
  spec          ← AI clarifies requirements, defines acceptance criteria
     │
- approve ──── human gate (zf approve TASK-001 spec)
+ approve ──── human gate (zforge approve TASK-001 spec)
     │
     ▼
  testspec      ← AI derives test cases before any code is written
     │
- approve ──── human gate (zf approve TASK-001 testspec)
+ approve ──── human gate (zforge approve TASK-001 testspec)
     │
     ▼
  plan          ← AI writes step-by-step implementation plan
@@ -25,7 +25,7 @@ task import
  code          ← AI writes failing tests first, then minimal implementation
     │
     ▼
- verify        ← zf runs your test command and records results
+ verify        ← zforge runs your test command and records results
     │
     ▼
  review        ← AI checks for spec drift, extracts patterns into memory
@@ -41,15 +41,15 @@ Creates `tasks/<TASK-ID>/task.md` from a template. The task ID is auto-generated
 (`TASK-001`, `TASK-002`, …) unless you supply one explicitly.
 
 ```bash
-zf task import                        # auto ID
-zf task import AUTH-42                # explicit ID
-zf task import --title "My feature"   # auto ID with title pre-filled
+zforge task import                        # auto ID
+zforge task import AUTH-42                # explicit ID
+zforge task import --title "My feature"   # auto ID with title pre-filled
 
 # Jira import
-zf task import --jira https://company.atlassian.net/browse/PROJ-123
+zforge task import --jira https://company.atlassian.net/browse/PROJ-123
 
 # UI task with Figma context
-zf task import TASK-001 --title "Login screen" \
+zforge task import TASK-001 --title "Login screen" \
   --figma "https://figma.com/design/FILE/Login?node-id=1" \
   --figma-context "<output from Figma MCP>"
 ```
@@ -108,7 +108,7 @@ zforge runs your configured test command (e.g. `cargo test`) and records the
 results in `tasks/<TASK-ID>/verify.md`. Pass/fail is shown in the terminal.
 
 If tests fail, copy the failure output back to your AI tool and ask the code-agent
-to fix them. Re-run `zf verify` after each fix attempt.
+to fix them. Re-run `zforge verify` after each fix attempt.
 
 ### review
 
@@ -124,8 +124,8 @@ The review-agent reads all artifacts and the final diff and produces
 ## Approval gates
 
 ```bash
-zf approve TASK-001 spec         # unlocks testspec phase
-zf approve TASK-001 testspec     # unlocks plan and code phases
+zforge approve TASK-001 spec         # unlocks testspec phase
+zforge approve TASK-001 testspec     # unlocks plan and code phases
 ```
 
 Approval sets `reviewed: true` in the artifact's YAML frontmatter. zforge blocks
@@ -134,7 +134,7 @@ downstream phases until both spec and testspec are approved.
 To add a note to an approval:
 
 ```bash
-zf approve TASK-001 spec --note "scope is correct, AC is testable"
+zforge approve TASK-001 spec --note "scope is correct, AC is testable"
 ```
 
 ---
@@ -144,8 +144,8 @@ zf approve TASK-001 spec --note "scope is correct, AC is testable"
 If a phase produced bad output, reset and redo it:
 
 ```bash
-zf retry TASK-001 --from spec       # back to spec, clears everything after it
-zf retry TASK-001 --from testspec   # back to testspec only
+zforge retry TASK-001 --from spec       # back to spec, clears everything after it
+zforge retry TASK-001 --from testspec   # back to testspec only
 ```
 
 ---

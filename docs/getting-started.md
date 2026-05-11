@@ -1,6 +1,6 @@
 # Getting Started
 
-zforge (`zf`) is a TDD-first AI development workflow CLI. It orchestrates a gated
+zforge is a TDD-first AI development workflow CLI. It orchestrates a gated
 pipeline — spec → testspec → plan → code → verify → review — where each phase
 produces a markdown artifact and requires explicit human approval before the next
 phase begins.
@@ -13,7 +13,7 @@ cd zforge
 cargo install --path .
 
 # verify
-zf --version
+zforge --version
 ```
 
 ## Initialize a project
@@ -21,7 +21,7 @@ zf --version
 Run inside any Rust, Go, TypeScript, or Python project:
 
 ```bash
-zf init
+zforge init
 ```
 
 Creates the canonical project structure:
@@ -47,18 +47,18 @@ Edit `.zforge/config.yaml` and set `project.name` before running any tasks.
 
 ## Wire up your AI tool
 
-Run `zf init` after install:
+Run `zforge init` after install:
 
 ### Claude Code
 
 ```bash
-zf init
+zforge init
 ```
 
 Creates:
-- `.mcp.json` — registers `zf mcp` as a project-scoped MCP server (auto-discovered)
+- `.mcp.json` — registers `zforge mcp` as a project-scoped MCP server (auto-discovered)
 - `CLAUDE.md` — project instructions loaded automatically
-- `.claude/settings.json` — pre-approves `zf` commands and MCP tools
+- `.claude/settings.json` — pre-approves `zforge` commands and MCP tools
 - `.claude/agents/*.md` — symlinks to `.zforge/agents/` (no duplication)
 
 Open the project in Claude Code. MCP tools (`task_import`, `get_prompt`, `approve`,
@@ -66,35 +66,35 @@ Open the project in Claude Code. MCP tools (`task_import`, `get_prompt`, `approv
 
 ### OpenCode
 
-Register the local MCP command as `zf mcp` in your OpenCode project config.
+Register the local MCP command as `zforge mcp` in your OpenCode project config.
 See [opencode.md](./opencode.md) for the full guide.
 
 ### Using both
 
-Both tools can call the same local MCP server command: `zf mcp`.
+Both tools can call the same local MCP server command: `zforge mcp`.
 
 ## Your first task
 
 ```bash
 # 1. Import — ID auto-generated (TASK-001, TASK-002, ...)
-zf task import --title "Add health check endpoint"
-# or supply an explicit ID: zf task import AUTH-42 --title "..."
+zforge task import --title "Add health check endpoint"
+# or supply an explicit ID: zforge task import AUTH-42 --title "..."
 
 # 2. Fill in the task description (use the printed path)
 $EDITOR tasks/TASK-001/task.md
 
 # 3. Run the pipeline
-zf spec TASK-001        # generates prompt → paste into AI → AI writes spec.md
-zf approve TASK-001 spec
+zforge spec TASK-001        # generates prompt → paste into AI → AI writes spec.md
+zforge approve TASK-001 spec
 
-zf testspec TASK-001    # AI writes testspec.md
-zf approve TASK-001 testspec
+zforge testspec TASK-001    # AI writes testspec.md
+zforge approve TASK-001 testspec
 
-zf plan TASK-001        # AI writes plan.md
-zf code TASK-001        # AI implements, writes tests first
+zforge plan TASK-001        # AI writes plan.md
+zforge code TASK-001        # AI implements, writes tests first
 
-zf verify TASK-001      # runs your test command automatically
-zf review TASK-001      # AI reviews, extracts patterns into memory
+zforge verify TASK-001      # runs your test command automatically
+zforge review TASK-001      # AI reviews, extracts patterns into memory
 ```
 
 ## Next steps
