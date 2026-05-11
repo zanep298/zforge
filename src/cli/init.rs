@@ -577,7 +577,7 @@ fn symlink_claude_agents(_zforge_agents_dir: &Path, claude_agents_dir: &Path) ->
         #[cfg(not(unix))]
         {
             // Windows: fall back to copy
-            let src = zforge_agents_dir.join(name);
+            let src = _zforge_agents_dir.join(name);
             if src.exists() {
                 std::fs::copy(&src, &link)?;
             }
