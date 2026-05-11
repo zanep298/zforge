@@ -121,7 +121,7 @@ jobs:
 
           version, sha_arm, sha_x86, sha_linux = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
-          path = "Formula/zf.rb"
+          path = "Formula/zforge.rb"
           src  = open(path).read()
 
           src = re.sub(r'version ".*?"', f'version "{version}"', src)
@@ -138,7 +138,7 @@ jobs:
           src = src.replace('sha256 "PLACEHOLDER_SHA256_LINUX"',         f'sha256 "{sha_linux}"')
 
           open(path, "w").write(src)
-          print(f"Updated zf.rb → version={version}")
+          print(f"Updated zforge.rb → version={version}")
           EOF
 
       - name: Commit and push
@@ -146,6 +146,6 @@ jobs:
           cd tap
           git config user.name "zanep298"
           git config user.email "minh.tan2908@gmail.com"
-          git add Formula/zf.rb
-          git commit -m "zf ${{ github.ref_name }}"
+          git add Formula/zforge.rb
+          git commit -m "zforge ${{ github.ref_name }}"
           git push
