@@ -21,11 +21,7 @@ impl Engine {
         Ok(render_template(&template, ctx))
     }
 
-    pub fn render_and_print(
-        &self,
-        template_name: &str,
-        ctx: &PromptContext,
-    ) -> Result<()> {
+    pub fn render_and_print(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
         let rendered = self.render(template_name, ctx)?;
         let sep = "═".repeat(43);
         let thin = "─".repeat(43);
@@ -38,7 +34,7 @@ impl Engine {
         println!("{}", thin.dimmed());
 
         if !ctx.context_files.is_empty() {
-            println!("{} Context files (load in opencode):", "📂".bold());
+            println!("{} Context files (load in your agent):", "📂".bold());
             for f in &ctx.context_files {
                 println!("   {}", f);
             }
@@ -55,11 +51,7 @@ impl Engine {
         Ok(())
     }
 
-    pub fn render_and_copy(
-        &self,
-        template_name: &str,
-        ctx: &PromptContext,
-    ) -> Result<()> {
+    pub fn render_and_copy(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
         self.render_and_print(template_name, ctx)?;
         let rendered = self.render(template_name, ctx)?;
         match arboard::Clipboard::new() {
@@ -72,25 +64,83 @@ impl Engine {
         Ok(())
     }
 
-    /// Auto-detect OpenCode. If `.opencode/agents/<name>-agent.md` exists and the
-    /// `opencode` binary is reachable, run the prompt non-interactively via
-    /// `opencode run`. Otherwise fall back to printing the prompt.
+    /// Auto-detect executor. Try Claude Code first (default), then OpenCode as
+    /// fallback. For each, require both the binary and the corresponding agent
+    /// file (`.claude/agents/<name>-agent.md` or `.opencode/agents/<name>-agent.md`).
+    /// Otherwise fall back to printing the prompt.
     pub fn dispatch(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
         let agent_name = format!("{}-agent", template_name);
+        let cwd = std::env::current_dir()?;
+
+        // Prefer Claude Code
+        if let Some(bin) = find_claude_bin() {
+            let agent_file = cwd
+                .join(".claude")
+                .join("agents")
+                .join(format!("{}.md", agent_name));
+            if agent_file.exists() {
+                return self.render_and_run_claude(template_name, ctx, &bin, &agent_name);
+            }
+        }
+
+        // Fallback: OpenCode
         if let Some(bin) = find_opencode_bin() {
-            let cwd = std::env::current_dir()?;
             let agent_file = cwd
                 .join(".opencode")
                 .join("agents")
                 .join(format!("{}.md", agent_name));
             if agent_file.exists() {
-                return self.render_and_run(template_name, ctx, &bin, &agent_name);
+                return self.render_and_run_opencode(template_name, ctx, &bin, &agent_name);
             }
         }
+
         self.render_and_print(template_name, ctx)
     }
 
-    fn render_and_run(
+    fn render_and_run_claude(
+        &self,
+        template_name: &str,
+        ctx: &PromptContext,
+        claude_bin: &Path,
+        agent_name: &str,
+    ) -> Result<()> {
+        let rendered = self.render(template_name, ctx)?;
+        let sep = "═".repeat(43);
+
+        println!("{}", sep.blue());
+        println!(
+            "  {} › {} › {} {}",
+            "ZFLOW".bold(),
+            template_name,
+            ctx.task_id,
+            "→ claude".dimmed()
+        );
+        println!("{}", sep.blue());
+        println!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
+        println!("  {} output: {}", "📄".bold(), ctx.output_file);
+        println!("{}", sep.blue());
+        println!();
+
+        let status = std::process::Command::new(claude_bin)
+            .arg("-p")
+            .arg(&rendered)
+            .status()
+            .with_context(|| format!("failed to launch claude at {}", claude_bin.display()))?;
+
+        println!();
+        if status.success() {
+            println!("{} Claude finished.", "✓".green().bold());
+            if !ctx.next_command.is_empty() {
+                println!("{}  Next: {}", "⏭".bold(), ctx.next_command);
+            }
+        } else {
+            anyhow::bail!("claude exited with status {}", status.code().unwrap_or(-1));
+        }
+
+        Ok(())
+    }
+
+    fn render_and_run_opencode(
         &self,
         template_name: &str,
         ctx: &PromptContext,
@@ -137,6 +187,27 @@ impl Engine {
 
         Ok(())
     }
+}
+
+/// Locate the `claude` binary. Checks PATH first, then common install paths.
+fn find_claude_bin() -> Option<PathBuf> {
+    if let Ok(output) = std::process::Command::new("which").arg("claude").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        for sub in [".claude/local/claude", ".claude/bin/claude"] {
+            let candidate = home.join(sub);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 /// Locate the `opencode` binary. Checks PATH first, then `~/.opencode/bin/`.
@@ -208,6 +279,16 @@ fn get_var(name: &str, ctx: &PromptContext) -> String {
         "failed_tests" => ctx.failed_tests.clone(),
         "context_files" => ctx.context_files.join("\n"),
         "figma_context" => ctx.figma_context.clone(),
+        "task_ref" => ctx.task_ref.clone(),
+        "spec_ref" => ctx.spec_ref.clone(),
+        "testspec_ref" => ctx.testspec_ref.clone(),
+        "plan_ref" => ctx.plan_ref.clone(),
+        "verify_ref" => ctx.verify_ref.clone(),
+        "figma_ref" => ctx.figma_ref.clone(),
+        "implementation_log_ref" => ctx.implementation_log_ref.clone(),
+        "patterns_ref" => ctx.patterns_ref.clone(),
+        "domain_glossary_ref" => ctx.domain_glossary_ref.clone(),
+        "anti_patterns_ref" => ctx.anti_patterns_ref.clone(),
         _ => String::new(),
     }
 }
@@ -232,6 +313,16 @@ fn replace_vars(s: &str, ctx: &PromptContext) -> String {
         "failed_tests",
         "context_files",
         "figma_context",
+        "task_ref",
+        "spec_ref",
+        "testspec_ref",
+        "plan_ref",
+        "verify_ref",
+        "figma_ref",
+        "implementation_log_ref",
+        "patterns_ref",
+        "domain_glossary_ref",
+        "anti_patterns_ref",
     ];
     for var in variables {
         let token = format!("{{{{{}}}}}", var);
@@ -253,6 +344,16 @@ fn process_conditionals(template: &str, ctx: &PromptContext) -> String {
         "verify_file",
         "context_files",
         "figma_context",
+        "task_ref",
+        "spec_ref",
+        "testspec_ref",
+        "plan_ref",
+        "verify_ref",
+        "figma_ref",
+        "implementation_log_ref",
+        "patterns_ref",
+        "domain_glossary_ref",
+        "anti_patterns_ref",
     ];
 
     for var in variables {

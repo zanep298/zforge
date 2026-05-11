@@ -1,7 +1,7 @@
 ---
 name: testspec-agent
 description: Derives test cases from the approved spec before any implementation
-model: opencode-go/minimax-m2.7
+model: claude-sonnet-4-6
 temperature: 0.2
 ---
 
@@ -30,32 +30,22 @@ type: testspec
 reviewed: false
 ---
 
-## Unit Tests
+## Test Cases
+| Case ID | Scenario | Given | When | Then | Priority |
+|---------|----------|-------|------|------|----------|
+| TC-01 | [behavior being tested] | [concrete starting state or input] | [action] | [observable result] | P0 |
+| TC-02 | [error, rejection, or edge case] | [invalid state or boundary condition] | [action] | [expected error or fallback] | P0 |
 
-### [module or function name]
-- [ ] happy path: [description]
-      Input: [concrete value or state]
-      Expected: [concrete output or behavior]
-- [ ] edge case: [description]
-- [ ] invalid input: [description]
-      Expected: [specific error or rejection]
-
-## Integration Tests
-
-### [flow name]
-- [ ] happy path: [description]
-- [ ] failure case: [which dependency fails, expected degraded behavior]
-
-## Regression Cases
-- [ ] [previously broken behavior that must not regress]
-
-## Auth / Permission Cases (if applicable)
-- [ ] [unauthorized access attempt and expected rejection]
+## Coverage Checklist
+- [what categories are covered for this task]
 
 ## Acceptance Criteria Coverage
-| Criterion from spec | Test name(s) |
-|---------------------|-------------|
-| [criterion] | [test description] |
+| Criterion from spec | Case ID(s) |
+|---------------------|------------|
+| [criterion] | TC-01 |
+
+## Ambiguities / Gaps
+- [AMBIGUOUS: what is missing from the spec]
 ```
 
 ## Constraints
@@ -65,6 +55,8 @@ reviewed: false
 - Call out any spec ambiguity that makes a test case impossible to write
 - Test command for this project: `{{test_command}}`
 - Language: {{language}}
+- Focus on behavior and coverage, not test taxonomy such as unit vs integration
+- Use concrete inputs and expected results whenever the spec provides enough detail
 
 ## Do Not Do
 
@@ -73,3 +65,4 @@ reviewed: false
 - Do not skip negative tests (error cases, invalid inputs, rejected requests)
 - Do not duplicate test cases — each case must cover something distinct
 - Do not let implementation details leak into test descriptions (test behavior, not internals)
+- Do not force every case into categories like unit test or integration test

@@ -64,7 +64,7 @@ Load a skill with `/file .zforge/skills/<name>.md` before starting that phase.
 ## MCP Tools
 
 zforge registers an MCP server (`zf mcp`) that exposes the pipeline as tools.
-Claude Code loads it automatically from `.claude/settings.json`.
+Claude Code discovers it from the project-local `.mcp.json`.
 
 Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`
 

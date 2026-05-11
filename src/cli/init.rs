@@ -25,12 +25,26 @@ const PATTERNS_MD: &str = "# Coding Patterns\n\n## Approved Patterns\n\n## Test 
 const GLOSSARY_MD: &str = "# Domain Glossary\n";
 const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
 
-const CLAUDE_SETTINGS_JSON: &str = r#"{
+const MCP_JSON: &str = r#"{
   "mcpServers": {
     "zforge": {
       "command": "zf",
       "args": ["mcp"]
     }
+  }
+}
+"#;
+
+const CLAUDE_SETTINGS_JSON: &str = r#"{
+  "permissions": {
+    "allow": [
+      "Bash(zf *)",
+      "mcp__zforge__task_import",
+      "mcp__zforge__get_prompt",
+      "mcp__zforge__approve",
+      "mcp__zforge__verify",
+      "mcp__zforge__status"
+    ]
   }
 }
 "#;
@@ -56,7 +70,6 @@ const FALLBACK_SECURITY: &str = "# Security\n\n\
 - Never expose internal errors to end users\n\
 - Run security audits as part of CI (`cargo audit`, etc.)\n";
 
-
 struct InitStats {
     created: usize,
     skipped: usize,
@@ -64,7 +77,10 @@ struct InitStats {
 
 impl InitStats {
     fn new() -> Self {
-        Self { created: 0, skipped: 0 }
+        Self {
+            created: 0,
+            skipped: 0,
+        }
     }
 
     fn record(&mut self, created: bool) {
@@ -83,7 +99,10 @@ pub fn run(force: bool) -> Result<()> {
     let zforge_dir = cwd.join(".zforge");
 
     if zforge_dir.exists() && !force {
-        print!("{} .zforge/ already exists. Overwrite? [y/N] ", "⚠".yellow());
+        print!(
+            "{} .zforge/ already exists. Overwrite? [y/N] ",
+            "⚠".yellow()
+        );
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
@@ -97,8 +116,14 @@ pub fn run(force: bool) -> Result<()> {
 
     // Config
     let config_content = DEFAULT_CONFIG
-        .replace("language: \"rust\"", &format!("language: \"{}\"", detected.language))
-        .replace("test_command: \"cargo test\"", &format!("test_command: \"{}\"", detected.test_command));
+        .replace(
+            "language: \"rust\"",
+            &format!("language: \"{}\"", detected.language),
+        )
+        .replace(
+            "test_command: \"cargo test\"",
+            &format!("test_command: \"{}\"", detected.test_command),
+        );
     let created = write_safe(&zforge_dir.join("config.yaml"), &config_content, force)?;
     stats.record(created);
     print_file_status(created, ".zforge/config.yaml");
@@ -110,9 +135,12 @@ pub fn run(force: bool) -> Result<()> {
         let created = write_safe(&tmpl_dir.join(name), content, force)?;
         stats.record(created);
     }
-    println!("{} .zforge/agents/ — prompt templates", label(stats.created > 0));
+    println!(
+        "{} .zforge/agents/ — prompt templates",
+        label(stats.created > 0)
+    );
 
-    // Agent definitions (.md — for OpenCode)
+    // Agent definitions (.md — loaded by Claude Code via .claude/agents/ symlinks)
     let lang_skills = lang_skill_templates(&detected.language);
     let vars = Vars {
         language: detected.language.clone(),
@@ -124,7 +152,10 @@ pub fn run(force: bool) -> Result<()> {
         let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
         stats.record(created);
     }
-    println!("{} .zforge/agents/ — OpenCode agent definitions", label(stats.created > 0));
+    println!(
+        "{} .zforge/agents/ — Claude Code agent definitions",
+        label(stats.created > 0)
+    );
 
     // Skills (workflow)
     let skills_dir = zforge_dir.join("skills");
@@ -169,9 +200,17 @@ pub fn run(force: bool) -> Result<()> {
     stats.record(created);
     print_file_status(created, ".zforge/README.md");
 
+    // .mcp.json at project root — project-local MCP registration for Claude Code
+    let created = write_safe(&cwd.join(".mcp.json"), MCP_JSON, force)?;
+    stats.record(created);
+    print_file_status(created, ".mcp.json");
+
     // CLAUDE.md at project root — auto-loaded by Claude Code
     let lang_skills_section = build_lang_skills_section(&vars.language, &lang_skills);
-    let vars_with_lang = VarsExt { vars: &vars, lang_skills_section: &lang_skills_section };
+    let vars_with_lang = VarsExt {
+        vars: &vars,
+        lang_skills_section: &lang_skills_section,
+    };
     let claude_md = apply_vars_ext(include_str!("../../templates/CLAUDE.md"), &vars_with_lang);
     let created = write_safe(&cwd.join("CLAUDE.md"), &claude_md, force)?;
     stats.record(created);
@@ -184,7 +223,7 @@ pub fn run(force: bool) -> Result<()> {
         );
     }
 
-    // .claude/settings.json — MCP server registration for Claude Code
+    // .claude/settings.json — Claude Code permissions for zforge commands and MCP tools
     let claude_dir = cwd.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
     let settings_path = claude_dir.join("settings.json");
@@ -196,13 +235,21 @@ pub fn run(force: bool) -> Result<()> {
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
     let agent_count = symlink_claude_agents(&zforge_dir.join("agents"), &claude_agents_dir)?;
-    println!("{} .claude/agents/ — {} symlinks → .zforge/agents/", label(agent_count > 0), agent_count);
+    println!(
+        "{} .claude/agents/ — {} symlinks → .zforge/agents/",
+        label(agent_count > 0),
+        agent_count
+    );
 
     // .claude/rules/ — coding standards (from ~/.claude/rules or bundled fallbacks)
     let claude_rules_dir = claude_dir.join("rules");
     std::fs::create_dir_all(&claude_rules_dir)?;
     let rule_count = install_rules_for_claude(&claude_rules_dir, force, &mut stats)?;
-    println!("{} .claude/rules/ — {} rule files", label(rule_count > 0), rule_count);
+    println!(
+        "{} .claude/rules/ — {} rule files",
+        label(rule_count > 0),
+        rule_count
+    );
 
     // .zforge/tasks/
     let tasks_dir = zforge_dir.join("tasks");
@@ -219,7 +266,8 @@ pub fn run(force: bool) -> Result<()> {
     println!("  1. Edit .zforge/config.yaml — set project.name");
     println!("  2. Edit CLAUDE.md — verify project details are correct");
     println!("  3. Run: zf task import TASK-123");
-    println!("  4. MCP server auto-registered in .claude/settings.json");
+    println!("  4. Local MCP server registered in .mcp.json → zf mcp");
+    println!("  5. Claude permissions preconfigured in .claude/settings.json");
 
     Ok(())
 }
@@ -227,7 +275,11 @@ pub fn run(force: bool) -> Result<()> {
 // --- helpers ---
 
 pub(crate) fn label(any_created: bool) -> colored::ColoredString {
-    if any_created { "✓".green() } else { "–".dimmed() }
+    if any_created {
+        "✓".green()
+    } else {
+        "–".dimmed()
+    }
 }
 
 pub(crate) fn print_file_status(created: bool, path: &str) {
@@ -410,7 +462,7 @@ pub(crate) fn apply_vars(template: &str, vars: &Vars) -> String {
         .replace("{{language}}", &vars.language)
         .replace("{{test_command}}", &vars.test_command)
         .replace("{{project_name}}", &vars.project_name)
-        // leave {{task_id}} and other runtime vars as-is
+    // leave {{task_id}} and other runtime vars as-is
 }
 
 struct VarsExt<'a> {
@@ -419,32 +471,64 @@ struct VarsExt<'a> {
 }
 
 fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
-    apply_vars(template, v.vars)
-        .replace("{{lang_skills_section}}", v.lang_skills_section)
+    apply_vars(template, v.vars).replace("{{lang_skills_section}}", v.lang_skills_section)
 }
 
 fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
     match language {
         "rust" => vec![
-            ("rust-patterns.md".into(), include_str!("../../templates/skills/lang/rust-patterns.md")),
-            ("rust-testing.md".into(), include_str!("../../templates/skills/lang/rust-testing.md")),
+            (
+                "rust-patterns.md".into(),
+                include_str!("../../templates/skills/lang/rust-patterns.md"),
+            ),
+            (
+                "rust-testing.md".into(),
+                include_str!("../../templates/skills/lang/rust-testing.md"),
+            ),
         ],
         "go" => vec![
-            ("go-patterns.md".into(), include_str!("../../templates/skills/lang/go-patterns.md")),
-            ("go-testing.md".into(), include_str!("../../templates/skills/lang/go-testing.md")),
+            (
+                "go-patterns.md".into(),
+                include_str!("../../templates/skills/lang/go-patterns.md"),
+            ),
+            (
+                "go-testing.md".into(),
+                include_str!("../../templates/skills/lang/go-testing.md"),
+            ),
         ],
         "typescript" => vec![
-            ("typescript-patterns.md".into(), include_str!("../../templates/skills/lang/typescript-patterns.md")),
-            ("typescript-testing.md".into(), include_str!("../../templates/skills/lang/typescript-testing.md")),
+            (
+                "typescript-patterns.md".into(),
+                include_str!("../../templates/skills/lang/typescript-patterns.md"),
+            ),
+            (
+                "typescript-testing.md".into(),
+                include_str!("../../templates/skills/lang/typescript-testing.md"),
+            ),
         ],
         "python" => vec![
-            ("python-patterns.md".into(), include_str!("../../templates/skills/lang/python-patterns.md")),
-            ("python-testing.md".into(), include_str!("../../templates/skills/lang/python-testing.md")),
+            (
+                "python-patterns.md".into(),
+                include_str!("../../templates/skills/lang/python-patterns.md"),
+            ),
+            (
+                "python-testing.md".into(),
+                include_str!("../../templates/skills/lang/python-testing.md"),
+            ),
         ],
         "ios" => vec![
-            ("ios-patterns.md".into(), include_str!("../../templates/skills/lang/ios-patterns.md")),
-            ("ios-testing.md".into(), include_str!("../../templates/skills/lang/ios-testing.md")),
-            ("ios-ui-patterns.md".into(), include_str!("../../templates/skills/lang/ios-ui-patterns.md")),
+            (
+                "ios-patterns.md".into(),
+                include_str!("../../templates/skills/lang/ios-patterns.md"),
+            ),
+            (
+                "ios-testing.md".into(),
+                include_str!("../../templates/skills/lang/ios-testing.md"),
+            ),
+            (
+                "ios-ui-patterns.md".into(),
+                include_str!("../../templates/skills/lang/ios-ui-patterns.md"),
+            ),
         ],
         _ => vec![],
     }
@@ -456,7 +540,12 @@ fn build_lang_skills_section(language: &str, skills: &[(String, &str)]) -> Strin
     }
     let rows: Vec<String> = skills
         .iter()
-        .map(|(name, _)| format!("| `.zforge/skills/{}` | {} patterns and testing |", name, language))
+        .map(|(name, _)| {
+            format!(
+                "| `.zforge/skills/{}` | {} patterns and testing |",
+                name, language
+            )
+        })
         .collect();
     format!(
         "## Language Skills\n\nRead these before writing any {} code:\n\n| File | Purpose |\n|------|---------|\\n{}\n",
@@ -498,11 +587,7 @@ fn symlink_claude_agents(_zforge_agents_dir: &Path, claude_agents_dir: &Path) ->
     Ok(count)
 }
 
-fn install_rules_for_claude(
-    rules_dir: &Path,
-    force: bool,
-    stats: &mut InitStats,
-) -> Result<usize> {
+fn install_rules_for_claude(rules_dir: &Path, force: bool, stats: &mut InitStats) -> Result<usize> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
     let ecc_rules = home.join(".claude").join("rules");
     let mut count = 0;
@@ -515,8 +600,7 @@ fn install_rules_for_claude(
 
     for (filename, fallback) in rule_defs {
         let stem = filename.trim_end_matches(".md");
-        let content = read_ecc_rule(&ecc_rules, stem)
-            .unwrap_or_else(|| fallback.to_string());
+        let content = read_ecc_rule(&ecc_rules, stem).unwrap_or_else(|| fallback.to_string());
         let created = write_safe(&rules_dir.join(filename), &content, force)?;
         stats.record(created);
         if created {
@@ -541,28 +625,67 @@ fn read_ecc_rule(ecc_rules: &Path, name: &str) -> Option<String> {
 
 const PROMPT_TEMPLATES: &[(&str, &str)] = &[
     ("spec.tmpl", include_str!("../../templates/spec.tmpl")),
-    ("testspec.tmpl", include_str!("../../templates/testspec.tmpl")),
+    (
+        "testspec.tmpl",
+        include_str!("../../templates/testspec.tmpl"),
+    ),
     ("plan.tmpl", include_str!("../../templates/plan.tmpl")),
     ("code.tmpl", include_str!("../../templates/code.tmpl")),
     ("review.tmpl", include_str!("../../templates/review.tmpl")),
-    ("verify-analysis.tmpl", include_str!("../../templates/verify-analysis.tmpl")),
+    (
+        "verify-analysis.tmpl",
+        include_str!("../../templates/verify-analysis.tmpl"),
+    ),
 ];
 
 const AGENTS: &[(&str, &str)] = &[
-    ("spec-agent.md", include_str!("../../templates/agents/spec-agent.md")),
-    ("testspec-agent.md", include_str!("../../templates/agents/testspec-agent.md")),
-    ("plan-agent.md", include_str!("../../templates/agents/plan-agent.md")),
-    ("code-agent.md", include_str!("../../templates/agents/code-agent.md")),
-    ("review-agent.md", include_str!("../../templates/agents/review-agent.md")),
+    (
+        "spec-agent.md",
+        include_str!("../../templates/agents/spec-agent.md"),
+    ),
+    (
+        "testspec-agent.md",
+        include_str!("../../templates/agents/testspec-agent.md"),
+    ),
+    (
+        "plan-agent.md",
+        include_str!("../../templates/agents/plan-agent.md"),
+    ),
+    (
+        "code-agent.md",
+        include_str!("../../templates/agents/code-agent.md"),
+    ),
+    (
+        "review-agent.md",
+        include_str!("../../templates/agents/review-agent.md"),
+    ),
 ];
 
 const SKILLS: &[(&str, &str)] = &[
-    ("clarify-spec.md", include_str!("../../templates/skills/clarify-spec.md")),
-    ("derive-test-cases.md", include_str!("../../templates/skills/derive-test-cases.md")),
-    ("implementation-planning.md", include_str!("../../templates/skills/implementation-planning.md")),
-    ("write-tests-first.md", include_str!("../../templates/skills/write-tests-first.md")),
-    ("implement-minimal-patch.md", include_str!("../../templates/skills/implement-minimal-patch.md")),
-    ("review-patch.md", include_str!("../../templates/skills/review-patch.md")),
+    (
+        "clarify-spec.md",
+        include_str!("../../templates/skills/clarify-spec.md"),
+    ),
+    (
+        "derive-test-cases.md",
+        include_str!("../../templates/skills/derive-test-cases.md"),
+    ),
+    (
+        "implementation-planning.md",
+        include_str!("../../templates/skills/implementation-planning.md"),
+    ),
+    (
+        "write-tests-first.md",
+        include_str!("../../templates/skills/write-tests-first.md"),
+    ),
+    (
+        "implement-minimal-patch.md",
+        include_str!("../../templates/skills/implement-minimal-patch.md"),
+    ),
+    (
+        "review-patch.md",
+        include_str!("../../templates/skills/review-patch.md"),
+    ),
 ];
 
 fn prompt_templates() -> &'static [(&'static str, &'static str)] {

@@ -10,7 +10,7 @@
 ///   verify       — run the test suite
 ///   status       — get task phase status
 use crate::config;
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -131,17 +131,37 @@ fn on_tools_call(id: Value, req: &Value) -> Value {
 
 fn tool_task_import(args: &Value) -> Result<String> {
     let task_id = args.get("task_id").and_then(|v| v.as_str());
-    let title = args.get("title").and_then(|v| v.as_str()).map(str::to_string);
-    let domain = args.get("domain").and_then(|v| v.as_str()).map(str::to_string);
-    let description = args.get("description").and_then(|v| v.as_str()).map(str::to_string);
-    let jira_url = args.get("jira_url").and_then(|v| v.as_str()).map(str::to_string);
-    let figma_url = args.get("figma_url").and_then(|v| v.as_str()).map(str::to_string);
-    let figma_context = args.get("figma_context").and_then(|v| v.as_str()).map(str::to_string);
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let domain = args
+        .get("domain")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let description = args
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let jira_url = args
+        .get("jira_url")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let figma_url = args
+        .get("figma_url")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let figma_context = args
+        .get("figma_context")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
 
     // Resolve task_id: explicit > extracted from jira_url > auto-generated
-    let resolved_id_hint = task_id
-        .map(str::to_string)
-        .or_else(|| jira_url.as_deref().and_then(crate::jira::extract_key_from_url));
+    let resolved_id_hint = task_id.map(str::to_string).or_else(|| {
+        jira_url
+            .as_deref()
+            .and_then(crate::jira::extract_key_from_url)
+    });
 
     let id = crate::cli::task::run_import(
         resolved_id_hint.as_deref(),
@@ -168,11 +188,23 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
         anyhow::bail!("phase must be one of: {}", valid.join(", "));
     }
 
-    let config = config::load()
-        .map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
 
-    let mut ctx = build_context(&config, task_id)?;
-    ctx.output_file = format!(".zforge/tasks/{task_id}/{phase}.md");
+    let prompt_phase = match phase {
+        "spec" => PromptPhase::Spec,
+        "testspec" => PromptPhase::Testspec,
+        "plan" => PromptPhase::Plan,
+        "code" => PromptPhase::Code,
+        "review" => PromptPhase::Review,
+        _ => unreachable!(),
+    };
+
+    let mut ctx = build_context_for_phase(&config, task_id, prompt_phase)?;
+    ctx.output_file = match phase {
+        "code" => format!(".zforge/tasks/{task_id}/implementation-log.md"),
+        "review" => format!(".zforge/tasks/{task_id}/review-summary.md"),
+        _ => format!(".zforge/tasks/{task_id}/{phase}.md"),
+    };
     ctx.next_command = next_cmd(phase, task_id);
 
     let engine = Engine::new(&config.agents_dir());
@@ -207,15 +239,14 @@ fn tool_verify(args: &Value) -> Result<String> {
         .get("command")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let timeout = args
-        .get("timeout")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(600);
+    let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(600);
 
     crate::cli::verify::run(task_id, command, timeout)?;
 
     // verify::run prints results and writes verify.md; we report success
-    Ok(format!("Tests run for task {task_id}. See .zforge/tasks/{task_id}/verify.md for full results."))
+    Ok(format!(
+        "Tests run for task {task_id}. See .zforge/tasks/{task_id}/verify.md for full results."
+    ))
 }
 
 fn tool_status(args: &Value) -> Result<String> {

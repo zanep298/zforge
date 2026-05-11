@@ -97,7 +97,11 @@ pub fn run_import(
     println!("{}", "─".repeat(40));
 
     if jira_url.is_some() {
-        println!("{} Imported from Jira. Review tasks/{}/task.md", "📥".bold(), id);
+        println!(
+            "{} Imported from Jira. Review tasks/{}/task.md",
+            "📥".bold(),
+            id
+        );
     } else {
         println!("{} Fill in task details:", "📝".bold());
         println!("   tasks/{}/task.md", id);

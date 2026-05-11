@@ -1,11 +1,9 @@
 pub mod approve;
 pub mod code;
 pub mod init;
-pub mod init_claudecode;
-pub mod init_opencode;
 pub mod plan;
-pub mod review;
 pub mod retry;
+pub mod review;
 pub mod spec;
 pub mod status;
 pub mod task;

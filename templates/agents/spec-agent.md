@@ -1,7 +1,7 @@
 ---
 name: spec-agent
 description: Clarifies task requirements and produces a scoped technical spec
-model: google/gemini-3.1-pro-preview
+model: claude-sonnet-4-6
 temperature: 0.2
 ---
 

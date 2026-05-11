@@ -1,18 +1,12 @@
 {{/* Template: plan — used by zforge plan */}}
 You are a senior Rust backend engineer.
 
-## Task
-{{task_file}}
-
-## Specification
-{{spec_file}}
-
-## Test Specification
-{{testspec_file}}
+## Input Files
+{{context_files}}
 
 ## Your Job
-Create a detailed implementation plan.
-Specific enough that another engineer implements without guessing.
+Read the approved spec and testspec.
+Create a concrete implementation plan specific enough that another engineer can execute without guessing.
 Save to: {{output_file}}
 
 ## Output Format
@@ -66,7 +60,8 @@ For each test in testspec.md:
 ## Risk Assessment
 | Risk | Likelihood | Impact | Mitigation |
 
-{{if patterns}}
-## Reference: Patterns
-{{patterns}}
-{{end}}
+## Constraints
+- Language: {{language}}
+- Test command: {{test_command}}
+- Plan only the minimal patch needed to satisfy the approved testspec.
+- Keep test-first order aligned with the testspec case IDs.

@@ -56,17 +56,9 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
 
     let now = Local::now().to_rfc3339();
     writer::set_frontmatter(&filepath, "reviewed", serde_yaml::Value::Bool(true))?;
-    writer::set_frontmatter(
-        &filepath,
-        "reviewed_at",
-        serde_yaml::Value::String(now),
-    )?;
+    writer::set_frontmatter(&filepath, "reviewed_at", serde_yaml::Value::String(now))?;
     if let Some(n) = note {
-        writer::set_frontmatter(
-            &filepath,
-            "reviewed_note",
-            serde_yaml::Value::String(n),
-        )?;
+        writer::set_frontmatter(&filepath, "reviewed_note", serde_yaml::Value::String(n))?;
     }
 
     let mut ts = TaskState::load(&tasks_dir, task_id)
@@ -100,12 +92,7 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         if ts.state >= prev_state {
             let _ = ts.advance(next, "approved");
             ts.save(&tasks_dir)?;
-            println!(
-                "{} State advanced: {} → {}",
-                "✓".green(),
-                from_str,
-                to_str
-            );
+            println!("{} State advanced: {} → {}", "✓".green(), from_str, to_str);
         }
     }
 

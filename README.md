@@ -44,7 +44,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/zanep298/
 ```bash
 # 1. Scaffold + wire Claude Code
 zf init
-zf init claudecode    # creates .mcp.json, CLAUDE.md, .claude/ agent symlinks
 
 # 2. Open project in Claude Code — zf MCP server loads automatically
 
@@ -74,11 +73,10 @@ tasks/<ID>/. Use the zf MCP tools when available.
 ### With OpenCode
 
 ```bash
-# 1. Scaffold + wire OpenCode
+# 1. Scaffold shared project files
 zf init
-zf init opencode      # creates .opencode/ referencing .zforge/agents/
 
-# 2. Open project in OpenCode — agents and skills load automatically
+# 2. Open project in OpenCode and register local MCP command `zf mcp`
 
 # 3. Run your first task (same pipeline)
 zf task import TASK-001 --title "Your task title"
@@ -119,20 +117,16 @@ Figma MCP → figma_context → task import → figma.md → spec prompt
 
 | Command | What it creates |
 |---------|----------------|
-| `zf init` | `.zforge/` — canonical agents, skills, memory, config |
-| `zf init claudecode` | `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/` (symlinks → `.zforge/agents/`) |
-| `zf init opencode` | `.opencode/opencode.json`, `.opencode/instructions.md`, `.opencode/skills/`, `.opencode/rules/` |
+| `zf init` | `.zforge/`, `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` |
 
-Agents live in `.zforge/agents/` — single source of truth for all tools.
-`init claudecode` and `init opencode` reference them without copying.
+Agents live in `.zforge/agents/` and are linked into `.claude/agents/`.
+The project-local MCP entrypoints use `zf mcp`.
 
 ## All commands
 
 | Command | Description |
 |---------|-------------|
-| `zf init` | Scaffold `.zforge/` (canonical agents, skills, memory) |
-| `zf init claudecode` | Wire up Claude Code (MCP, CLAUDE.md, agent symlinks) |
-| `zf init opencode` | Wire up OpenCode (.opencode/ referencing .zforge/) |
+| `zf init` | Scaffold `.zforge/`, Claude Code files, and local MCP registration |
 | `zf task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`) |
 | `zf spec <ID>` | Generate spec prompt |
 | `zf approve <ID> spec` | Approve spec (human gate) |

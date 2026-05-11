@@ -18,7 +18,14 @@ any implementation starts. Every case must be traceable back to a spec requireme
 
 ## Expected Outputs
 
-A `testspec.md` covering all of the following categories:
+A `testspec.md` with:
+
+- A primary `Test Cases` table using stable IDs such as `TC-01`
+- Concrete `Given / When / Then` fields for each case
+- An `Acceptance Criteria Coverage` table linking each criterion to one or more case IDs
+- An `Ambiguities / Gaps` section for anything the spec does not define clearly
+
+The test cases should collectively cover all of the following categories:
 
 - **Happy path** — the primary success scenario for each acceptance criterion
 - **Edge cases** — boundary values, empty inputs, maximum sizes, zero counts
@@ -35,13 +42,14 @@ A `testspec.md` covering all of the following categories:
 - [ ] Edge cases cover: empty, single item, maximum, and boundary values where relevant
 - [ ] Each test case is independent — no test depends on another test's side effects
 - [ ] Auth cases present if the spec mentions roles, tokens, or permissions
-- [ ] Traceability table links each criterion to at least one test name
+- [ ] Traceability table links each criterion to at least one case ID
 
 ## Constraints
 
 - Derive cases only from spec.md — do not add tests for features not in the spec
 - If a spec requirement is ambiguous, note it with `[AMBIGUOUS: ...]` and write the most conservative test
 - Test names must be descriptive: `rejects_order_when_stock_is_zero`, not `test3`
+- Do not organize the testspec by implementation taxonomy such as unit vs integration unless the spec explicitly requires that distinction
 
 ## Do Not Do
 

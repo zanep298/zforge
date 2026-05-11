@@ -20,9 +20,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Scaffold .zforge/ + .claude/ + CLAUDE.md for Claude Code workflow.
     Init {
-        /// Optional target: "opencode" → scaffold .opencode/ for OpenCode AI, "claudecode" → scaffold .claude/ + CLAUDE.md + .mcp.json for Claude Code
-        target: Option<String>,
         #[arg(long)]
         force: bool,
     },
@@ -86,7 +85,7 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
-    /// Start the zforge MCP server (stdio). Register via .mcp.json (Claude Code) or opencode.json (OpenCode).
+    /// Start the zforge MCP server (stdio). Register locally as `zf mcp`.
     Mcp,
 }
 
@@ -116,29 +115,54 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { target, force } => match target.as_deref() {
-            Some("opencode") => cli::init_opencode::run(force),
-            Some("claudecode") => cli::init_claudecode::run(force),
-            _ => cli::init::run(force),
-        },
+        Commands::Init { force } => cli::init::run(force),
         Commands::Task { action } => match action {
-            TaskAction::Import { task_id, title, domain, description, jira, figma, figma_context } => {
-                cli::task::run_import(task_id.as_deref(), title, domain, description, jira, figma, figma_context)?;
+            TaskAction::Import {
+                task_id,
+                title,
+                domain,
+                description,
+                jira,
+                figma,
+                figma_context,
+            } => {
+                cli::task::run_import(
+                    task_id.as_deref(),
+                    title,
+                    domain,
+                    description,
+                    jira,
+                    figma,
+                    figma_context,
+                )?;
                 Ok(())
             }
         },
-        Commands::Spec { task_id, done, copy } => cli::spec::run(&task_id, done, copy),
+        Commands::Spec {
+            task_id,
+            done,
+            copy,
+        } => cli::spec::run(&task_id, done, copy),
         Commands::Testspec { task_id, done } => cli::testspec::run(&task_id, done),
         Commands::Plan { task_id, done } => cli::plan::run(&task_id, done),
         Commands::Code { task_id, done } => cli::code::run(&task_id, done),
-        Commands::Verify { task_id, command, timeout } => {
-            cli::verify::run(&task_id, command, timeout)
-        }
+        Commands::Verify {
+            task_id,
+            command,
+            timeout,
+        } => cli::verify::run(&task_id, command, timeout),
         Commands::Review { task_id, done } => cli::review::run(&task_id, done),
-        Commands::Approve { task_id, artifact, note, yes } => {
-            cli::approve::run(&task_id, &artifact, note, yes)
-        }
-        Commands::Status { task_id, json, short } => cli::status::run(task_id, json, short),
+        Commands::Approve {
+            task_id,
+            artifact,
+            note,
+            yes,
+        } => cli::approve::run(&task_id, &artifact, note, yes),
+        Commands::Status {
+            task_id,
+            json,
+            short,
+        } => cli::status::run(task_id, json, short),
         Commands::Retry { task_id, from, yes } => cli::retry::run(&task_id, &from, yes),
         Commands::Mcp => mcp::run(),
     }

@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::reader;
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -35,7 +35,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut ctx = build_context(&config, task_id)?;
+    let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::Plan)?;
     ctx.output_file = format!(".zforge/tasks/{}/plan.md", task_id);
     ctx.next_command = format!("zf plan {} --done", task_id);
 

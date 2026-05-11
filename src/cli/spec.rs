@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::reader;
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -9,8 +9,13 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
 
-    let mut ts = TaskState::load(&tasks_dir, task_id)
-        .map_err(|_| anyhow::anyhow!("Task {} not found. Run: zf task import {}", task_id, task_id))?;
+    let mut ts = TaskState::load(&tasks_dir, task_id).map_err(|_| {
+        anyhow::anyhow!(
+            "Task {} not found. Run: zf task import {}",
+            task_id,
+            task_id
+        )
+    })?;
 
     ts.require(State::Imported)?;
 
@@ -28,9 +33,7 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
     if done {
         let spec_path = tasks_dir.join(task_id).join("spec.md");
         if !reader::artifact_exists(&tasks_dir, task_id, "spec.md") {
-            anyhow::bail!(
-                "spec.md not found or empty. Generate content before marking done."
-            );
+            anyhow::bail!("spec.md not found or empty. Generate content before marking done.");
         }
         drop(spec_path);
         ts.advance(State::SpecDone, "spec generated")?;
@@ -42,7 +45,7 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut ctx = build_context(&config, task_id)?;
+    let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::Spec)?;
     ctx.output_file = format!(".zforge/tasks/{}/spec.md", task_id);
     ctx.next_command = format!("zf spec {} --done", task_id);
 

@@ -17,12 +17,7 @@ pub fn run(task_id: Option<String>, json: bool, short: bool) -> Result<()> {
     }
 }
 
-fn show_single(
-    tasks_dir: &std::path::Path,
-    task_id: &str,
-    json: bool,
-    short: bool,
-) -> Result<()> {
+fn show_single(tasks_dir: &std::path::Path, task_id: &str, json: bool, short: bool) -> Result<()> {
     let ts = TaskState::load(tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
@@ -32,17 +27,19 @@ fn show_single(
     }
 
     if json {
-        println!("{}", serde_json::json!({
-            "task_id": ts.task_id,
-            "state": ts.state.as_str(),
-            "updated_at": ts.updated_at.to_rfc3339(),
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "task_id": ts.task_id,
+                "state": ts.state.as_str(),
+                "updated_at": ts.updated_at.to_rfc3339(),
+            })
+        );
         return Ok(());
     }
 
     // Read title and domain from task.md
-    let task_md = reader::MarkdownFile::read(&tasks_dir.join(task_id).join("task.md"))
-        .ok();
+    let task_md = reader::MarkdownFile::read(&tasks_dir.join(task_id).join("task.md")).ok();
     let title = task_md
         .as_ref()
         .and_then(|m| m.get_str("title"))
@@ -195,12 +192,7 @@ fn show_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<()> 
         if short {
             println!("{:<12} {}", id, colored_state);
         } else {
-            println!(
-                "  {:<12} {:<18} {}",
-                id.bold(),
-                colored_state,
-                title
-            );
+            println!("  {:<12} {:<18} {}", id.bold(), colored_state, title);
         }
     }
 

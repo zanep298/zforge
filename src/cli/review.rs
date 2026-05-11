@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::{reader, writer};
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -50,7 +50,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut ctx = build_context(&config, task_id)?;
+    let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::Review)?;
     ctx.output_file = format!(".zforge/tasks/{}/review-summary.md", task_id);
     ctx.next_command = format!("zf review {} --done", task_id);
 
@@ -60,7 +60,10 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     Ok(())
 }
 
-fn extract_and_update_memory(config: &crate::config::Config, summary: &str) -> Result<(usize, usize)> {
+fn extract_and_update_memory(
+    config: &crate::config::Config,
+    summary: &str,
+) -> Result<(usize, usize)> {
     let memory_dir = config.memory_dir();
     let mut patterns_count = 0usize;
     let mut anti_count = 0usize;
@@ -99,7 +102,10 @@ fn extract_and_update_memory(config: &crate::config::Config, summary: &str) -> R
     }
 
     if !patterns_buf.is_empty() {
-        writer::append_to_file(&memory_dir.join("patterns.md"), &format!("\n{}", patterns_buf))?;
+        writer::append_to_file(
+            &memory_dir.join("patterns.md"),
+            &format!("\n{}", patterns_buf),
+        )?;
     }
     if !anti_buf.is_empty() {
         writer::append_to_file(

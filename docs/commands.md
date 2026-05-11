@@ -5,10 +5,8 @@
 Initialize zforge in the current project.
 
 ```bash
-zf init                  # scaffold .zforge/ and CLAUDE.md
-zf init opencode         # scaffold .opencode/ for OpenCode AI
-zf init opencode --force # overwrite existing .opencode/ files
-zf init --force          # overwrite existing .zforge/ files
+zf init          # scaffold .zforge/, .mcp.json, CLAUDE.md, and .claude/
+zf init --force  # overwrite existing zforge/Claude Code files
 ```
 
 Detects project language automatically from `Cargo.toml`, `go.mod`,

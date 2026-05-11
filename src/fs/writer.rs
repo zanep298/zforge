@@ -53,12 +53,7 @@ mod tests {
     fn test_set_frontmatter_preserves_body() {
         let mut f = NamedTempFile::new().unwrap();
         write!(f, "---\ntitle: old\n---\n\nbody line 1\nbody line 2").unwrap();
-        set_frontmatter(
-            f.path(),
-            "reviewed",
-            serde_yaml::Value::Bool(true),
-        )
-        .unwrap();
+        set_frontmatter(f.path(), "reviewed", serde_yaml::Value::Bool(true)).unwrap();
         let result = std::fs::read_to_string(f.path()).unwrap();
         assert!(result.contains("body line 1"));
         assert!(result.contains("body line 2"));
@@ -80,12 +75,7 @@ mod tests {
     fn test_frontmatter_roundtrip() {
         let mut f = NamedTempFile::new().unwrap();
         write!(f, "---\ntitle: test\n---\nbody").unwrap();
-        set_frontmatter(
-            f.path(),
-            "reviewed",
-            serde_yaml::Value::Bool(true),
-        )
-        .unwrap();
+        set_frontmatter(f.path(), "reviewed", serde_yaml::Value::Bool(true)).unwrap();
         let raw = std::fs::read_to_string(f.path()).unwrap();
         let normalized = raw.replace("\r\n", "\n");
         let end = normalized[4..].find("\n---\n").unwrap();

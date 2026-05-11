@@ -47,12 +47,12 @@ Edit `.zforge/config.yaml` and set `project.name` before running any tasks.
 
 ## Wire up your AI tool
 
-Run one (or both) after `zf init`:
+Run `zf init` after install:
 
 ### Claude Code
 
 ```bash
-zf init claudecode
+zf init
 ```
 
 Creates:
@@ -66,23 +66,12 @@ Open the project in Claude Code. MCP tools (`task_import`, `get_prompt`, `approv
 
 ### OpenCode
 
-```bash
-zf init opencode
-```
-
-Creates `.opencode/` with `opencode.json` that references `.zforge/agents/` as
-instructions and `.zforge/skills/` as a skills path. No files duplicated.
+Register the local MCP command as `zf mcp` in your OpenCode project config.
 See [opencode.md](./opencode.md) for the full guide.
 
 ### Using both
 
-```bash
-zf init
-zf init claudecode
-zf init opencode
-```
-
-Both tools read agents from `.zforge/agents/`. Edit once, all tools see it.
+Both tools can call the same local MCP server command: `zf mcp`.
 
 ## Your first task
 

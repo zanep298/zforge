@@ -173,16 +173,13 @@ impl Config {
 }
 
 pub fn load() -> Result<Config> {
-    let path = Config::find_config_file()
-        .ok_or(ConfigError::NotFound)?;
+    let path = Config::find_config_file().ok_or(ConfigError::NotFound)?;
     load_from(&path)
 }
 
 pub fn load_from(path: &Path) -> Result<Config> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|_| ConfigError::NotFound)?;
-    let mut config: Config =
-        serde_yaml::from_str(&content).map_err(ConfigError::ParseError)?;
+    let content = std::fs::read_to_string(path).map_err(|_| ConfigError::NotFound)?;
+    let mut config: Config = serde_yaml::from_str(&content).map_err(ConfigError::ParseError)?;
     config.config_file = path.to_path_buf();
     Ok(config)
 }

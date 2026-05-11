@@ -1,16 +1,12 @@
 {{/* Template: spec — used by zforge spec */}}
 You are a senior Rust backend engineer working on {{project_name}}.
 
-## Task
-{{task_file}}
-
-{{if figma_context}}
-## Design Reference (Figma)
-{{figma_context}}
-{{end}}
+## Input Files
+{{context_files}}
 
 ## Your Job
-Generate a detailed technical specification for this task.
+Read the task file and any relevant referenced design or memory files.
+Generate a scoped technical specification for this task.
 Save the output to: {{output_file}}
 
 ## Output Format
@@ -23,52 +19,32 @@ reviewed: false
 ---
 ```
 
-## Overview
-[1-2 sentences what this task implements]
+## Problem
+[What is broken or missing]
 
-## Data Model Changes
-### Structs & Enums
-[New or modified types, traits]
+## Goal
+[Specific, measurable success state]
 
-### Events / Messages
-[Events published to Kafka or other message buses, if any]
+## In Scope
+- [concrete item]
 
-### Business Rules
-[Key constraints and validation logic]
+## Out of Scope
+- [explicit exclusion]
 
-## API Changes
-### Endpoints (gRPC/REST)
-[New or modified endpoints/methods with types]
+## Assumptions
+- [non-obvious assumption]
 
-### Dependencies
-[Services this feature depends on]
+## Impacted Areas
+- [file, module, API, or workflow]
 
-## Data Layer
-### Schema Changes
-[New tables, columns, indexes]
-
-### Cache Strategy
-[Redis keys, TTL, invalidation]
-
-### Kafka Topics
-[Produce/consume topics and message schemas]
-
-## Non-Functional Requirements
-### Performance
-[Latency targets, throughput]
-
-### Reliability
-[Error handling strategy, retry, circuit breaker]
+## Acceptance Criteria
+- [ ] [observable, testable condition]
 
 ## Open Questions
-[Anything needing clarification]
+- [gap that needs human input]
 
-{{if patterns}}
-## Reference: Approved Patterns
-{{patterns}}
-{{end}}
-
-{{if domain_glossary}}
-## Reference: Domain Glossary
-{{domain_glossary}}
-{{end}}
+## Constraints
+- Language: {{language}}
+- Test command: {{test_command}}
+- Do not expand scope beyond the task.
+- Keep the spec behavioral; avoid implementation code.

@@ -1,7 +1,7 @@
 ---
 name: plan-agent
 description: Creates a concrete implementation plan from approved spec and testspec
-model: google/gemini-3.1-pro-preview
+model: claude-opus-4-7
 temperature: 0.2
 ---
 

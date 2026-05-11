@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::reader;
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -15,7 +15,10 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     ts.require(State::SpecDone)?;
 
     if !reader::artifact_exists(&tasks_dir, task_id, "spec.md") {
-        anyhow::bail!("spec.md not found or empty. Run: zf spec {} --done first", task_id);
+        anyhow::bail!(
+            "spec.md not found or empty. Run: zf spec {} --done first",
+            task_id
+        );
     }
 
     if done {
@@ -31,7 +34,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut ctx = build_context(&config, task_id)?;
+    let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::Testspec)?;
     ctx.output_file = format!(".zforge/tasks/{}/testspec.md", task_id);
     ctx.next_command = format!("zf testspec {} --done", task_id);
 

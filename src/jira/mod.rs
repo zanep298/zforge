@@ -33,8 +33,7 @@ pub fn fetch_ticket(url: &str) -> Result<JiraTicket> {
         )
     })?;
 
-    let base = extract_base_url(url)
-        .ok_or_else(|| anyhow::anyhow!("Invalid URL: {}", url))?;
+    let base = extract_base_url(url).ok_or_else(|| anyhow::anyhow!("Invalid URL: {}", url))?;
 
     let email =
         std::env::var("JIRA_EMAIL").context("JIRA_EMAIL not set — required for Jira import")?;
@@ -63,10 +62,7 @@ pub fn fetch_ticket(url: &str) -> Result<JiraTicket> {
 
     let fields = &resp["fields"];
 
-    let summary = fields["summary"]
-        .as_str()
-        .unwrap_or(&key)
-        .to_string();
+    let summary = fields["summary"].as_str().unwrap_or(&key).to_string();
 
     let description = extract_description_text(&fields["description"]);
 

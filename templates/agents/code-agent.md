@@ -1,7 +1,7 @@
 ---
 name: code-agent
 description: Implements the approved plan following TDD — tests first, minimal patch
-model: opencode-go/qwen3.6-plus
+model: claude-opus-4-7
 temperature: 0.1
 ---
 

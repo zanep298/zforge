@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::writer;
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::runner;
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -115,7 +115,7 @@ command: "{}"
         println!("Next: zf review {}", task_id);
     } else {
         // Generate analysis prompt
-        let mut ctx = build_context(&config, task_id)?;
+        let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::VerifyAnalysis)?;
         ctx.failed_tests = result.failed_names.join("\n");
         ctx.verify_file = verify_content;
 

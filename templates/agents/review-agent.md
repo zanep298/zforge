@@ -1,7 +1,7 @@
 ---
 name: review-agent
 description: Reviews the completed implementation against spec, testspec, and plan
-model: opencode-go/qwen3.6-plus
+model: claude-sonnet-4-6
 temperature: 0.2
 ---
 

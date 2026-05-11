@@ -24,19 +24,13 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     let (reset_state, artifacts_to_clear) = phase_to_reset(from);
 
     if !yes {
-        println!(
-            "? Retry {} from [{}] phase?",
-            task_id, from
-        );
+        println!("? Retry {} from [{}] phase?", task_id, from);
         println!("  Will backup and reset:");
         for a in &artifacts_to_clear {
             println!("  • {}", a);
         }
         let backup_ts = Local::now().to_rfc3339();
-        println!(
-            "  Backup to: tasks/{}/.history/{}/",
-            task_id, backup_ts
-        );
+        println!("  Backup to: tasks/{}/.history/{}/", task_id, backup_ts);
         println!("  State reset to: {}", reset_state.as_str());
         println!();
         print!("  Continue? [y/N] ");
@@ -50,10 +44,7 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     }
 
     let backup_ts = Local::now().to_rfc3339().replace(':', "-");
-    let backup_dir = tasks_dir
-        .join(task_id)
-        .join(".history")
-        .join(&backup_ts);
+    let backup_dir = tasks_dir.join(task_id).join(".history").join(&backup_ts);
     std::fs::create_dir_all(&backup_dir)?;
 
     let mut backed_up = 0usize;
@@ -85,11 +76,7 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     new_ts.updated_at = Local::now();
     new_ts.save(&tasks_dir)?;
 
-    println!(
-        "{} Backed up {} artifacts",
-        "✓".green(),
-        backed_up
-    );
+    println!("{} Backed up {} artifacts", "✓".green(), backed_up);
     println!(
         "{} Reset state: {} → {}",
         "✓".green(),
@@ -97,11 +84,7 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
         reset_state.as_str()
     );
     if !artifacts_to_clear.is_empty() {
-        println!(
-            "{} Cleared: {}",
-            "✓".green(),
-            artifacts_to_clear.join(", ")
-        );
+        println!("{} Cleared: {}", "✓".green(), artifacts_to_clear.join(", "));
     }
     println!();
     println!("Next: zf {} {}", from, task_id);
@@ -153,10 +136,7 @@ fn phase_to_reset(phase: &str) -> (State, Vec<String>) {
             State::Coded,
             vec!["verify.md".into(), "review-summary.md".into()],
         ),
-        "review" => (
-            State::Verified,
-            vec!["review-summary.md".into()],
-        ),
+        "review" => (State::Verified, vec!["review-summary.md".into()]),
         _ => (State::Imported, vec![]),
     }
 }

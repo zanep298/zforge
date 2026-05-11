@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::writer;
-use crate::prompt::{build_context, Engine};
+use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use chrono::Local;
@@ -28,25 +28,11 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut ctx = build_context(&config, task_id)?;
+    let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::Code)?;
     ctx.output_file = format!(".zforge/tasks/{}/implementation-log.md", task_id);
     ctx.next_command = format!("zf verify {}", task_id);
 
-    // Add context files for opencode
-    let files = vec![
-        format!("/file .zforge/tasks/{}/task.md", task_id),
-        format!("/file .zforge/tasks/{}/spec.md", task_id),
-        format!("/file .zforge/tasks/{}/testspec.md", task_id),
-        format!("/file .zforge/tasks/{}/plan.md", task_id),
-        "/file .zforge/memory/patterns.md".to_string(),
-        "/file .zforge/memory/anti-patterns.md".to_string(),
-    ];
-    ctx.context_files = files;
-
-    let engine = Engine::new(&config.agents_dir());
-    engine.dispatch("code", &ctx)?;
-
-    // Create implementation-log.md
+    // Create implementation-log.md before dispatch so the agent can append to it.
     let now = Local::now();
     let log_content = format!(
         r#"---
@@ -65,7 +51,12 @@ Coding phase initiated.
         now.format("%Y-%m-%d %H:%M")
     );
     let log_path = tasks_dir.join(task_id).join("implementation-log.md");
-    writer::write_file(&log_path, &log_content)?;
+    if !log_path.exists() {
+        writer::write_file(&log_path, &log_content)?;
+    }
+
+    let engine = Engine::new(&config.agents_dir());
+    engine.dispatch("code", &ctx)?;
 
     Ok(())
 }

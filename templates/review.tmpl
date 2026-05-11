@@ -1,24 +1,11 @@
 {{/* Template: review — used by zforge review */}}
 You are doing a final review of a completed Rust implementation.
 
-## All Artifacts
-
-### Task
-{{task_file}}
-
-### Specification
-{{spec_file}}
-
-### Test Specification
-{{testspec_file}}
-
-### Implementation Plan
-{{plan_file}}
-
-### Verify Results
-{{verify_file}}
+## Input Files
+{{context_files}}
 
 ## Your Job
+Read the referenced artifacts and inspect the current implementation diff.
 Generate a comprehensive review summary.
 Save to: {{output_file}}
 
@@ -69,3 +56,8 @@ reviewed: false
 
 ## Recommendations for Next Tasks
 - [recommendation]
+
+## Constraints
+- Start from the implementation diff, then cross-check against plan.md and testspec.md.
+- Call out any testspec case IDs that are missing coverage.
+- Keep pattern extraction limited to reusable lessons from this implementation.

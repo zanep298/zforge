@@ -1,44 +1,23 @@
 {{/* Template: code — used by zforge code */}}
 You are implementing a Rust backend feature.
 
-## Context Files
-Load these files before starting:
+## Input Files
 {{context_files}}
 
-## Task
-{{task_file}}
-
-## Specification
-{{spec_file}}
-
-## Test Specification
-{{testspec_file}}
-
-## Implementation Plan
-{{plan_file}}
-
-{{if figma_context}}
-## Design (Figma)
-{{figma_context}}
-{{end}}
-
-{{if patterns}}
-## Approved Patterns (follow these)
-{{patterns}}
-{{end}}
-
-{{if anti_patterns}}
-## Anti-Patterns (avoid these)
-{{anti_patterns}}
-{{end}}
+## Fallback References
+Open these only if the plan or testspec is ambiguous:
+{{spec_ref}}
+{{task_ref}}
 
 ## Instructions
-1. Write failing tests first (from testspec.md)
-2. Implement the feature — organize code by feature, not by layer
-3. Keep related things together: handler, service logic, and data access can live in the same module if they're small
-4. Extract shared logic only when it's actually reused
-5. Run tests — all must pass
-6. Verify coverage meets testspec.md targets
+1. Read plan.md and testspec.md first.
+2. Write failing tests for the testspec case IDs.
+3. Implement the feature — organize code by feature, not by layer
+4. Keep related things together: handler, service logic, and data access can live in the same module if they're small
+5. Extract shared logic only when it's actually reused
+6. Run tests — all must pass
+7. Verify coverage meets testspec.md targets
+8. Append a concise implementation summary to {{output_file}}
 
 ## Constraints
 - Language: Rust ({{language}})
@@ -47,6 +26,7 @@ Load these files before starting:
 - Keep modules small and focused — split when a file gets too large, not before
 - Use Result<T, E> properly — no unwrap() in production code
 - Prefer simple, flat structures over deep hierarchies
+- Do not open spec.md or task.md unless the approved plan/testspec leaves a gap.
 
 ## When Done
-Run: zforge verify {{task_id}}
+Run: zf verify {{task_id}}
