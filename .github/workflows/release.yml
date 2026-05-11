@@ -82,3 +82,67 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute SHA256s
+        id: sha
+        run: |
+          echo "arm64=$(sha256sum artifacts/zf-aarch64-apple-darwin.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "x86_darwin=$(sha256sum artifacts/zf-x86_64-apple-darwin.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux=$(sha256sum artifacts/zf-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: zanep298/homebrew
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          cd tap
+          python3 - <<'EOF'
+          import re, os, sys
+
+          version   = os.environ["VERSION"]
+          sha_arm   = os.environ["SHA_ARM64"]
+          sha_x86   = os.environ["SHA_X86_DARWIN"]
+          sha_linux = os.environ["SHA_LINUX"]
+
+          path = "Formula/zf.rb"
+          src  = open(path).read()
+
+          src = re.sub(r'version ".*?"',         f'version "{version}"', src)
+          src = re.sub(r'(PLACEHOLDER_SHA256_ARM64|(?<=arm?\n      sha256 ")[0-9a-f]{64})',   sha_arm,   src)
+          src = re.sub(r'(PLACEHOLDER_SHA256_X86_64_DARWIN|(?<=darwin\n      sha256 ")[0-9a-f]{64})', sha_x86,   src)
+          src = re.sub(r'(PLACEHOLDER_SHA256_LINUX|(?<=linux\n      sha256 ")[0-9a-f]{64})',  sha_linux, src)
+
+          open(path, "w").write(src)
+          print(f"Updated zf.rb → version={version}")
+          EOF
+        env:
+          VERSION: ${{ github.ref_name }}
+          SHA_ARM64: ${{ steps.sha.outputs.arm64 }}
+          SHA_X86_DARWIN: ${{ steps.sha.outputs.x86_darwin }}
+          SHA_LINUX: ${{ steps.sha.outputs.linux }}
+
+      - name: Commit and push
+        run: |
+          cd tap
+          git config user.name "zanep298"
+          git config user.email "minh.tan2908@gmail.com"
+          git add Formula/zf.rb
+          git commit -m "zf ${{ github.ref_name }}"
+          git push
