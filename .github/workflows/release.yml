@@ -112,31 +112,34 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
+          SHA_ARM64="${{ steps.sha.outputs.arm64 }}"
+          SHA_X86_DARWIN="${{ steps.sha.outputs.x86_darwin }}"
+          SHA_LINUX="${{ steps.sha.outputs.linux }}"
           cd tap
-          python3 - <<'EOF'
-          import re, os, sys
+          python3 - "$VERSION" "$SHA_ARM64" "$SHA_X86_DARWIN" "$SHA_LINUX" <<'EOF'
+          import re, sys
 
-          version   = os.environ["VERSION"]
-          sha_arm   = os.environ["SHA_ARM64"]
-          sha_x86   = os.environ["SHA_X86_DARWIN"]
-          sha_linux = os.environ["SHA_LINUX"]
+          version, sha_arm, sha_x86, sha_linux = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
           path = "Formula/zf.rb"
           src  = open(path).read()
 
-          src = re.sub(r'version ".*?"',         f'version "{version}"', src)
-          src = re.sub(r'(PLACEHOLDER_SHA256_ARM64|(?<=arm?\n      sha256 ")[0-9a-f]{64})',   sha_arm,   src)
-          src = re.sub(r'(PLACEHOLDER_SHA256_X86_64_DARWIN|(?<=darwin\n      sha256 ")[0-9a-f]{64})', sha_x86,   src)
-          src = re.sub(r'(PLACEHOLDER_SHA256_LINUX|(?<=linux\n      sha256 ")[0-9a-f]{64})',  sha_linux, src)
+          src = re.sub(r'version ".*?"', f'version "{version}"', src)
+          src = re.sub(r'sha256 "[0-9a-f]{64}"', f'sha256 "PLACEHOLDER"', src)
+
+          # replace placeholders in order: arm64, x86_darwin, linux
+          src = src.replace('sha256 "PLACEHOLDER"', f'sha256 "{sha_arm}"',   1)
+          src = src.replace('sha256 "PLACEHOLDER"', f'sha256 "{sha_x86}"',   1)
+          src = src.replace('sha256 "PLACEHOLDER"', f'sha256 "{sha_linux}"', 1)
+
+          # handle initial PLACEHOLDER_ strings too
+          src = src.replace('sha256 "PLACEHOLDER_SHA256_ARM64"',        f'sha256 "{sha_arm}"')
+          src = src.replace('sha256 "PLACEHOLDER_SHA256_X86_64_DARWIN"', f'sha256 "{sha_x86}"')
+          src = src.replace('sha256 "PLACEHOLDER_SHA256_LINUX"',         f'sha256 "{sha_linux}"')
 
           open(path, "w").write(src)
           print(f"Updated zf.rb → version={version}")
           EOF
-        env:
-          VERSION: ${{ github.ref_name }}
-          SHA_ARM64: ${{ steps.sha.outputs.arm64 }}
-          SHA_X86_DARWIN: ${{ steps.sha.outputs.x86_darwin }}
-          SHA_LINUX: ${{ steps.sha.outputs.linux }}
 
       - name: Commit and push
         run: |
