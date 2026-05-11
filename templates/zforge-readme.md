@@ -6,24 +6,24 @@ OpenCode reads agent files as instructions. Skills are reference checklists.
 ## Workflow
 
 ```
-zf task import TASK-123     →  create task stub
-zf spec TASK-123            →  generate spec prompt  →  fill spec.md in OpenCode
-zf spec TASK-123 --done     →  mark spec complete
-zf testspec TASK-123        →  generate testspec prompt  →  fill testspec.md
-zf testspec TASK-123 --done →  mark testspec complete
-zf approve TASK-123 testspec   ← human gate
-zf plan TASK-123            →  generate plan prompt  →  fill plan.md
-zf plan TASK-123 --done     →  mark plan complete
-zf approve TASK-123 plan       ← human gate
-zf code TASK-123            →  generate code prompt  →  implement in OpenCode
-zf code TASK-123 --done     →  mark coding complete
-zf verify TASK-123          →  run {{test_command}}
-zf review TASK-123          →  generate review prompt  →  fill review-summary.md
-zf review TASK-123 --done   →  extract patterns, mark complete
+zforge task import TASK-123     →  create task stub
+zforge spec TASK-123            →  generate spec prompt  →  fill spec.md in OpenCode
+zforge spec TASK-123 --done     →  mark spec complete
+zforge testspec TASK-123        →  generate testspec prompt  →  fill testspec.md
+zforge testspec TASK-123 --done →  mark testspec complete
+zforge approve TASK-123 testspec   ← human gate
+zforge plan TASK-123            →  generate plan prompt  →  fill plan.md
+zforge plan TASK-123 --done     →  mark plan complete
+zforge approve TASK-123 plan       ← human gate
+zforge code TASK-123            →  generate code prompt  →  implement in OpenCode
+zforge code TASK-123 --done     →  mark coding complete
+zforge verify TASK-123          →  run {{test_command}}
+zforge review TASK-123          →  generate review prompt  →  fill review-summary.md
+zforge review TASK-123 --done   →  extract patterns, mark complete
 ```
 
-Human gates are mandatory. `zf plan` is blocked until testspec is approved.
-`zf code` is blocked until plan is approved.
+Human gates are mandatory. `zforge plan` is blocked until testspec is approved.
+`zforge code` is blocked until plan is approved.
 
 ## Agents
 
@@ -59,4 +59,4 @@ Skills are checklists and constraints. Reference them in your agent prompts with
 | `memory/anti-patterns.md` | Lessons learned from failed verifications |
 | `memory/domain-glossary.md` | Project terminology and ubiquitous language |
 
-Memory files grow automatically when you run `zf review --done`.
+Memory files grow automatically when you run `zforge review --done`.

@@ -18,7 +18,7 @@ task import → spec → testspec → [APPROVE] → plan → [APPROVE] → code 
 When asked to implement a task, always check the current state first:
 
 ```
-zf status <TASK-ID>
+zforge status <TASK-ID>
 ```
 
 Never skip a phase. Never write code before testspec and plan are both approved.
@@ -63,7 +63,7 @@ Load a skill with `/file .zforge/skills/<name>.md` before starting that phase.
 
 ## MCP Tools
 
-zforge registers an MCP server (`zf mcp`) that exposes the pipeline as tools.
+zforge registers an MCP server (`zforge mcp`) that exposes the pipeline as tools.
 Claude Code discovers it from the project-local `.mcp.json`.
 
 Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`
@@ -75,11 +75,11 @@ during each pipeline phase:
 
 | Phase | Agent |
 |-------|-------|
-| `zf spec <ID>` | `spec-agent` |
-| `zf testspec <ID>` | `testspec-agent` |
-| `zf plan <ID>` | `plan-agent` |
-| `zf code <ID>` | `code-agent` |
-| `zf review <ID>` | `review-agent` |
+| `zforge spec <ID>` | `spec-agent` |
+| `zforge testspec <ID>` | `testspec-agent` |
+| `zforge plan <ID>` | `plan-agent` |
+| `zforge code <ID>` | `code-agent` |
+| `zforge review <ID>` | `review-agent` |
 
 ---
 

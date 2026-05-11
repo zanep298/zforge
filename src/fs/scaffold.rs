@@ -60,7 +60,7 @@ pub fn scaffold_task_with_data(
     let description_body = data
         .description
         .as_deref()
-        .unwrap_or("<!-- Mô tả task là gì, tại sao cần làm -->");
+        .unwrap_or("<!-- Describe what this task is and why it needs to be done -->");
 
     let figma_url_yaml = escape_yaml(data.figma_url.as_deref().unwrap_or(""));
 
@@ -72,7 +72,7 @@ pub fn scaffold_task_with_data(
     .flatten()
     .collect();
     let notes_body = if notes_lines.is_empty() {
-        "<!-- Context thêm, links, references -->".to_string()
+        "<!-- Additional context, links, references -->".to_string()
     } else {
         notes_lines.join("\n")
     };

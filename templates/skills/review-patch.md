@@ -8,7 +8,7 @@ concerns. Produce a written verdict the team can act on.
 
 ## When to Use
 
-- After `zf verify` passes and before marking a task Reviewed
+- After `zforge verify` passes and before marking a task Reviewed
 - When generating review-summary.md
 - When deciding whether to approve or request changes on a PR
 
