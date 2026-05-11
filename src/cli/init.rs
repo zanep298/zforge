@@ -347,6 +347,9 @@ pub(crate) fn detect_project(root: &std::path::Path) -> DetectedProject {
             project_name: String::new(),
         };
     }
+    if let Some(d) = detect_android_project(root) {
+        return d;
+    }
     if let Some(d) = detect_ios_project(root) {
         return d;
     }
@@ -355,6 +358,44 @@ pub(crate) fn detect_project(root: &std::path::Path) -> DetectedProject {
         test_command: "cargo test".into(),
         project_name: String::new(),
     }
+}
+
+fn detect_android_project(root: &std::path::Path) -> Option<DetectedProject> {
+    // Android project: has settings.gradle.kts (or .gradle) and an app/ subdirectory
+    let has_settings = root.join("settings.gradle.kts").exists()
+        || root.join("settings.gradle").exists();
+    let has_app_dir = root.join("app").is_dir();
+    if !(has_settings && has_app_dir) {
+        return None;
+    }
+    let name = read_android_app_name(root).unwrap_or_default();
+    Some(DetectedProject {
+        language: "android".into(),
+        test_command: "./gradlew test".into(),
+        project_name: name,
+    })
+}
+
+fn read_android_app_name(root: &std::path::Path) -> Option<String> {
+    let settings = root.join("settings.gradle.kts");
+    let content = std::fs::read_to_string(&settings)
+        .or_else(|_| std::fs::read_to_string(root.join("settings.gradle")))
+        .ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("rootProject.name") {
+            if let Some(val) = line.splitn(2, '=').nth(1) {
+                return Some(
+                    val.trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .trim_matches(',')
+                        .to_string(),
+                );
+            }
+        }
+    }
+    None
 }
 
 fn detect_ios_project(root: &std::path::Path) -> Option<DetectedProject> {
@@ -528,6 +569,16 @@ fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
             (
                 "ios-ui-patterns.md".into(),
                 include_str!("../../templates/skills/lang/ios-ui-patterns.md"),
+            ),
+        ],
+        "android" => vec![
+            (
+                "android-patterns.md".into(),
+                include_str!("../../templates/skills/lang/android-patterns.md"),
+            ),
+            (
+                "android-testing.md".into(),
+                include_str!("../../templates/skills/lang/android-testing.md"),
             ),
         ],
         _ => vec![],
