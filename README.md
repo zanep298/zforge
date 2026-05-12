@@ -43,8 +43,8 @@ zforge --version
 ### With Claude Code
 
 ```bash
-# 1. Scaffold project files
-zforge init
+# 1. Scaffold project files for Claude Code (default agent)
+zforge init                    # same as: zforge init --agent claude
 
 # 2. Register zforge MCP server with Claude Code (local scope)
 zforge mcp register --agent claude
@@ -74,18 +74,68 @@ command, wait for my approval before proceeding, and follow the artifacts in
 tasks/<ID>/. Use the zforge MCP tools when available.
 ```
 
+### With Codex
+
+```bash
+# 1. Scaffold project files for Codex CLI
+#    (writes AGENTS.md, .codex/agents/, and auto-registers MCP + profiles
+#     in ~/.codex/config.toml)
+zforge init --agent codex
+
+# 2. Start a Codex session in the project — zforge MCP tools are available
+
+# 3. Run your first task (same pipeline)
+zforge task import TASK-001 --title "Your task title"
+# edit tasks/TASK-001/task.md, then:
+zforge spec TASK-001
+zforge approve TASK-001 spec
+zforge testspec TASK-001
+zforge approve TASK-001 testspec
+zforge plan TASK-001
+zforge code TASK-001
+zforge verify TASK-001
+zforge review TASK-001
+```
+
+Codex picks the right model per phase via profiles in `~/.codex/config.toml`:
+
+```bash
+codex --profile zforge_spec     "run zforge spec TASK-001"
+codex --profile zforge_testspec "run zforge testspec TASK-001"
+codex --profile zforge_plan     "run zforge plan TASK-001"
+codex --profile zforge_code     "run zforge code TASK-001"
+codex --profile zforge_review   "run zforge review TASK-001"
+```
+
+| Profile | Phase | Default model |
+|---------|-------|---------------|
+| `zforge_spec` | spec | `gpt-5.4-mini` |
+| `zforge_testspec` | testspec | `gpt-5.4-mini` |
+| `zforge_plan` | plan | `gpt-5.4` |
+| `zforge_code` | code | `gpt-5.3-codex` |
+| `zforge_review` | review | `gpt-5.4` |
+
+**Session starter prompt for Codex:**
+
+```
+We're using zforge for this project. Run `zforge status` to see current task
+progress, then help me work through the pipeline. For each phase, run the zforge
+command, wait for my approval before proceeding, and follow the artifacts in
+tasks/<ID>/. Use the zforge MCP tools (task_import, get_prompt, approve, verify,
+status) when available.
+```
+
 ### With OpenCode
 
 ```bash
-# 1. Scaffold shared project files
-zforge init
+# 1. Scaffold project files for OpenCode
+#    (writes AGENTS.md, .opencode/agents/, and auto-registers MCP
+#     in ~/.config/opencode/opencode.json)
+zforge init --agent opencode
 
-# 2. Register zforge MCP server with OpenCode
-zforge mcp register --agent opencode
+# 2. Open project in OpenCode — zforge MCP tools are available
 
-# 3. Open project in OpenCode — zforge MCP tools are available
-
-# 4. Run your first task (same pipeline)
+# 3. Run your first task (same pipeline)
 zforge task import TASK-001 --title "Your task title"
 # edit tasks/TASK-001/task.md, then:
 zforge spec TASK-001
@@ -122,14 +172,17 @@ Figma MCP → figma_context → task import → figma.md → spec prompt
 
 ## Init commands
 
-| Command | What it creates |
-|---------|----------------|
-| `zforge init` | `.zforge/`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` |
+`zforge init` scaffolds per agent. Pick exactly one (default: `claude`).
 
-Agents live in `.zforge/agents/` and are linked into `.claude/agents/`.
-MCP registration is **not** automatic — run `zforge mcp register` after init
-to wire the `zforge mcp` stdio server into your AI agent of choice (Claude
-Code, Codex, OpenCode).
+| Command | What it creates | MCP auto-register? |
+|---------|----------------|--------------------|
+| `zforge init` (default) | `.zforge/`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` | No — run `zforge mcp register --agent claude` |
+| `zforge init --agent codex` | `.zforge/`, `AGENTS.md`, `.codex/agents/`, `.codex/README.md` | Yes — `~/.codex/config.toml` + per-phase profiles |
+| `zforge init --agent opencode` | `.zforge/`, `AGENTS.md`, `.opencode/agents/` | Yes — `~/.config/opencode/opencode.json` |
+| `zforge init --agent all` | All of the above | Yes — codex + opencode |
+
+`.zforge/agents/` is the single source of truth — `.claude/agents/`,
+`.codex/agents/`, and `.opencode/agents/` are symlinks into it.
 
 ## Register the MCP server
 

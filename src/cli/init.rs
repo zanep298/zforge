@@ -4,6 +4,8 @@ use std::env;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use crate::cli::mcp_register::Agent;
+
 const DEFAULT_CONFIG: &str = r#"project:
   name: ""
   language: "rust"
@@ -82,9 +84,21 @@ impl InitStats {
     }
 }
 
-pub fn run(force: bool) -> Result<()> {
+pub fn run(agent: Agent, force: bool) -> Result<()> {
     let cwd = env::current_dir()?;
     let detected = detect_project(&cwd);
+
+    let want_claude = matches!(agent, Agent::Claude | Agent::All);
+    let want_codex = matches!(agent, Agent::Codex | Agent::All);
+    let want_opencode = matches!(agent, Agent::OpenCode | Agent::All);
+
+    let agent_label = match agent {
+        Agent::All => "all (claude, codex, opencode)",
+        Agent::Claude => "claude",
+        Agent::Codex => "codex",
+        Agent::OpenCode => "opencode",
+    };
+    println!("Scaffolding zforge for: {}", agent_label.cyan());
 
     let zforge_dir = cwd.join(".zforge");
 
@@ -190,17 +204,71 @@ pub fn run(force: bool) -> Result<()> {
     stats.record(created);
     print_file_status(created, ".zforge/README.md");
 
-    // CLAUDE.md at project root — auto-loaded by Claude Code
     let lang_skills_section = build_lang_skills_section(&vars.language, &lang_skills);
     let vars_with_lang = VarsExt {
         vars: &vars,
         lang_skills_section: &lang_skills_section,
     };
-    let claude_md = apply_vars_ext(include_str!("../../templates/CLAUDE.md"), &vars_with_lang);
+
+    // .zforge/tasks/ (always)
+    let tasks_dir = zforge_dir.join("tasks");
+    std::fs::create_dir_all(&tasks_dir)?;
+    println!("{} .zforge/tasks/", "✓".green());
+
+    // --- Claude Code scaffolding --------------------------------------------
+    if want_claude {
+        scaffold_claude(&cwd, &zforge_dir, &vars_with_lang, force, &mut stats)?;
+    }
+
+    // --- Codex CLI scaffolding ----------------------------------------------
+    if want_codex {
+        scaffold_codex(&cwd, &zforge_dir, &vars, &vars_with_lang, force, &mut stats)?;
+    }
+
+    // --- OpenCode scaffolding -----------------------------------------------
+    if want_opencode {
+        scaffold_opencode(&cwd, &zforge_dir, &vars_with_lang, force, &mut stats)?;
+    }
+
+    println!();
+    println!(
+        "  {} created, {} skipped (already existed)",
+        stats.created, stats.skipped
+    );
+    println!();
+    println!("Next steps:");
+    println!("  1. Edit .zforge/config.yaml — set project.name");
+    if want_claude {
+        println!("  2. Verify CLAUDE.md — project details correct");
+        println!("     Register Claude Code MCP: zforge mcp register --agent claude");
+    }
+    if want_codex {
+        println!("  2. Verify AGENTS.md — project details correct");
+        println!("     (Codex MCP + profiles were registered automatically above)");
+    }
+    if want_opencode {
+        println!("  2. Verify AGENTS.md — project details correct");
+        println!("     (OpenCode MCP was registered automatically above)");
+    }
+    println!("  3. Run: zforge task import TASK-123");
+
+    Ok(())
+}
+
+// --- per-agent scaffolders ---
+
+fn scaffold_claude(
+    cwd: &Path,
+    zforge_dir: &Path,
+    vars_with_lang: &VarsExt<'_>,
+    force: bool,
+    stats: &mut InitStats,
+) -> Result<()> {
+    // CLAUDE.md at project root — auto-loaded by Claude Code
+    let claude_md = apply_vars_ext(include_str!("../../templates/CLAUDE.md"), vars_with_lang);
     let created = write_safe(&cwd.join("CLAUDE.md"), &claude_md, force)?;
     stats.record(created);
     print_file_status(created, "CLAUDE.md");
-
     if !created {
         eprintln!(
             "  {} CLAUDE.md already exists — not overwritten. Run with --force to replace.",
@@ -208,7 +276,7 @@ pub fn run(force: bool) -> Result<()> {
         );
     }
 
-    // .claude/settings.json — Claude Code permissions for zforge commands and MCP tools
+    // .claude/settings.json
     let claude_dir = cwd.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
     let settings_path = claude_dir.join("settings.json");
@@ -216,7 +284,7 @@ pub fn run(force: bool) -> Result<()> {
     stats.record(created);
     print_file_status(created, ".claude/settings.json");
 
-    // .claude/agents/ — symlinks to .zforge/agents/*.md (single source of truth)
+    // .claude/agents/ — symlinks to .zforge/agents/
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
     let agent_count = symlink_zforge_agents(&zforge_dir.join("agents"), &claude_agents_dir)?;
@@ -226,19 +294,29 @@ pub fn run(force: bool) -> Result<()> {
         agent_count
     );
 
-    // .claude/rules/ — coding standards (from ~/.claude/rules or bundled fallbacks)
+    // .claude/rules/
     let claude_rules_dir = claude_dir.join("rules");
     std::fs::create_dir_all(&claude_rules_dir)?;
-    let rule_count = install_rules_for_claude(&claude_rules_dir, force, &mut stats)?;
+    let rule_count = install_rules_for_claude(&claude_rules_dir, force, stats)?;
     println!(
         "{} .claude/rules/ — {} rule files",
         label(rule_count > 0),
         rule_count
     );
 
-    // --- Codex CLI scaffolding ----------------------------------------------
+    Ok(())
+}
+
+fn scaffold_codex(
+    cwd: &Path,
+    zforge_dir: &Path,
+    vars: &Vars,
+    vars_with_lang: &VarsExt<'_>,
+    force: bool,
+    stats: &mut InitStats,
+) -> Result<()> {
     // AGENTS.md at project root — auto-loaded by Codex CLI
-    let agents_md = apply_vars_ext(include_str!("../../templates/AGENTS.md"), &vars_with_lang);
+    let agents_md = apply_vars_ext(include_str!("../../templates/AGENTS.md"), vars_with_lang);
     let created = write_safe(&cwd.join("AGENTS.md"), &agents_md, force)?;
     stats.record(created);
     print_file_status(created, "AGENTS.md");
@@ -249,7 +327,7 @@ pub fn run(force: bool) -> Result<()> {
         );
     }
 
-    // .codex/agents/ — symlinks to .zforge/agents/ for Codex CLI to reference
+    // .codex/agents/ — symlinks to .zforge/agents/
     let codex_dir = cwd.join(".codex");
     std::fs::create_dir_all(&codex_dir)?;
     let codex_agents_dir = codex_dir.join("agents");
@@ -261,29 +339,21 @@ pub fn run(force: bool) -> Result<()> {
         codex_agent_count
     );
 
-    // .codex/README.md — explain Codex CLI integration + permissions caveat
-    let codex_readme = apply_vars(include_str!("../../templates/codex-readme.md"), &vars);
+    // .codex/README.md
+    let codex_readme = apply_vars(include_str!("../../templates/codex-readme.md"), vars);
     let created = write_safe(&codex_dir.join("README.md"), &codex_readme, force)?;
     stats.record(created);
     print_file_status(created, ".codex/README.md");
 
-    // .zforge/tasks/
-    let tasks_dir = zforge_dir.join("tasks");
-    std::fs::create_dir_all(&tasks_dir)?;
-    println!("{} .zforge/tasks/", "✓".green());
-
-    // Auto-register Codex MCP server in ~/.codex/config.toml. Failures are
-    // surfaced as warnings — they should not block local file scaffolding.
+    // Auto-register Codex MCP server + profiles
     println!();
     println!("Registering Codex MCP server…");
-    if let Err(e) = crate::cli::mcp_register::run(crate::cli::mcp_register::Agent::Codex, force) {
+    if let Err(e) = crate::cli::mcp_register::run(Agent::Codex, force) {
         eprintln!(
             "  {} Codex MCP registration reported errors: {e}",
             "⚠".yellow()
         );
     }
-    // Write per-phase Codex profiles ([profiles.zforge_<phase>]) so users can
-    // run `codex --profile zforge_code` and get the right model automatically.
     if let Err(e) = crate::cli::mcp_register::write_codex_profiles(&zforge_dir.join("agents")) {
         eprintln!(
             "  {} Codex profile write reported errors: {e}",
@@ -301,19 +371,50 @@ pub fn run(force: bool) -> Result<()> {
         );
     }
 
-    println!();
+    Ok(())
+}
+
+fn scaffold_opencode(
+    cwd: &Path,
+    zforge_dir: &Path,
+    vars_with_lang: &VarsExt<'_>,
+    force: bool,
+    stats: &mut InitStats,
+) -> Result<()> {
+    // AGENTS.md at project root — OpenCode also reads AGENTS.md
+    let agents_md = apply_vars_ext(include_str!("../../templates/AGENTS.md"), vars_with_lang);
+    let created = write_safe(&cwd.join("AGENTS.md"), &agents_md, force)?;
+    stats.record(created);
+    print_file_status(created, "AGENTS.md");
+    if !created {
+        eprintln!(
+            "  {} AGENTS.md already exists — not overwritten. Run with --force to replace.",
+            "⚠".yellow()
+        );
+    }
+
+    // .opencode/agents/ — symlinks to .zforge/agents/
+    let opencode_dir = cwd.join(".opencode");
+    std::fs::create_dir_all(&opencode_dir)?;
+    let opencode_agents_dir = opencode_dir.join("agents");
+    std::fs::create_dir_all(&opencode_agents_dir)?;
+    let opencode_agent_count =
+        symlink_zforge_agents(&zforge_dir.join("agents"), &opencode_agents_dir)?;
     println!(
-        "  {} created, {} skipped (already existed)",
-        stats.created, stats.skipped
+        "{} .opencode/agents/ — {} symlinks → .zforge/agents/",
+        label(opencode_agent_count > 0),
+        opencode_agent_count
     );
+
+    // Auto-register OpenCode MCP server in ~/.config/opencode/opencode.json
     println!();
-    println!("Next steps:");
-    println!("  1. Edit .zforge/config.yaml — set project.name");
-    println!("  2. Verify CLAUDE.md and AGENTS.md — project details correct");
-    println!("  3. Register Claude Code MCP: zforge mcp register --agent claude");
-    println!("     (Codex MCP was registered automatically above)");
-    println!("  4. Run: zf task import TASK-123");
-    println!("  5. Claude permissions preconfigured in .claude/settings.json");
+    println!("Registering OpenCode MCP server…");
+    if let Err(e) = crate::cli::mcp_register::run(Agent::OpenCode, force) {
+        eprintln!(
+            "  {} OpenCode MCP registration reported errors: {e}",
+            "⚠".yellow()
+        );
+    }
 
     Ok(())
 }

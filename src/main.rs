@@ -20,8 +20,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scaffold .zforge/ + .claude/ + CLAUDE.md for Claude Code workflow.
+    /// Scaffold .zforge/ + agent-specific files. Default agent: claude.
     Init {
+        /// Which AI coding agent to scaffold for: claude (default), codex, opencode, all.
+        #[arg(long, default_value = "claude")]
+        agent: String,
         #[arg(long)]
         force: bool,
     },
@@ -131,7 +134,10 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { force } => cli::init::run(force),
+        Commands::Init { agent, force } => {
+            let parsed = cli::mcp_register::Agent::parse(&agent)?;
+            cli::init::run(parsed, force)
+        }
         Commands::Task { action } => match action {
             TaskAction::Import {
                 task_id,
