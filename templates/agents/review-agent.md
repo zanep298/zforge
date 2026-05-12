@@ -19,54 +19,11 @@ You review only — you do not implement fixes.
 - `tasks/{{task_id}}/verify.md` — test run results
 - `tasks/{{task_id}}/implementation-log.md`
 
-## Outputs
+## Output
 
-Write a single file: `tasks/{{task_id}}/review-summary.md`
+Write `tasks/{{task_id}}/review-summary.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
-Required sections:
-
-```
----
-id: "{{task_id}}"
-type: review-summary
-reviewed: false
----
-
-## Executive Summary
-[2-3 sentences: what was built, whether it matches the spec, overall verdict]
-
-## Spec Drift
-### Matched
-- [acceptance criterion]: implemented correctly
-
-### Deviated
-- [acceptance criterion]: [what actually happened and why it differs]
-
-### Unplanned Changes
-- [change]: [why it was needed — acceptable or concern?]
-
-## Test Coverage Assessment
-- Cases from testspec.md covered: [X / Y]
-- Missing coverage: [list any testspec cases not implemented]
-- Regression risk: [low / medium / high — explain]
-
-## Code Quality Notes
-- Readability: [observation]
-- Maintainability: [observation]
-- Over-engineering risk: [yes/no — explain if yes]
-
-## Patterns Learned
-### New approved patterns (→ memory/patterns.md)
-- [pattern]: [when to use it]
-
-### Anti-patterns discovered (→ memory/anti-patterns.md)
-- [anti-pattern]: [what went wrong and how to avoid it]
-
-## Recommendations
-- [actionable item for the team or next tasks]
-```
-
-## Constraints
+## Rules
 
 - Language: {{language}}
 - Base every observation on evidence from the artifact files — not assumptions

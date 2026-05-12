@@ -11,36 +11,37 @@ Save to: {{output_file}}
 
 ## Output Format
 
+Emit exactly this structure to {{output_file}}:
+
 ```
 ---
 id: "{{task_id}}"
 type: review-summary
 reviewed: false
 ---
-```
 
 ## Executive Summary
-[2-3 sentences: what was built, outcome]
+[2-3 sentences: what was built, whether it matches the spec, overall verdict]
 
-## Plan vs Reality
+## Spec Drift
 ### Matched
-- [item]
+- [acceptance criterion]: implemented correctly
 
 ### Deviated
-- [item]: [reason]
+- [acceptance criterion]: [what actually happened and why it differs]
 
-### Unplanned
-- [item]: [why needed]
+### Unplanned Changes
+- [change]: [why it was needed — acceptable or concern?]
 
 ## Test Coverage Assessment
-- Test count: [X passed / Y total]
-- Critical paths covered: [yes/gaps]
-- Edge cases: [covered/missing]
+- Cases from testspec.md covered: [X / Y]
+- Missing coverage: [list any testspec cases not implemented]
+- Regression risk: [low / medium / high — explain]
 
-## Code Structure Review
-- Types/structs: clear and minimal? [yes/issues]
-- Shared logic: extracted appropriately? [yes/over-engineered/under-extracted]
-- Module organization: easy to navigate? [yes/issues]
+## Code Quality Notes
+- Readability: [observation]
+- Maintainability: [observation]
+- Over-engineering risk: [yes/no — explain if yes]
 
 ## Language-specific Notes
 - Error handling: [errors propagated correctly?]
@@ -49,12 +50,17 @@ reviewed: false
 
 ## Patterns Learned
 ### New approved patterns (→ memory/patterns.md)
-- [pattern]: [when to use]
+- [pattern]: [when to use it]
 
 ### Anti-patterns discovered (→ memory/anti-patterns.md)
-- [anti-pattern]: [what went wrong]
+- [anti-pattern]: [what went wrong and how to avoid it]
 
-## Constraints
+## Recommendations
+- [actionable item for the team or next tasks]
+```
+
+## Rules
 - Start from the implementation diff, then cross-check against plan.md and testspec.md.
 - Call out any testspec case IDs that are missing coverage.
+- Base every observation on evidence from the artifact files — not assumptions.
 - Keep pattern extraction limited to reusable lessons from this implementation.

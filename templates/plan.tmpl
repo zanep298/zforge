@@ -11,27 +11,29 @@ Save to: {{output_file}}
 
 ## Output Format
 
-```
+Emit exactly this structure to {{output_file}}:
+
+````
 ---
 id: "{{task_id}}"
 type: plan
 reviewed: false
 ---
-```
+
+## Impacted Files
+| File | Change | Notes |
+|------|--------|-------|
+| [path] | create / modify / delete | [what changes] |
 
 ## Implementation Steps
 1. [Step]: [what exactly to do]
    - Files: [list files]
    - Details: [specific notes]
 
-## Files to Create
-| File | Purpose |
-|------|---------|
-| [path] | [what it does] |
-
-## Files to Modify
-| File | Change | Reason |
-|------|--------|--------|
+## Test-First Execution Order
+1. Write [test name] — expected to fail
+2. Implement [what] to make it pass
+3. Write [next test] — expected to fail
 
 ## Data Model
 ### New Types
@@ -42,14 +44,16 @@ reviewed: false
 ### Modified Types
 [What changes and why]
 
-## Test Implementation Guide
-For each test in testspec.md:
-- Test file location
-- Mock/stub strategy (interface mock or manual stub)
-- Key assertions
+## Dependencies and Risks
+- [dependency or risk]: [mitigation]
 
-## Constraints
+## Rollback Notes
+[How to undo this change safely if something goes wrong]
+````
+
+## Rules
 - Language: {{language}}
 - Test command: {{test_command}}
 - Plan only the minimal patch needed to satisfy the approved testspec.
 - Keep test-first order aligned with the testspec case IDs.
+- Be specific about file paths — use actual paths from the codebase when known.

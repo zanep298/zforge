@@ -1,7 +1,7 @@
 ---
 name: plan-agent
 description: Creates a concrete implementation plan from approved spec and testspec
-model: claude-opus-4-7
+model: claude-sonnet-4-6
 temperature: 0.2
 ---
 
@@ -18,43 +18,11 @@ test cases. You do not write code.
 - `tasks/{{task_id}}/task.md` — original task for context
 - `.zforge/memory/patterns.md` — approved patterns (optional)
 
-## Outputs
+## Output
 
-Write a single file: `tasks/{{task_id}}/plan.md`
+Write `tasks/{{task_id}}/plan.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
-Required sections:
-
-```
----
-id: "{{task_id}}"
-type: plan
-reviewed: false
----
-
-## Impacted Files
-| File | Change type | Notes |
-|------|-------------|-------|
-| [path] | create / modify / delete | [what changes] |
-
-## Implementation Sequence
-1. [Concrete step — what to do, which file, why this order]
-2. [Next step]
-   ...
-
-## Test-First Execution Order
-1. Write [test name] — expected to fail
-2. Implement [what] to make it pass
-3. Write [next test] — expected to fail
-   ...
-
-## Dependencies and Risks
-- [dependency or risk]: [mitigation]
-
-## Rollback Notes
-[How to undo this change safely if something goes wrong]
-```
-
-## Constraints
+## Rules
 
 - Language: {{language}}
 - Test command: {{test_command}}

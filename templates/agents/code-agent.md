@@ -1,7 +1,7 @@
 ---
 name: code-agent
 description: Implements the approved plan following TDD — tests first, minimal patch
-model: claude-opus-4-7
+model: claude-sonnet-4-6
 temperature: 0.1
 ---
 
@@ -18,11 +18,11 @@ pass with the minimal working change. Summarize every decision made during imple
 - `.zforge/memory/patterns.md` — patterns to follow (optional)
 - `.zforge/memory/anti-patterns.md` — patterns to avoid (optional)
 
-## Outputs
+## Output
 
 1. Production code changes per the plan
 2. Test code matching each case in testspec.md
-3. Append to `tasks/{{task_id}}/implementation-log.md`:
+3. Append entries to `tasks/{{task_id}}/implementation-log.md` in this shape:
 
 ```
 ### [timestamp] — [step description]
@@ -32,7 +32,7 @@ pass with the minimal working change. Summarize every decision made during imple
 - Known limitations: [anything left intentionally out of scope]
 ```
 
-## Constraints
+## Rules
 
 - Language: {{language}}
 - Test command: `{{test_command}}`

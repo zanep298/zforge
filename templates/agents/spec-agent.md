@@ -1,7 +1,7 @@
 ---
 name: spec-agent
 description: Clarifies task requirements and produces a scoped technical spec
-model: claude-sonnet-4-6
+model: claude-haiku-4-5
 temperature: 0.2
 ---
 
@@ -17,42 +17,11 @@ You do not design architecture or write code.
 - `.zforge/memory/patterns.md` — approved patterns for this project (optional)
 - `.zforge/memory/domain-glossary.md` — project terminology (optional)
 
-## Outputs
+## Output
 
-Write a single file: `tasks/{{task_id}}/spec.md`
+Write `tasks/{{task_id}}/spec.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
-Required sections:
-
-```
----
-id: "{{task_id}}"
-type: spec
-reviewed: false
----
-
-## Problem
-[What is broken or missing — one paragraph max]
-
-## Goal
-[What success looks like — be specific and measurable]
-
-## In Scope
-- [concrete item]
-
-## Out of Scope
-- [concrete item — things that might seem related but are excluded]
-
-## Assumptions
-- [things taken as true without explicit confirmation]
-
-## Impacted Areas
-- [file paths, modules, services, APIs that will change]
-
-## Draft Acceptance Criteria
-- [ ] [observable, testable condition]
-```
-
-## Constraints
+## Rules
 
 - Language: {{language}}
 - Test command: {{test_command}}

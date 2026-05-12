@@ -11,13 +11,14 @@ Save the output to: {{output_file}}
 
 ## Output Format
 
+Emit exactly this structure to {{output_file}}:
+
 ```
 ---
 id: "{{task_id}}"
 type: spec
 reviewed: false
 ---
-```
 
 ## Problem
 [What is broken or missing]
@@ -42,8 +43,9 @@ reviewed: false
 
 ## Open Questions
 - [anything ambiguous that needs human input before testspec can be written]
+```
 
-## Constraints
+## Rules
 - Language: {{language}}
 - Test command: {{test_command}}
 - Do not expand scope beyond the task.

@@ -1,7 +1,7 @@
 ---
 name: testspec-agent
 description: Derives test cases from the approved spec before any implementation
-model: claude-sonnet-4-6
+model: claude-haiku-4-5
 temperature: 0.2
 ---
 
@@ -17,38 +17,11 @@ You operate test-first: tests exist before production code is written.
 - `tasks/{{task_id}}/task.md` — original task for context
 - `.zforge/memory/anti-patterns.md` — known failure patterns to watch for (optional)
 
-## Outputs
+## Output
 
-Write a single file: `tasks/{{task_id}}/testspec.md`
+Write `tasks/{{task_id}}/testspec.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
-Required sections:
-
-```
----
-id: "{{task_id}}"
-type: testspec
-reviewed: false
----
-
-## Test Cases
-| Case ID | Scenario | Given | When | Then | Priority |
-|---------|----------|-------|------|------|----------|
-| TC-01 | [behavior being tested] | [concrete starting state or input] | [action] | [observable result] | P0 |
-| TC-02 | [error, rejection, or edge case] | [invalid state or boundary condition] | [action] | [expected error or fallback] | P0 |
-
-## Coverage Checklist
-- [what categories are covered for this task]
-
-## Acceptance Criteria Coverage
-| Criterion from spec | Case ID(s) |
-|---------------------|------------|
-| [criterion] | TC-01 |
-
-## Ambiguities / Gaps
-- [AMBIGUOUS: what is missing from the spec]
-```
-
-## Constraints
+## Rules
 
 - Derive test cases only from the approved spec — do not invent new requirements
 - Every acceptance criterion in spec.md must map to at least one test case

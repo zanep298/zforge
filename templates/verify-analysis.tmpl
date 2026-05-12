@@ -17,9 +17,14 @@ You are debugging failing {{language}} tests.
 4. Suggest a specific fix for each failure
 5. Check whether testspec.md case IDs are covered
 
-## Output
-For each failed test:
-### test_name
+## Output Format
+
+Emit exactly this structure:
+
+```
+## Failure Analysis
+
+### [test_name]
 - Failure type: [implementation bug / test setup / wrong test]
 - Root cause: [specific reason]
 - Fix: [concrete code change]
@@ -28,3 +33,4 @@ For each failed test:
 - Fix in implementation: [list]
 - Fix in tests: [list, if any tests were wrong]
 - Missing coverage: [list, if any AC not covered]
+```

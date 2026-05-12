@@ -11,13 +11,14 @@ Save to: {{output_file}}
 
 ## Output Format
 
+Emit exactly this structure to {{output_file}}:
+
 ```
 ---
 id: "{{task_id}}"
 type: testspec
 reviewed: false
 ---
-```
 
 ## Test Cases
 | Case ID | Scenario | Given | When | Then | Priority |
@@ -33,15 +34,16 @@ reviewed: false
 - Auth / permission cases if the spec involves roles, tokens, or access rules
 - Performance or contract-sensitive cases only if explicitly required by the spec
 
-## Acceptance Criteria Mapping
-| Criterion | Covered By |
+## Acceptance Criteria Coverage
+| Criterion | Case ID(s) |
 |-----------|------------|
 | [criterion] | TC-01, TC-02 |
 
 ## Ambiguities / Gaps
 - [AMBIGUOUS: missing expected behavior for ...]
+```
 
-## Constraints
+## Rules
 - Every acceptance criterion in spec.md must map to at least one case ID.
 - Keep cases behavioral; do not classify them as unit or integration tests.
 - Do not invent requirements that are not in the spec.
