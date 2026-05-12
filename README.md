@@ -43,12 +43,15 @@ zforge --version
 ### With Claude Code
 
 ```bash
-# 1. Scaffold + wire Claude Code
+# 1. Scaffold project files
 zforge init
 
-# 2. Open project in Claude Code — zforge MCP server loads automatically
+# 2. Register zforge MCP server with Claude Code (local scope)
+zforge mcp register --agent claude
 
-# 3. Run your first task
+# 3. Open project in Claude Code — zforge MCP tools are available
+
+# 4. Run your first task
 zforge task import TASK-001 --title "Your task title"
 # edit tasks/TASK-001/task.md, then ask Claude Code:
 # "run zforge spec TASK-001" → review → "zforge approve TASK-001 spec" → ...
@@ -77,9 +80,12 @@ tasks/<ID>/. Use the zforge MCP tools when available.
 # 1. Scaffold shared project files
 zforge init
 
-# 2. Open project in OpenCode and register local MCP command `zforge mcp`
+# 2. Register zforge MCP server with OpenCode
+zforge mcp register --agent opencode
 
-# 3. Run your first task (same pipeline)
+# 3. Open project in OpenCode — zforge MCP tools are available
+
+# 4. Run your first task (same pipeline)
 zforge task import TASK-001 --title "Your task title"
 # edit tasks/TASK-001/task.md, then:
 zforge spec TASK-001
@@ -118,16 +124,39 @@ Figma MCP → figma_context → task import → figma.md → spec prompt
 
 | Command | What it creates |
 |---------|----------------|
-| `zforge init` | `.zforge/`, `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` |
+| `zforge init` | `.zforge/`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` |
 
 Agents live in `.zforge/agents/` and are linked into `.claude/agents/`.
-The project-local MCP entrypoints use `zforge mcp`.
+MCP registration is **not** automatic — run `zforge mcp register` after init
+to wire the `zforge mcp` stdio server into your AI agent of choice (Claude
+Code, Codex, OpenCode).
+
+## Register the MCP server
+
+```bash
+zforge mcp register                    # register with all detected agents (default)
+zforge mcp register --agent claude     # Claude Code only (uses `claude mcp add`)
+zforge mcp register --agent codex      # Codex (writes ~/.codex/config.toml)
+zforge mcp register --agent opencode   # OpenCode (writes ~/.config/opencode/opencode.json)
+zforge mcp register --force            # re-register, overwriting any existing entry
+```
+
+Each agent writes to its own user-scoped config:
+
+| Agent | Config location | Method |
+|-------|----------------|--------|
+| Claude Code | local MCP registry | `claude mcp add zforge -- zforge mcp` |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.zforge]` block |
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp.zforge` entry |
+
+Agents that are not installed are skipped, not failed.
 
 ## All commands
 
 | Command | Description |
 |---------|-------------|
-| `zforge init` | Scaffold `.zforge/`, Claude Code files, and local MCP registration |
+| `zforge init` | Scaffold `.zforge/`, `CLAUDE.md`, `.claude/` files |
+| `zforge mcp register` | Register zforge MCP server with Claude Code, Codex, and/or OpenCode |
 | `zforge task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`) |
 | `zforge spec <ID>` | Generate spec prompt |
 | `zforge approve <ID> spec` | Approve spec (human gate) |

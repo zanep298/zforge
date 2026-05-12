@@ -25,16 +25,6 @@ const PATTERNS_MD: &str = "# Coding Patterns\n\n## Approved Patterns\n\n## Test 
 const GLOSSARY_MD: &str = "# Domain Glossary\n";
 const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
 
-const MCP_JSON: &str = r#"{
-  "mcpServers": {
-    "zforge": {
-      "command": "zforge",
-      "args": ["mcp"]
-    }
-  }
-}
-"#;
-
 const CLAUDE_SETTINGS_JSON: &str = r#"{
   "permissions": {
     "allow": [
@@ -200,11 +190,6 @@ pub fn run(force: bool) -> Result<()> {
     stats.record(created);
     print_file_status(created, ".zforge/README.md");
 
-    // .mcp.json at project root — project-local MCP registration for Claude Code
-    let created = write_safe(&cwd.join(".mcp.json"), MCP_JSON, force)?;
-    stats.record(created);
-    print_file_status(created, ".mcp.json");
-
     // CLAUDE.md at project root — auto-loaded by Claude Code
     let lang_skills_section = build_lang_skills_section(&vars.language, &lang_skills);
     let vars_with_lang = VarsExt {
@@ -265,8 +250,8 @@ pub fn run(force: bool) -> Result<()> {
     println!("Next steps:");
     println!("  1. Edit .zforge/config.yaml — set project.name");
     println!("  2. Edit CLAUDE.md — verify project details are correct");
-    println!("  3. Run: zf task import TASK-123");
-    println!("  4. Local MCP server registered in .mcp.json → zf mcp");
+    println!("  3. Register MCP server with Claude Code: zforge mcp register");
+    println!("  4. Run: zf task import TASK-123");
     println!("  5. Claude permissions preconfigured in .claude/settings.json");
 
     Ok(())

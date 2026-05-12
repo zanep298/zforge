@@ -85,8 +85,24 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
-    /// Start the zforge MCP server (stdio). Register locally as `zf mcp`.
-    Mcp,
+    /// MCP server: stdio JSON-RPC (no subcommand) or manage Claude Code registration.
+    Mcp {
+        #[command(subcommand)]
+        action: Option<McpAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpAction {
+    /// Register zforge as an MCP server with one or more AI coding agents.
+    Register {
+        /// Target agent: all (default), claude, codex, opencode.
+        #[arg(long, default_value = "all")]
+        agent: String,
+        /// Re-register if already present.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -164,6 +180,12 @@ fn main() -> Result<()> {
             short,
         } => cli::status::run(task_id, json, short),
         Commands::Retry { task_id, from, yes } => cli::retry::run(&task_id, &from, yes),
-        Commands::Mcp => mcp::run(),
+        Commands::Mcp { action } => match action {
+            None => mcp::run(),
+            Some(McpAction::Register { agent, force }) => {
+                let target = cli::mcp_register::Agent::parse(&agent)?;
+                cli::mcp_register::run(target, force)
+            }
+        },
     }
 }

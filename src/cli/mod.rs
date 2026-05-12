@@ -1,6 +1,7 @@
 pub mod approve;
 pub mod code;
 pub mod init;
+pub mod mcp_register;
 pub mod plan;
 pub mod retry;
 pub mod review;
