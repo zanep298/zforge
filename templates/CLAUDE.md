@@ -12,7 +12,7 @@ This project uses a gated TDD workflow managed by `zforge`. Every task moves thr
 these phases in order. Two phases require explicit human approval before proceeding.
 
 ```
-task import → spec → testspec → [APPROVE] → plan → [APPROVE] → code → verify → review
+task import → spec → testspec → [APPROVE testspec] → plan → [APPROVE plan] → code → verify → review
 ```
 
 When asked to implement a task, always check the current state first:
@@ -56,6 +56,14 @@ Use these skill files as checklists during each phase:
 | Writing tests | `.zforge/skills/write-tests-first.md` |
 | Implementing | `.zforge/skills/implement-minimal-patch.md` |
 | Reviewing | `.zforge/skills/review-patch.md` |
+
+### Supplementary Skills
+
+| When | Skill file |
+|------|-----------|
+| Diagnosing a bug | `.zforge/skills/debug.md` |
+| Security check before merge | `.zforge/skills/security-review.md` |
+| Fixing a performance problem | `.zforge/skills/performance-optimize.md` |
 
 Load a skill with `/file .zforge/skills/<name>.md` before starting that phase.
 

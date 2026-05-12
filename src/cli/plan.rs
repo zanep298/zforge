@@ -1,5 +1,5 @@
 use crate::config;
-use crate::fs::reader;
+use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -26,9 +26,13 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         if !reader::artifact_exists(&tasks_dir, task_id, "plan.md") {
             anyhow::bail!("plan.md not found or empty. Generate content before marking done.");
         }
+        let plan_path = tasks_dir.join(task_id).join("plan.md");
+        let plan_tokens = tokens::estimate(&std::fs::read_to_string(&plan_path).unwrap_or_default());
+        writer::set_frontmatter(&plan_path, "tokens", serde_yaml::Value::Number(plan_tokens.into()))?;
+
         ts.advance(State::Planned, "plan generated")?;
         ts.save(&tasks_dir)?;
-        println!("{} plan.md validated", "✓".green());
+        println!("{} plan.md validated  ({} tokens)", "✓".green(), tokens::fmt(plan_tokens));
         println!("{} State advanced: TestspecReviewed → Planned", "✓".green());
         println!();
         println!("Next: zf approve {} plan", task_id);

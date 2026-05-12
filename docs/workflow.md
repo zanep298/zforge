@@ -9,12 +9,7 @@ Approval gates prevent the AI from moving forward without human sign-off.
 task import
     │
     ▼
- spec          ← AI clarifies requirements, defines acceptance criteria
-    │
- approve ──── human gate (zforge approve TASK-001 spec)
-    │
-    ▼
- testspec      ← AI derives test cases before any code is written
+ spec  ← AI clarifies requirements, defines acceptance criteria, derives test cases
     │
  approve ──── human gate (zforge approve TASK-001 testspec)
     │
@@ -63,8 +58,10 @@ using your AI tool's Figma MCP before calling `task import`.
 
 ### spec
 
-The spec-agent reads `task.md` (and `figma.md` if present) and produces
-`tasks/<TASK-ID>/spec.md` with:
+The spec-agent reads `task.md` (and `figma.md` if present) and produces **both**
+`tasks/<TASK-ID>/spec.md` and `tasks/<TASK-ID>/testspec.md` in a single LLM call.
+
+`spec.md` contains:
 
 - **Problem** — what is broken or missing
 - **Goal** — measurable success definition
@@ -73,18 +70,17 @@ The spec-agent reads `task.md` (and `figma.md` if present) and produces
 - **Impacted Areas** — files, modules, APIs that will change
 - **Acceptance Criteria** — observable, testable conditions
 
-> **Approval required.** Read spec.md carefully. Reject vague acceptance criteria.
-> The spec becomes the contract for every subsequent phase.
+`testspec.md` contains a concrete list of test cases written **before** any
+implementation. Each test case maps to one or more acceptance criteria and covers
+happy paths, error cases, and boundary conditions.
 
-### testspec
-
-The testspec-agent reads `spec.md` and produces `tasks/<TASK-ID>/testspec.md` —
-a concrete list of test cases written **before** any implementation.
-
-Each test case includes: scenario, input, expected output, edge cases.
-
-> **Approval required.** Ensure coverage of all acceptance criteria and meaningful
-> edge cases. Missing tests here means missing coverage later.
+> **Approval required (testspec gate).** Read both files carefully. Reject vague
+> acceptance criteria and incomplete test coverage. These become the contract for
+> every subsequent phase.
+>
+> ```bash
+> zforge approve TASK-001 testspec
+> ```
 
 ### plan
 
@@ -124,12 +120,12 @@ The review-agent reads all artifacts and the final diff and produces
 ## Approval gates
 
 ```bash
-zforge approve TASK-001 spec         # unlocks testspec phase
 zforge approve TASK-001 testspec     # unlocks plan and code phases
+zforge approve TASK-001 plan         # unlocks code phase
 ```
 
 Approval sets `reviewed: true` in the artifact's YAML frontmatter. zforge blocks
-downstream phases until both spec and testspec are approved.
+downstream phases until the required artifact is approved.
 
 To add a note to an approval:
 

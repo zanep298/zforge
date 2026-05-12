@@ -1,4 +1,5 @@
 use super::context::PromptContext;
+use crate::fs::tokens;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
@@ -44,6 +45,11 @@ impl Engine {
         if !ctx.output_file.is_empty() {
             println!("{} Output to: {}", "📄".bold(), ctx.output_file);
         }
+        println!(
+            "  {} prompt:  {} tokens",
+            "📊".bold(),
+            tokens::fmt(tokens::estimate(&rendered))
+        );
         if !ctx.next_command.is_empty() {
             println!("{}  Next: {}", "⏭".bold(), ctx.next_command);
         }
@@ -118,6 +124,11 @@ impl Engine {
         println!("{}", sep.blue());
         println!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
         println!("  {} output: {}", "📄".bold(), ctx.output_file);
+        println!(
+            "  {} prompt:  {} tokens",
+            "📊".bold(),
+            tokens::fmt(tokens::estimate(&rendered))
+        );
         println!("{}", sep.blue());
         println!();
 
@@ -161,6 +172,11 @@ impl Engine {
         println!("{}", sep.blue());
         println!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
         println!("  {} output: {}", "📄".bold(), ctx.output_file);
+        println!(
+            "  {} prompt:  {} tokens",
+            "📊".bold(),
+            tokens::fmt(tokens::estimate(&rendered))
+        );
         println!("{}", sep.blue());
         println!();
 

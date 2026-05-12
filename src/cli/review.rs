@@ -1,5 +1,5 @@
 use crate::config;
-use crate::fs::{reader, writer};
+use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -24,6 +24,8 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         // Extract patterns from review-summary.md
         let summary_path = tasks_dir.join(task_id).join("review-summary.md");
         let summary = std::fs::read_to_string(&summary_path)?;
+        let review_tokens = tokens::estimate(&summary);
+        writer::set_frontmatter(&summary_path, "tokens", serde_yaml::Value::Number(review_tokens.into()))?;
         let (patterns_count, anti_count) = extract_and_update_memory(&config, &summary)?;
 
         ts.advance(State::Reviewed, "review complete")?;

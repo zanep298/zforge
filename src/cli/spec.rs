@@ -1,5 +1,5 @@
 use crate::config;
-use crate::fs::reader;
+use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -31,14 +31,16 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
     }
 
     if done {
-        let spec_path = tasks_dir.join(task_id).join("spec.md");
         if !reader::artifact_exists(&tasks_dir, task_id, "spec.md") {
             anyhow::bail!("spec.md not found or empty. Generate content before marking done.");
         }
-        drop(spec_path);
+        let spec_path = tasks_dir.join(task_id).join("spec.md");
+        let spec_tokens = tokens::estimate(&std::fs::read_to_string(&spec_path).unwrap_or_default());
+        writer::set_frontmatter(&spec_path, "tokens", serde_yaml::Value::Number(spec_tokens.into()))?;
+
         ts.advance(State::SpecDone, "spec generated")?;
         ts.save(&tasks_dir)?;
-        println!("{} spec.md validated", "✓".green());
+        println!("{} spec.md validated  ({} tokens)", "✓".green(), tokens::fmt(spec_tokens));
         println!("{} State advanced: Imported → SpecDone", "✓".green());
         println!();
         println!("Next: zf testspec {}", task_id);
