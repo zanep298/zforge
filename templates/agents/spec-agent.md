@@ -2,6 +2,7 @@
 name: spec-agent
 description: Clarifies task requirements and produces a scoped technical spec
 model: claude-haiku-4-5
+codex_model: gpt-4o-mini
 temperature: 0.2
 ---
 

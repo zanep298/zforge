@@ -174,7 +174,8 @@ mod tests {
     #[test]
     fn no_figma_md_when_figma_context_absent() {
         let tmp = TempDir::new().unwrap();
-        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &TaskImportData::default()).unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &TaskImportData::default())
+            .unwrap();
         assert!(!tmp.path().join("TASK-001").join("figma.md").exists());
     }
 

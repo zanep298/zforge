@@ -25,7 +25,11 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         let summary_path = tasks_dir.join(task_id).join("review-summary.md");
         let summary = std::fs::read_to_string(&summary_path)?;
         let review_tokens = tokens::estimate(&summary);
-        writer::set_frontmatter(&summary_path, "tokens", serde_yaml::Value::Number(review_tokens.into()))?;
+        writer::set_frontmatter(
+            &summary_path,
+            "tokens",
+            serde_yaml::Value::Number(review_tokens.into()),
+        )?;
         let model = reader::agent_model(&config.agents_dir(), "review");
         writer::set_frontmatter(&summary_path, "model", serde_yaml::Value::String(model))?;
         let (patterns_count, anti_count) = extract_and_update_memory(&config, &summary)?;
@@ -99,8 +103,10 @@ fn extract_and_update_memory(
         }
     }
 
-    let patterns_count = writer::append_unique_lines(&memory_dir.join("patterns.md"), &patterns_lines)?;
-    let anti_count = writer::append_unique_lines(&memory_dir.join("anti-patterns.md"), &anti_lines)?;
+    let patterns_count =
+        writer::append_unique_lines(&memory_dir.join("patterns.md"), &patterns_lines)?;
+    let anti_count =
+        writer::append_unique_lines(&memory_dir.join("anti-patterns.md"), &anti_lines)?;
 
     Ok((patterns_count, anti_count))
 }

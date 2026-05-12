@@ -2,6 +2,7 @@
 name: code-agent
 description: Implements the approved plan following TDD — tests first, minimal patch
 model: claude-sonnet-4-6
+codex_model: codex-mini-latest
 temperature: 0.1
 ---
 

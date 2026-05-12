@@ -44,13 +44,14 @@ impl MarkdownFile {
 fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
     let normalized = raw.replace("\r\n", "\n");
 
-    if normalized.starts_with("---\n") {
-        if let Some(end) = normalized[4..].find("\n---\n") {
-            let fm_str = &normalized[4..4 + end];
-            let body_start = 4 + end + 5;
-            let body = normalized[body_start..].to_string();
-            let frontmatter: HashMap<String, serde_yaml::Value> =
-                serde_yaml::from_str(fm_str).unwrap_or_default();
+    if let Some(rest) = normalized.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---\n") {
+            let fm_str = &rest[..end];
+            let body = rest[end + 5..].to_string();
+            let frontmatter: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(fm_str)
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to parse frontmatter YAML: {e} — input: {fm_str:?}")
+                })?;
             return Ok(MarkdownFile {
                 frontmatter,
                 body,
@@ -72,6 +73,13 @@ pub fn agent_model(agents_dir: &Path, phase: &str) -> String {
         .ok()
         .and_then(|md| md.get_str("model").map(String::from))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub fn agent_codex_model(agents_dir: &Path, phase: &str) -> Option<String> {
+    let path = agents_dir.join(format!("{}-agent.md", phase));
+    MarkdownFile::read(&path)
+        .ok()
+        .and_then(|md| md.get_str("codex_model").map(String::from))
 }
 
 pub fn artifact_exists(tasks_dir: &Path, task_id: &str, artifact: &str) -> bool {

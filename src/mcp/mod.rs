@@ -16,6 +16,10 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 pub fn run() -> Result<()> {
+    // MCP responses are JSON over stdout — ANSI color escapes would corrupt the stream
+    // and pollute the text content rendered to the AI caller.
+    colored::control::set_override(false);
+
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -255,10 +259,7 @@ fn tool_status(args: &Value) -> Result<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // Capture status output
-    crate::cli::status::run(task_id, false, false)?;
-
-    Ok("Status shown above.".to_string())
+    crate::cli::status::render(task_id, false, false)
 }
 
 // ─── tool schema definitions ──────────────────────────────────────────────────

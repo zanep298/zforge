@@ -4,38 +4,55 @@ use crate::state::{State, TaskState};
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use colored::Colorize;
+use std::fmt::Write as _;
 use walkdir::WalkDir;
 
 pub fn run(task_id: Option<String>, json: bool, short: bool) -> Result<()> {
+    let out = render(task_id, json, short)?;
+    print!("{}", out);
+    Ok(())
+}
+
+/// Render status output to a `String` without touching stdout. Used by the MCP server
+/// (whose stdout is the JSON-RPC transport) and by `run()` above.
+pub fn render(task_id: Option<String>, json: bool, short: bool) -> Result<String> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
 
     if let Some(id) = task_id {
-        show_single(&tasks_dir, &id, json, short)
+        render_single(&tasks_dir, &id, json, short)
     } else {
-        show_all(&tasks_dir, json, short)
+        render_all(&tasks_dir, json, short)
     }
 }
 
-fn show_single(tasks_dir: &std::path::Path, task_id: &str, json: bool, short: bool) -> Result<()> {
+fn render_single(
+    tasks_dir: &std::path::Path,
+    task_id: &str,
+    json: bool,
+    short: bool,
+) -> Result<String> {
     let ts = TaskState::load(tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
+    let mut out = String::new();
+
     if short {
-        println!("{}", ts.state.as_str());
-        return Ok(());
+        writeln!(out, "{}", ts.state.as_str())?;
+        return Ok(out);
     }
 
     if json {
-        println!(
+        writeln!(
+            out,
             "{}",
             serde_json::json!({
                 "task_id": ts.task_id,
                 "state": ts.state.as_str(),
                 "updated_at": ts.updated_at.to_rfc3339(),
             })
-        );
-        return Ok(());
+        )?;
+        return Ok(out);
     }
 
     // Read title and domain from task.md
@@ -52,21 +69,21 @@ fn show_single(tasks_dir: &std::path::Path, task_id: &str, json: bool, short: bo
         .to_string();
 
     let sep = "━".repeat(40);
-    println!("{}", sep);
+    writeln!(out, "{}", sep)?;
     let header = if title.is_empty() {
         task_id.to_string()
     } else {
         format!("{} · {}", task_id, title)
     };
-    println!("  {}", header.bold());
-    println!("{}", sep);
-    println!("  State:   {} ✓", ts.state.as_str().green());
+    writeln!(out, "  {}", header.bold())?;
+    writeln!(out, "{}", sep)?;
+    writeln!(out, "  State:   {} ✓", ts.state.as_str().green())?;
     if !domain.is_empty() {
-        println!("  Domain:  {}", domain);
+        writeln!(out, "  Domain:  {}", domain)?;
     }
-    println!("  Updated: {}", format_relative(&ts.updated_at));
-    println!();
-    println!("  Artifacts:");
+    writeln!(out, "  Updated: {}", format_relative(&ts.updated_at))?;
+    writeln!(out)?;
+    writeln!(out, "  Artifacts:")?;
 
     let artifacts = [
         "task.md",
@@ -114,23 +131,32 @@ fn show_single(tasks_dir: &std::path::Path, task_id: &str, json: bool, short: bo
                 }
             }
 
-            println!("    {} {:<28} {}{}", "✓".green(), artifact, date_str, extra);
+            writeln!(
+                out,
+                "    {} {:<28} {}{}",
+                "✓".green(),
+                artifact,
+                date_str,
+                extra
+            )?;
         } else {
-            println!("    {} {}", "✗".red(), artifact);
+            writeln!(out, "    {} {}", "✗".red(), artifact)?;
         }
     }
 
-    println!();
-    println!("  Next:    {}", ts.state.hint());
-    println!("{}", sep);
+    writeln!(out)?;
+    writeln!(out, "  Next:    {}", ts.state.hint())?;
+    writeln!(out, "{}", sep)?;
 
-    Ok(())
+    Ok(out)
 }
 
-fn show_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<()> {
+fn render_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<String> {
+    let mut out = String::new();
+
     if !tasks_dir.exists() {
-        println!("No tasks found.");
-        return Ok(());
+        writeln!(out, "No tasks found.")?;
+        return Ok(out);
     }
 
     let mut tasks: Vec<(String, TaskState)> = Vec::new();
@@ -147,8 +173,8 @@ fn show_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<()> 
     }
 
     if tasks.is_empty() {
-        println!("No tasks found.");
-        return Ok(());
+        writeln!(out, "No tasks found.")?;
+        return Ok(out);
     }
 
     if json {
@@ -161,14 +187,14 @@ fn show_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<()> 
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&arr)?);
-        return Ok(());
+        writeln!(out, "{}", serde_json::to_string_pretty(&arr)?)?;
+        return Ok(out);
     }
 
     let sep = "━".repeat(40);
     if !short {
-        println!("Tasks in {}/", tasks_dir.display());
-        println!("{}", sep);
+        writeln!(out, "Tasks in {}/", tasks_dir.display())?;
+        writeln!(out, "{}", sep)?;
     }
 
     let complete_count = tasks
@@ -190,23 +216,24 @@ fn show_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<()> 
         };
 
         if short {
-            println!("{:<12} {}", id, colored_state);
+            writeln!(out, "{:<12} {}", id, colored_state)?;
         } else {
-            println!("  {:<12} {:<18} {}", id.bold(), colored_state, title);
+            writeln!(out, "  {:<12} {:<18} {}", id.bold(), colored_state, title)?;
         }
     }
 
     if !short {
-        println!("{}", sep);
-        println!(
+        writeln!(out, "{}", sep)?;
+        writeln!(
+            out,
             "  {} tasks · {} complete · {} in progress",
             tasks.len(),
             complete_count,
             tasks.len() - complete_count
-        );
+        )?;
     }
 
-    Ok(())
+    Ok(out)
 }
 
 fn format_relative(dt: &DateTime<Local>) -> String {

@@ -2,6 +2,7 @@
 name: plan-agent
 description: Creates a concrete implementation plan from approved spec and testspec
 model: claude-sonnet-4-6
+codex_model: gpt-4o
 temperature: 0.2
 ---
 

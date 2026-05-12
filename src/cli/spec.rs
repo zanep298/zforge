@@ -35,14 +35,23 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
             anyhow::bail!("spec.md not found or empty. Generate content before marking done.");
         }
         let spec_path = tasks_dir.join(task_id).join("spec.md");
-        let spec_tokens = tokens::estimate(&std::fs::read_to_string(&spec_path).unwrap_or_default());
-        writer::set_frontmatter(&spec_path, "tokens", serde_yaml::Value::Number(spec_tokens.into()))?;
+        let spec_tokens =
+            tokens::estimate(&std::fs::read_to_string(&spec_path).unwrap_or_default());
+        writer::set_frontmatter(
+            &spec_path,
+            "tokens",
+            serde_yaml::Value::Number(spec_tokens.into()),
+        )?;
         let model = reader::agent_model(&config.agents_dir(), "spec");
         writer::set_frontmatter(&spec_path, "model", serde_yaml::Value::String(model))?;
 
         ts.advance(State::SpecDone, "spec generated")?;
         ts.save(&tasks_dir)?;
-        println!("{} spec.md validated  ({} tokens)", "✓".green(), tokens::fmt(spec_tokens));
+        println!(
+            "{} spec.md validated  ({} tokens)",
+            "✓".green(),
+            tokens::fmt(spec_tokens)
+        );
         println!("{} State advanced: Imported → SpecDone", "✓".green());
         println!();
         println!("Next: zf testspec {}", task_id);

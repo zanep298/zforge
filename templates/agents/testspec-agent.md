@@ -2,6 +2,7 @@
 name: testspec-agent
 description: Derives test cases from the approved spec before any implementation
 model: claude-haiku-4-5
+codex_model: gpt-4o-mini
 temperature: 0.2
 ---
 

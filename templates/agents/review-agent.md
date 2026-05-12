@@ -2,6 +2,7 @@
 name: review-agent
 description: Reviews the completed implementation against spec, testspec, and plan
 model: claude-sonnet-4-6
+codex_model: gpt-4o
 temperature: 0.2
 ---
 

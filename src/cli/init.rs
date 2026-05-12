@@ -219,7 +219,7 @@ pub fn run(force: bool) -> Result<()> {
     // .claude/agents/ — symlinks to .zforge/agents/*.md (single source of truth)
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
-    let agent_count = symlink_claude_agents(&zforge_dir.join("agents"), &claude_agents_dir)?;
+    let agent_count = symlink_zforge_agents(&zforge_dir.join("agents"), &claude_agents_dir)?;
     println!(
         "{} .claude/agents/ — {} symlinks → .zforge/agents/",
         label(agent_count > 0),
@@ -236,10 +236,70 @@ pub fn run(force: bool) -> Result<()> {
         rule_count
     );
 
+    // --- Codex CLI scaffolding ----------------------------------------------
+    // AGENTS.md at project root — auto-loaded by Codex CLI
+    let agents_md = apply_vars_ext(include_str!("../../templates/AGENTS.md"), &vars_with_lang);
+    let created = write_safe(&cwd.join("AGENTS.md"), &agents_md, force)?;
+    stats.record(created);
+    print_file_status(created, "AGENTS.md");
+    if !created {
+        eprintln!(
+            "  {} AGENTS.md already exists — not overwritten. Run with --force to replace.",
+            "⚠".yellow()
+        );
+    }
+
+    // .codex/agents/ — symlinks to .zforge/agents/ for Codex CLI to reference
+    let codex_dir = cwd.join(".codex");
+    std::fs::create_dir_all(&codex_dir)?;
+    let codex_agents_dir = codex_dir.join("agents");
+    std::fs::create_dir_all(&codex_agents_dir)?;
+    let codex_agent_count = symlink_zforge_agents(&zforge_dir.join("agents"), &codex_agents_dir)?;
+    println!(
+        "{} .codex/agents/ — {} symlinks → .zforge/agents/",
+        label(codex_agent_count > 0),
+        codex_agent_count
+    );
+
+    // .codex/README.md — explain Codex CLI integration + permissions caveat
+    let codex_readme = apply_vars(include_str!("../../templates/codex-readme.md"), &vars);
+    let created = write_safe(&codex_dir.join("README.md"), &codex_readme, force)?;
+    stats.record(created);
+    print_file_status(created, ".codex/README.md");
+
     // .zforge/tasks/
     let tasks_dir = zforge_dir.join("tasks");
     std::fs::create_dir_all(&tasks_dir)?;
     println!("{} .zforge/tasks/", "✓".green());
+
+    // Auto-register Codex MCP server in ~/.codex/config.toml. Failures are
+    // surfaced as warnings — they should not block local file scaffolding.
+    println!();
+    println!("Registering Codex MCP server…");
+    if let Err(e) = crate::cli::mcp_register::run(crate::cli::mcp_register::Agent::Codex, force) {
+        eprintln!(
+            "  {} Codex MCP registration reported errors: {e}",
+            "⚠".yellow()
+        );
+    }
+    // Write per-phase Codex profiles ([profiles.zforge_<phase>]) so users can
+    // run `codex --profile zforge_code` and get the right model automatically.
+    if let Err(e) = crate::cli::mcp_register::write_codex_profiles(&zforge_dir.join("agents")) {
+        eprintln!(
+            "  {} Codex profile write reported errors: {e}",
+            "⚠".yellow()
+        );
+    } else {
+        println!(
+            "{} ~/.codex/config.toml — profiles: {}",
+            "✓".green(),
+            crate::cli::mcp_register::PHASES
+                .iter()
+                .map(|p| format!("zforge_{p}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 
     println!();
     println!(
@@ -249,8 +309,9 @@ pub fn run(force: bool) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. Edit .zforge/config.yaml — set project.name");
-    println!("  2. Edit CLAUDE.md — verify project details are correct");
-    println!("  3. Register MCP server with Claude Code: zforge mcp register");
+    println!("  2. Verify CLAUDE.md and AGENTS.md — project details correct");
+    println!("  3. Register Claude Code MCP: zforge mcp register --agent claude");
+    println!("     (Codex MCP was registered automatically above)");
     println!("  4. Run: zf task import TASK-123");
     println!("  5. Claude permissions preconfigured in .claude/settings.json");
 
@@ -347,8 +408,8 @@ pub(crate) fn detect_project(root: &std::path::Path) -> DetectedProject {
 
 fn detect_android_project(root: &std::path::Path) -> Option<DetectedProject> {
     // Android project: has settings.gradle.kts (or .gradle) and an app/ subdirectory
-    let has_settings = root.join("settings.gradle.kts").exists()
-        || root.join("settings.gradle").exists();
+    let has_settings =
+        root.join("settings.gradle.kts").exists() || root.join("settings.gradle").exists();
     let has_app_dir = root.join("app").is_dir();
     if !(has_settings && has_app_dir) {
         return None;
@@ -369,7 +430,7 @@ fn read_android_app_name(root: &std::path::Path) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with("rootProject.name") {
-            if let Some(val) = line.splitn(2, '=').nth(1) {
+            if let Some((_, val)) = line.split_once('=') {
                 return Some(
                     val.trim()
                         .trim_matches('"')
@@ -442,7 +503,7 @@ fn read_cargo_name(root: &std::path::Path) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with("name") {
-            if let Some(val) = line.splitn(2, '=').nth(1) {
+            if let Some((_, val)) = line.split_once('=') {
                 return Some(val.trim().trim_matches('"').to_string());
             }
         }
@@ -469,7 +530,7 @@ fn read_package_json_name(root: &std::path::Path) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with("\"name\"") {
-            if let Some(val) = line.splitn(2, ':').nth(1) {
+            if let Some((_, val)) = line.split_once(':') {
                 return Some(
                     val.trim()
                         .trim_matches(',')
@@ -590,9 +651,13 @@ fn build_lang_skills_section(language: &str, skills: &[(String, &str)]) -> Strin
     )
 }
 
-/// Create symlinks in `claude_agents_dir` pointing to `*.md` files in `zforge_agents_dir`.
-/// `.zforge/agents/` is the single source of truth — Claude Code reads via symlinks.
-fn symlink_claude_agents(_zforge_agents_dir: &Path, claude_agents_dir: &Path) -> Result<usize> {
+/// Create symlinks in `link_dir` pointing to `*.md` files in `zforge_agents_dir`.
+/// `.zforge/agents/` is the single source of truth — agent harnesses (Claude Code,
+/// Codex CLI, …) read via symlinks under their own project directory.
+///
+/// `link_dir` is expected at depth 2 from the project root (e.g. `.claude/agents/`,
+/// `.codex/agents/`) so the relative target `../../.zforge/agents/` resolves correctly.
+fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path) -> Result<usize> {
     let agent_names = [
         "spec-agent.md",
         "testspec-agent.md",
@@ -602,11 +667,10 @@ fn symlink_claude_agents(_zforge_agents_dir: &Path, claude_agents_dir: &Path) ->
     ];
     let mut count = 0;
     for name in agent_names {
-        let link = claude_agents_dir.join(name);
+        let link = link_dir.join(name);
         if link.exists() || link.symlink_metadata().is_ok() {
             continue; // already linked or file exists
         }
-        // Relative path: .claude/agents/X.md → ../../.zforge/agents/X.md
         let target = Path::new("../../.zforge/agents").join(name);
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link)?;
@@ -734,4 +798,108 @@ fn agent_templates() -> &'static [(&'static str, &'static str)] {
 
 fn skill_templates() -> &'static [(&'static str, &'static str)] {
     SKILLS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn sample_vars() -> Vars {
+        Vars {
+            language: "rust".into(),
+            test_command: "cargo test".into(),
+            project_name: "demo".into(),
+        }
+    }
+
+    #[test]
+    fn agents_md_template_renders_project_vars() {
+        let vars = sample_vars();
+        let ext = VarsExt {
+            vars: &vars,
+            lang_skills_section: "",
+        };
+        let rendered = apply_vars_ext(include_str!("../../templates/AGENTS.md"), &ext);
+        assert!(rendered.starts_with("# demo\n"));
+        assert!(rendered.contains("**Language:** rust"));
+        assert!(rendered.contains("`cargo test`"));
+        // Codex-specific anchors must survive substitution
+        assert!(rendered.contains("OpenAI Codex CLI"));
+        assert!(rendered.contains("~/.codex/config.toml"));
+        assert!(rendered.contains(".codex/agents/spec-agent.md"));
+        assert!(!rendered.contains("{{"), "unsubstituted handlebar present");
+    }
+
+    #[test]
+    fn codex_readme_template_renders_without_handlebars() {
+        let vars = sample_vars();
+        let rendered = apply_vars(include_str!("../../templates/codex-readme.md"), &vars);
+        assert!(rendered.contains("`zforge mcp register --agent codex`"));
+        assert!(rendered.contains("[mcp_servers.zforge]"));
+        assert!(!rendered.contains("{{"));
+    }
+
+    #[test]
+    fn symlink_zforge_agents_creates_relative_links_into_codex_dir() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let zforge_agents = root.join(".zforge").join("agents");
+        std::fs::create_dir_all(&zforge_agents).unwrap();
+        for name in [
+            "spec-agent.md",
+            "testspec-agent.md",
+            "plan-agent.md",
+            "code-agent.md",
+            "review-agent.md",
+        ] {
+            std::fs::write(zforge_agents.join(name), "stub\n").unwrap();
+        }
+
+        let codex_agents = root.join(".codex").join("agents");
+        std::fs::create_dir_all(&codex_agents).unwrap();
+
+        let count = symlink_zforge_agents(&zforge_agents, &codex_agents).unwrap();
+        assert_eq!(count, 5);
+
+        // Relative target resolves from .codex/agents/ back into .zforge/agents/
+        #[cfg(unix)]
+        {
+            let link = codex_agents.join("spec-agent.md");
+            let target = std::fs::read_link(&link).unwrap();
+            assert_eq!(target, Path::new("../../.zforge/agents/spec-agent.md"));
+            let resolved = std::fs::read_to_string(&link).unwrap();
+            assert_eq!(resolved.trim(), "stub");
+        }
+    }
+
+    #[test]
+    fn symlink_zforge_agents_preserves_existing_link_targets() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let zforge_agents = root.join(".zforge").join("agents");
+        std::fs::create_dir_all(&zforge_agents).unwrap();
+        for name in [
+            "spec-agent.md",
+            "testspec-agent.md",
+            "plan-agent.md",
+            "code-agent.md",
+            "review-agent.md",
+        ] {
+            std::fs::write(zforge_agents.join(name), "stub\n").unwrap();
+        }
+
+        let codex_agents = root.join(".codex").join("agents");
+        std::fs::create_dir_all(&codex_agents).unwrap();
+        // Pre-existing user-edited file — must be left alone
+        std::fs::write(codex_agents.join("spec-agent.md"), "preexisting\n").unwrap();
+
+        let count = symlink_zforge_agents(&zforge_agents, &codex_agents).unwrap();
+        assert_eq!(
+            count, 4,
+            "should symlink 4 missing agents, skip the existing one"
+        );
+        let still_there = std::fs::read_to_string(codex_agents.join("spec-agent.md")).unwrap();
+        assert_eq!(still_there.trim(), "preexisting");
+    }
 }

@@ -129,7 +129,7 @@ fn register_claude(force: bool) -> Outcome {
 
 // --- Codex (~/.codex/config.toml) ---
 
-fn codex_config_path() -> Option<PathBuf> {
+pub(crate) fn codex_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".codex").join("config.toml"))
 }
 
@@ -141,9 +141,7 @@ fn register_codex(force: bool) -> Outcome {
     };
 
     let existing = fs::read_to_string(&path).unwrap_or_default();
-    let has_entry = existing
-        .lines()
-        .any(|l| l.trim() == "[mcp_servers.zforge]");
+    let has_entry = existing.lines().any(|l| l.trim() == "[mcp_servers.zforge]");
 
     if has_entry && !force {
         return Outcome::AlreadyPresent;
@@ -169,6 +167,53 @@ fn register_codex(force: bool) -> Outcome {
     Outcome::Registered
 }
 
+pub const PHASES: &[&str] = &["spec", "testspec", "plan", "code", "review"];
+
+/// Write `[profiles.zforge_<phase>]` blocks to `~/.codex/config.toml` for each
+/// agent phase that has a `codex_model:` frontmatter key. Existing blocks are
+/// replaced (stripped then re-appended) so re-running `zforge init --force`
+/// picks up model changes in agent templates.
+pub fn write_codex_profiles(agents_dir: &std::path::Path) -> Result<()> {
+    let Some(path) = codex_config_path() else {
+        return Ok(());
+    };
+
+    let mut content = fs::read_to_string(&path).unwrap_or_default();
+
+    for phase in PHASES {
+        let Some(model) = crate::fs::reader::agent_codex_model(agents_dir, phase) else {
+            continue;
+        };
+        let header = format!("[profiles.zforge_{phase}]");
+        if content.lines().any(|l| l.trim() == header) {
+            content = strip_toml_section(&content, &header);
+        }
+        let block = format!("{header}\nmodel = \"{model}\"\n");
+        content = append_block(&content, &block);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, content)?;
+    Ok(())
+}
+
+fn strip_toml_section(content: &str, header: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut in_block = false;
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            in_block = trimmed.trim_end_matches(|c: char| c.is_whitespace()) == header;
+        }
+        if !in_block {
+            out.push_str(line);
+        }
+    }
+    out.trim_end_matches('\n').to_string() + "\n"
+}
+
 fn append_block(existing: &str, block: &str) -> String {
     let mut out = existing.to_string();
     if !out.is_empty() && !out.ends_with('\n') {
@@ -189,8 +234,8 @@ fn strip_codex_block(content: &str) -> std::result::Result<String, String> {
     for line in content.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if trimmed.starts_with('[') {
-            in_block = trimmed.trim_end_matches(|c: char| c.is_whitespace())
-                == "[mcp_servers.zforge]";
+            in_block =
+                trimmed.trim_end_matches(|c: char| c.is_whitespace()) == "[mcp_servers.zforge]";
         }
         if !in_block {
             out.push_str(line);
@@ -227,16 +272,11 @@ fn register_opencode(force: bool) -> Outcome {
     };
 
     if !root.is_object() {
-        return Outcome::Failed(format!(
-            "{} root is not a JSON object",
-            path.display()
-        ));
+        return Outcome::Failed(format!("{} root is not a JSON object", path.display()));
     }
 
     let obj = root.as_object_mut().unwrap();
-    let mcp = obj
-        .entry("mcp".to_string())
-        .or_insert_with(|| json!({}));
+    let mcp = obj.entry("mcp".to_string()).or_insert_with(|| json!({}));
     if !mcp.is_object() {
         return Outcome::Failed("`mcp` field is not an object".into());
     }
@@ -302,5 +342,65 @@ mod tests {
         assert!(matches!(Agent::parse("codex").unwrap(), Agent::Codex));
         assert!(matches!(Agent::parse("opencode").unwrap(), Agent::OpenCode));
         assert!(Agent::parse("xxx").is_err());
+    }
+
+    #[test]
+    fn strip_toml_section_removes_target_and_leaves_rest() {
+        let input =
+            "[other]\nk = 1\n\n[profiles.zforge_code]\nmodel = \"old\"\n\n[trailing]\nx = 1\n";
+        let stripped = strip_toml_section(input, "[profiles.zforge_code]");
+        assert!(!stripped.contains("[profiles.zforge_code]"));
+        assert!(stripped.contains("[other]"));
+        assert!(stripped.contains("[trailing]"));
+    }
+
+    #[test]
+    fn write_codex_profiles_writes_all_phases() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // Write a minimal agent file with codex_model frontmatter
+        for (phase, model) in [
+            ("spec", "gpt-4o-mini"),
+            ("testspec", "gpt-4o-mini"),
+            ("plan", "gpt-4o"),
+            ("code", "codex-mini-latest"),
+            ("review", "gpt-4o"),
+        ] {
+            std::fs::write(
+                agents_dir.join(format!("{phase}-agent.md")),
+                format!("---\ncodex_model: {model}\n---\n"),
+            )
+            .unwrap();
+        }
+
+        let config_path = tmp.path().join("config.toml");
+        // Simulate codex_config_path returning our temp path by writing via the internal helper
+        let initial = "[existing]\nx = 1\n";
+        std::fs::write(&config_path, initial).unwrap();
+
+        // Manually call the logic that write_codex_profiles uses (since it reads HOME)
+        let mut content = std::fs::read_to_string(&config_path).unwrap();
+        for phase in PHASES {
+            let Some(model) = crate::fs::reader::agent_codex_model(&agents_dir, phase) else {
+                continue;
+            };
+            let header = format!("[profiles.zforge_{phase}]");
+            if content.lines().any(|l| l.trim() == header) {
+                content = strip_toml_section(&content, &header);
+            }
+            let block = format!("{header}\nmodel = \"{model}\"\n");
+            content = append_block(&content, &block);
+        }
+        std::fs::write(&config_path, &content).unwrap();
+
+        let result = std::fs::read_to_string(&config_path).unwrap();
+        assert!(result.contains("[existing]"));
+        assert!(result.contains("[profiles.zforge_spec]"));
+        assert!(result.contains("model = \"gpt-4o-mini\""));
+        assert!(result.contains("[profiles.zforge_code]"));
+        assert!(result.contains("model = \"codex-mini-latest\""));
+        assert!(result.contains("[profiles.zforge_review]"));
     }
 }

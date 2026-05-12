@@ -3,16 +3,29 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub fn set_frontmatter(path: &Path, key: &str, value: serde_yaml::Value) -> Result<()> {
-    let raw = std::fs::read_to_string(path).unwrap_or_default();
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "failed to read {} for frontmatter update: {e}",
+                path.display()
+            ))
+        }
+    };
     let normalized = raw.replace("\r\n", "\n");
 
-    let (mut fm, body) = if normalized.starts_with("---\n") {
-        if let Some(end) = normalized[4..].find("\n---\n") {
-            let fm_str = &normalized[4..4 + end];
-            let body_start = 4 + end + 5;
+    let (mut fm, body) = if let Some(rest) = normalized.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---\n") {
+            let fm_str = &rest[..end];
             let fm: HashMap<String, serde_yaml::Value> =
-                serde_yaml::from_str(fm_str).unwrap_or_default();
-            (fm, normalized[body_start..].to_string())
+                serde_yaml::from_str(fm_str).map_err(|e| {
+                    anyhow::anyhow!(
+                        "refusing to overwrite {}: existing frontmatter is malformed ({e})",
+                        path.display()
+                    )
+                })?;
+            (fm, rest[end + 5..].to_string())
         } else {
             (HashMap::new(), normalized)
         }
@@ -188,6 +201,17 @@ mod tests {
         assert!(result.starts_with("---\n"));
         assert!(result.contains("key: val"));
         assert!(result.contains("body without frontmatter"));
+    }
+
+    #[test]
+    fn set_frontmatter_errors_on_malformed_yaml_instead_of_wiping() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "---\n[: not valid yaml :]\n---\nbody\n").unwrap();
+        let err = set_frontmatter(f.path(), "reviewed", serde_yaml::Value::Bool(true)).unwrap_err();
+        assert!(err.to_string().contains("malformed"));
+        let after = std::fs::read_to_string(f.path()).unwrap();
+        assert!(after.contains("[: not valid yaml :]"));
+        assert!(after.contains("body"));
     }
 
     #[test]

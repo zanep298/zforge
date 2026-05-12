@@ -38,8 +38,14 @@ pub fn run(command: &str, work_dir: &Path, timeout_secs: u64) -> Result<TestResu
     // a chatty `cargo test` will fill them and block the child if we only read
     // after wait_timeout returns. On timeout, killing the child closes the pipes,
     // which lets these reader threads hit EOF and join cleanly.
-    let mut stdout_pipe = child.stdout.take().expect("stdout piped by Command builder");
-    let mut stderr_pipe = child.stderr.take().expect("stderr piped by Command builder");
+    let mut stdout_pipe = child
+        .stdout
+        .take()
+        .expect("stdout piped by Command builder");
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .expect("stderr piped by Command builder");
     let stdout_handle = thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stdout_pipe.read_to_end(&mut buf);
