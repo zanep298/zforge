@@ -362,11 +362,11 @@ mod tests {
 
         // Write a minimal agent file with codex_model frontmatter
         for (phase, model) in [
-            ("spec", "gpt-4o-mini"),
-            ("testspec", "gpt-4o-mini"),
-            ("plan", "gpt-4o"),
-            ("code", "codex-mini-latest"),
-            ("review", "gpt-4o"),
+            ("spec", "gpt-5.4-mini"),
+            ("testspec", "gpt-5.4-mini"),
+            ("plan", "gpt-5.4"),
+            ("code", "gpt-5.3-codex"),
+            ("review", "gpt-5.4"),
         ] {
             std::fs::write(
                 agents_dir.join(format!("{phase}-agent.md")),
@@ -398,9 +398,9 @@ mod tests {
         let result = std::fs::read_to_string(&config_path).unwrap();
         assert!(result.contains("[existing]"));
         assert!(result.contains("[profiles.zforge_spec]"));
-        assert!(result.contains("model = \"gpt-4o-mini\""));
+        assert!(result.contains("model = \"gpt-5.4-mini\""));
         assert!(result.contains("[profiles.zforge_code]"));
-        assert!(result.contains("model = \"codex-mini-latest\""));
+        assert!(result.contains("model = \"gpt-5.3-codex\""));
         assert!(result.contains("[profiles.zforge_review]"));
     }
 }

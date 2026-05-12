@@ -90,11 +90,11 @@ to automatically select the right model for each pipeline phase:
 
 | Profile | Phase | Default model |
 |---------|-------|---------------|
-| `zforge_spec` | spec | `gpt-4o-mini` |
-| `zforge_testspec` | testspec | `gpt-4o-mini` |
-| `zforge_plan` | plan | `gpt-4o` |
-| `zforge_code` | code | `codex-mini-latest` |
-| `zforge_review` | review | `gpt-4o` |
+| `zforge_spec` | spec | `gpt-5.4-mini` |
+| `zforge_testspec` | testspec | `gpt-5.4-mini` |
+| `zforge_plan` | plan | `gpt-5.4` |
+| `zforge_code` | code | `gpt-5.3-codex` |
+| `zforge_review` | review | `gpt-5.4` |
 
 ```bash
 codex --profile zforge_code "implement the approved plan for TASK-123"
