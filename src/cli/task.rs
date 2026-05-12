@@ -85,7 +85,7 @@ pub fn run_import(
         anyhow::bail!("Task {} already exists. Use: zf status {}", id, id);
     }
 
-    scaffold::scaffold_task_with_data(&tasks_dir, &id, &data)?;
+    scaffold::scaffold_task_with_data(&tasks_dir, &id, &config.project.language, &data)?;
 
     let state = TaskState::new(&id);
     state.save(&tasks_dir)?;

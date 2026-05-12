@@ -1,0 +1,58 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+cargo build                          # build
+cargo test                           # all tests
+cargo test <name>                    # single test (substring match)
+cargo test -- --nocapture            # tests with println output
+cargo clippy -- -D warnings          # lint (CI-enforced, warnings are errors)
+cargo fmt                            # format
+cargo install --path . --force       # install binary locally as `zforge`
+```
+
+## Architecture
+
+zforge is a single Rust binary (`src/main.rs`) with these modules:
+
+| Module | Purpose |
+|--------|---------|
+| `cli/` | One file per subcommand. Each `run()` function loads config, checks state, builds context, dispatches to engine |
+| `prompt/` | `context.rs` assembles `PromptContext` per phase; `engine.rs` renders `.tmpl` files against context |
+| `state/` | `TaskState` + `State` enum — ordered FSM. `advance()` validates transitions; `require()` guards phase entry |
+| `fs/` | `reader.rs` parses markdown frontmatter; `writer.rs` writes/appends files; `tokens.rs` estimates token counts |
+| `mcp/` | stdio JSON-RPC 2.0 server. Exposes `task_import`, `get_prompt`, `approve`, `verify`, `status` as MCP tools |
+| `config/` | Loads `.zforge/config.yaml`; walks up from cwd to find it |
+| `jira/` | Fetches Jira tickets and extracts task key from URLs |
+
+### Pipeline state machine
+
+```
+Imported → SpecDone → TestspecDone → TestspecReviewed → Planned → PlanReviewed → Coded → Verified → Reviewed
+```
+
+Human approval gates: `testspec` (TestspecDone → TestspecReviewed) and `plan` (Planned → PlanReviewed). State is persisted per-task in `.zforge/tasks/<ID>/.state.yaml`.
+
+### Prompt / template system
+
+Each pipeline phase has a `.tmpl` file in `.zforge/agents/` (generated at `zforge init` from `templates/`). `build_context_for_phase()` in `context.rs` decides which files to inline vs. emit as `/file` refs — different phases get different context. `Engine::render()` handles `{{variable}}` substitution and `{{if var}}...{{end}}` conditionals. `Engine::dispatch()` auto-detects Claude Code or OpenCode binary and launches the appropriate agent.
+
+Memory files (`.zforge/memory/patterns.md`, `anti-patterns.md`, `domain-glossary.md`) are injected as `/file` refs only when they contain at least one non-heading, non-empty line — empty scaffolds with just `#` headers are skipped. `has_content_ref()` in `context.rs` enforces this. Pattern extraction from `review-summary.md` runs automatically at `zforge review <ID> --done` via `append_unique_lines()`, which deduplicates by the key portion (text before `:`) of each `- key: description` line, both against existing file content and within the same batch.
+
+### `zforge init` scaffolding
+
+Templates are embedded in the binary via `include_str!()` in `cli/init.rs`. Init writes `.zforge/`, `CLAUDE.md`, `.mcp.json`, `.claude/settings.json`, `.claude/agents/` (symlinks → `.zforge/agents/`), and `.claude/rules/` (copies from `~/.claude/rules/` or bundled fallbacks).
+
+### MCP server
+
+`zforge mcp` runs as a stdio JSON-RPC server. It delegates directly to the same `cli::*` functions the CLI uses — no separate code paths. Registered via project-local `.mcp.json` so Claude Code picks it up automatically.
+
+## Key invariants
+
+- `State` derives `PartialOrd`/`Ord` — comparisons (`>=`, `<`) express "at least this far in the pipeline". Use `require(State::X)` to gate a command.
+- All paths go through `Config::resolve_path()` — always absolute, always relative to the project root (parent of `.zforge/`), never to cwd.
+- Memory is injected only via `/file` refs in `context_files` — there are no inline `{{patterns}}` / `{{anti_patterns}}` template variables. Variable names listed in `VAR_NAMES` (`engine.rs`) must match arms in `get_var()`.
+- `approve.rs` handles testspec and plan approvals. Review approval (`zforge review <ID> --done`) is handled in `review.rs` and triggers memory extraction.

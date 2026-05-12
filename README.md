@@ -11,7 +11,7 @@ Works with **Claude Code**, **OpenCode**, and **Codex**.
 ### Homebrew (macOS & Linux) — recommended
 
 ```bash
-brew install zanep298/homebrew/zforge
+brew install zanep298/tap/zforge
 zforge --version
 ```
 

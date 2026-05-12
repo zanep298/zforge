@@ -28,13 +28,14 @@ pub fn init_zforge(root: &Path) -> Result<()> {
 }
 
 #[allow(dead_code)]
-pub fn scaffold_task(tasks_dir: &Path, task_id: &str) -> Result<()> {
-    scaffold_task_with_data(tasks_dir, task_id, &TaskImportData::default())
+pub fn scaffold_task(tasks_dir: &Path, task_id: &str, language: &str) -> Result<()> {
+    scaffold_task_with_data(tasks_dir, task_id, language, &TaskImportData::default())
 }
 
 pub fn scaffold_task_with_data(
     tasks_dir: &Path,
     task_id: &str,
+    language: &str,
     data: &TaskImportData,
 ) -> Result<()> {
     let dir = tasks_dir.join(task_id);
@@ -95,7 +96,7 @@ figma_url: "{figma_url_yaml}"
 - [ ]
 
 ## Technical Constraints
-- Language: rust
+- Language: {language}
 - Patterns: TDD
 
 ## Notes
@@ -148,7 +149,7 @@ mod tests {
             figma_context: Some("## Frame\nsize: 375x812".into()),
             ..Default::default()
         };
-        scaffold_task_with_data(tmp.path(), "TASK-001", &data).unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &data).unwrap();
 
         let task_md = std::fs::read_to_string(tmp.path().join("TASK-001").join("task.md")).unwrap();
         assert!(task_md.contains("figma_url: \"https://figma.com/design/ABC/screen?node-id=1\""));
@@ -162,7 +163,7 @@ mod tests {
             figma_context: Some("## Frame\nsize: 375x812".into()),
             ..Default::default()
         };
-        scaffold_task_with_data(tmp.path(), "TASK-001", &data).unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &data).unwrap();
 
         let figma_md =
             std::fs::read_to_string(tmp.path().join("TASK-001").join("figma.md")).unwrap();
@@ -173,7 +174,7 @@ mod tests {
     #[test]
     fn no_figma_md_when_figma_context_absent() {
         let tmp = TempDir::new().unwrap();
-        scaffold_task_with_data(tmp.path(), "TASK-001", &TaskImportData::default()).unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &TaskImportData::default()).unwrap();
         assert!(!tmp.path().join("TASK-001").join("figma.md").exists());
     }
 
@@ -184,9 +185,18 @@ mod tests {
             figma_url: Some(r#"https://figma.com/design/"special""#.into()),
             ..Default::default()
         };
-        scaffold_task_with_data(tmp.path(), "TASK-001", &data).unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &data).unwrap();
         let task_md = std::fs::read_to_string(tmp.path().join("TASK-001").join("task.md")).unwrap();
         assert!(task_md.contains(r#"figma_url: "https://figma.com/design/\"special\"""#));
+    }
+
+    #[test]
+    fn language_written_to_technical_constraints() {
+        let tmp = TempDir::new().unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "go", &TaskImportData::default()).unwrap();
+        let task_md = std::fs::read_to_string(tmp.path().join("TASK-001").join("task.md")).unwrap();
+        assert!(task_md.contains("Language: go"));
+        assert!(!task_md.contains("Language: rust"));
     }
 
     #[test]
@@ -196,7 +206,7 @@ mod tests {
             figma_context: Some("raw context".into()),
             ..Default::default()
         };
-        scaffold_task_with_data(tmp.path(), "TASK-001", &data).unwrap();
+        scaffold_task_with_data(tmp.path(), "TASK-001", "rust", &data).unwrap();
         let figma_md =
             std::fs::read_to_string(tmp.path().join("TASK-001").join("figma.md")).unwrap();
         assert!(!figma_md.contains("Source:"));

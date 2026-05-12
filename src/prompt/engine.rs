@@ -276,6 +276,34 @@ pub fn render_template(template: &str, ctx: &PromptContext) -> String {
         .join("\n")
 }
 
+/// All template variable names. Must match arms in `get_var`.
+const VAR_NAMES: &[&str] = &[
+    "task_id",
+    "task_file",
+    "spec_file",
+    "testspec_file",
+    "plan_file",
+    "verify_file",
+    "project_name",
+    "language",
+    "test_command",
+    "output_file",
+    "next_command",
+    "failed_tests",
+    "context_files",
+    "figma_context",
+    "task_ref",
+    "spec_ref",
+    "testspec_ref",
+    "plan_ref",
+    "verify_ref",
+    "figma_ref",
+    "implementation_log_ref",
+    "patterns_ref",
+    "domain_glossary_ref",
+    "anti_patterns_ref",
+];
+
 fn get_var(name: &str, ctx: &PromptContext) -> String {
     match name {
         "task_id" => ctx.task_id.clone(),
@@ -284,9 +312,6 @@ fn get_var(name: &str, ctx: &PromptContext) -> String {
         "testspec_file" => ctx.testspec_file.clone(),
         "plan_file" => ctx.plan_file.clone(),
         "verify_file" => ctx.verify_file.clone(),
-        "patterns" => ctx.patterns.clone(),
-        "domain_glossary" => ctx.domain_glossary.clone(),
-        "anti_patterns" => ctx.anti_patterns.clone(),
         "project_name" => ctx.project_name.clone(),
         "language" => ctx.language.clone(),
         "test_command" => ctx.test_command.clone(),
@@ -311,36 +336,7 @@ fn get_var(name: &str, ctx: &PromptContext) -> String {
 
 fn replace_vars(s: &str, ctx: &PromptContext) -> String {
     let mut result = s.to_string();
-    let variables = [
-        "task_id",
-        "task_file",
-        "spec_file",
-        "testspec_file",
-        "plan_file",
-        "verify_file",
-        "patterns",
-        "domain_glossary",
-        "anti_patterns",
-        "project_name",
-        "language",
-        "test_command",
-        "output_file",
-        "next_command",
-        "failed_tests",
-        "context_files",
-        "figma_context",
-        "task_ref",
-        "spec_ref",
-        "testspec_ref",
-        "plan_ref",
-        "verify_ref",
-        "figma_ref",
-        "implementation_log_ref",
-        "patterns_ref",
-        "domain_glossary_ref",
-        "anti_patterns_ref",
-    ];
-    for var in variables {
+    for var in VAR_NAMES {
         let token = format!("{{{{{}}}}}", var);
         result = result.replace(&token, &get_var(var, ctx));
     }
@@ -350,29 +346,7 @@ fn replace_vars(s: &str, ctx: &PromptContext) -> String {
 fn process_conditionals(template: &str, ctx: &PromptContext) -> String {
     let mut result = template.to_string();
 
-    let variables = [
-        "patterns",
-        "domain_glossary",
-        "anti_patterns",
-        "spec_file",
-        "testspec_file",
-        "plan_file",
-        "verify_file",
-        "context_files",
-        "figma_context",
-        "task_ref",
-        "spec_ref",
-        "testspec_ref",
-        "plan_ref",
-        "verify_ref",
-        "figma_ref",
-        "implementation_log_ref",
-        "patterns_ref",
-        "domain_glossary_ref",
-        "anti_patterns_ref",
-    ];
-
-    for var in variables {
+    for var in VAR_NAMES {
         let open_tag = format!("{{{{if {}}}}}", var);
         let close_tag = "{{end}}";
 
@@ -409,7 +383,6 @@ mod tests {
         PromptContext {
             task_id: "TASK-1".into(),
             task_file: "task content".into(),
-            patterns: "some patterns".into(),
             ..Default::default()
         }
     }
@@ -424,20 +397,24 @@ mod tests {
 
     #[test]
     fn test_render_conditional_block_present() {
-        let ctx = make_ctx();
-        let tmpl = "{{if patterns}}\nHas patterns: {{patterns}}\n{{end}}";
+        let ctx = PromptContext {
+            task_id: "TASK-1".into(),
+            figma_context: "some content".into(),
+            ..Default::default()
+        };
+        let tmpl = "{{if figma_context}}\nHas content: {{figma_context}}\n{{end}}";
         let result = render_template(tmpl, &ctx);
-        assert!(result.contains("some patterns"));
+        assert!(result.contains("some content"));
     }
 
     #[test]
     fn test_render_conditional_block_empty() {
         let ctx = PromptContext {
             task_id: "TASK-1".into(),
-            patterns: String::new(),
+            figma_context: String::new(),
             ..Default::default()
         };
-        let tmpl = "{{if patterns}}\nshould not appear\n{{end}}";
+        let tmpl = "{{if figma_context}}\nshould not appear\n{{end}}";
         let result = render_template(tmpl, &ctx);
         assert!(!result.contains("should not appear"));
     }

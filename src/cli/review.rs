@@ -67,13 +67,11 @@ fn extract_and_update_memory(
     summary: &str,
 ) -> Result<(usize, usize)> {
     let memory_dir = config.memory_dir();
-    let mut patterns_count = 0usize;
-    let mut anti_count = 0usize;
+    let mut patterns_lines: Vec<String> = Vec::new();
+    let mut anti_lines: Vec<String> = Vec::new();
 
     let mut in_patterns = false;
     let mut in_anti = false;
-    let mut patterns_buf = String::new();
-    let mut anti_buf = String::new();
 
     for line in summary.lines() {
         if line.contains("New approved patterns") {
@@ -92,29 +90,15 @@ fn extract_and_update_memory(
         }
 
         if in_patterns && line.trim_start().starts_with("- ") {
-            patterns_buf.push_str(line);
-            patterns_buf.push('\n');
-            patterns_count += 1;
+            patterns_lines.push(line.to_string());
         }
         if in_anti && line.trim_start().starts_with("- ") {
-            anti_buf.push_str(line);
-            anti_buf.push('\n');
-            anti_count += 1;
+            anti_lines.push(line.to_string());
         }
     }
 
-    if !patterns_buf.is_empty() {
-        writer::append_to_file(
-            &memory_dir.join("patterns.md"),
-            &format!("\n{}", patterns_buf),
-        )?;
-    }
-    if !anti_buf.is_empty() {
-        writer::append_to_file(
-            &memory_dir.join("anti-patterns.md"),
-            &format!("\n{}", anti_buf),
-        )?;
-    }
+    let patterns_count = writer::append_unique_lines(&memory_dir.join("patterns.md"), &patterns_lines)?;
+    let anti_count = writer::append_unique_lines(&memory_dir.join("anti-patterns.md"), &anti_lines)?;
 
     Ok((patterns_count, anti_count))
 }

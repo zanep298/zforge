@@ -11,9 +11,6 @@ pub struct PromptContext {
     pub testspec_file: String,
     pub plan_file: String,
     pub verify_file: String,
-    pub patterns: String,
-    pub domain_glossary: String,
-    pub anti_patterns: String,
     pub context_files: Vec<String>,
     pub project_name: String,
     pub language: String,
@@ -62,8 +59,13 @@ fn file_ref(path: &Path) -> String {
     format!("/file {}", display_path(path))
 }
 
-fn existing_ref(path: &Path) -> Option<String> {
-    path.exists().then(|| file_ref(path))
+fn has_content_ref(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let has_substance = content.lines().any(|l| {
+        let trimmed = l.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#')
+    });
+    has_substance.then(|| file_ref(path))
 }
 
 fn configured_context_refs(config: &Config) -> Vec<String> {
@@ -133,52 +135,43 @@ pub fn build_context_for_phase(
         PromptPhase::Spec | PromptPhase::Code => read_optional(&figma_path),
         _ => String::new(),
     };
-    let patterns = match phase {
-        PromptPhase::Spec => read_optional(&patterns_path),
-        _ => String::new(),
-    };
-    let domain_glossary = match phase {
-        PromptPhase::Spec => read_optional(&domain_glossary_path),
-        _ => String::new(),
-    };
-    let anti_patterns = match phase {
-        PromptPhase::Testspec => read_optional(&anti_patterns_path),
-        _ => String::new(),
-    };
 
     let mut context_files = Vec::new();
     match phase {
         PromptPhase::Spec => {
             context_files.push(task_ref.clone());
-            if let Some(reference) = existing_ref(&figma_path) {
-                context_files.push(reference);
+            if let Some(r) = has_content_ref(&figma_path) {
+                context_files.push(r);
             }
-            if let Some(reference) = existing_ref(&patterns_path) {
-                context_files.push(reference);
+            if let Some(r) = has_content_ref(&patterns_path) {
+                context_files.push(r);
             }
-            if let Some(reference) = existing_ref(&domain_glossary_path) {
-                context_files.push(reference);
+            if let Some(r) = has_content_ref(&domain_glossary_path) {
+                context_files.push(r);
             }
         }
         PromptPhase::Testspec => {
             context_files.push(spec_ref.clone());
             context_files.push(task_ref.clone());
-            if let Some(reference) = existing_ref(&anti_patterns_path) {
-                context_files.push(reference);
+            if let Some(r) = has_content_ref(&anti_patterns_path) {
+                context_files.push(r);
             }
         }
         PromptPhase::Plan => {
             context_files.push(spec_ref.clone());
             context_files.push(testspec_ref.clone());
+            if let Some(r) = has_content_ref(&patterns_path) {
+                context_files.push(r);
+            }
         }
         PromptPhase::Code => {
             context_files.push(plan_ref.clone());
             context_files.push(testspec_ref.clone());
-            if let Some(reference) = existing_ref(&patterns_path) {
-                context_files.push(reference);
+            if let Some(r) = has_content_ref(&patterns_path) {
+                context_files.push(r);
             }
-            if let Some(reference) = existing_ref(&anti_patterns_path) {
-                context_files.push(reference);
+            if let Some(r) = has_content_ref(&anti_patterns_path) {
+                context_files.push(r);
             }
             context_files.extend(configured_context_refs(config));
         }
@@ -203,9 +196,6 @@ pub fn build_context_for_phase(
         testspec_file,
         plan_file,
         verify_file,
-        patterns,
-        domain_glossary,
-        anti_patterns,
         context_files,
         project_name: config.project.name.clone(),
         language: config.project.language.clone(),
