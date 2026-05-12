@@ -1,5 +1,5 @@
 use crate::config;
-use crate::fs::writer;
+use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -20,6 +20,24 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     }
 
     if done {
+        let log_path = tasks_dir.join(task_id).join("implementation-log.md");
+        if log_path.exists() {
+            let log_tokens =
+                tokens::estimate(&std::fs::read_to_string(&log_path).unwrap_or_default());
+            writer::set_frontmatter(
+                &log_path,
+                "tokens",
+                serde_yaml::Value::Number(log_tokens.into()),
+            )?;
+            let model = reader::agent_model(&config.agents_dir(), "code");
+            writer::set_frontmatter(&log_path, "model", serde_yaml::Value::String(model))?;
+            println!(
+                "{} implementation-log.md  ({} tokens)",
+                "✓".green(),
+                tokens::fmt(log_tokens)
+            );
+        }
+
         ts.advance(State::Coded, "coding complete")?;
         ts.save(&tasks_dir)?;
         println!("{} State advanced: PlanReviewed → Coded", "✓".green());

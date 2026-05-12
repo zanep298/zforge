@@ -26,6 +26,8 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         let summary = std::fs::read_to_string(&summary_path)?;
         let review_tokens = tokens::estimate(&summary);
         writer::set_frontmatter(&summary_path, "tokens", serde_yaml::Value::Number(review_tokens.into()))?;
+        let model = reader::agent_model(&config.agents_dir(), "review");
+        writer::set_frontmatter(&summary_path, "model", serde_yaml::Value::String(model))?;
         let (patterns_count, anti_count) = extract_and_update_memory(&config, &summary)?;
 
         ts.advance(State::Reviewed, "review complete")?;

@@ -142,6 +142,15 @@ impl Config {
         self.resolve_path(&self.paths.memory)
     }
 
+    #[allow(dead_code)]
+    pub fn project_root(&self) -> PathBuf {
+        self.config_file
+            .parent()
+            .and_then(|d| d.parent())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    }
+
     fn resolve_path(&self, p: &Path) -> PathBuf {
         if p.is_absolute() {
             return p.to_path_buf();

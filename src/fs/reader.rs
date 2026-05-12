@@ -66,6 +66,14 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
     })
 }
 
+pub fn agent_model(agents_dir: &Path, phase: &str) -> String {
+    let path = agents_dir.join(format!("{}-agent.md", phase));
+    MarkdownFile::read(&path)
+        .ok()
+        .and_then(|md| md.get_str("model").map(String::from))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 pub fn artifact_exists(tasks_dir: &Path, task_id: &str, artifact: &str) -> bool {
     let path = tasks_dir.join(task_id).join(artifact);
     if !path.exists() {

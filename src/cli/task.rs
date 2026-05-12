@@ -1,5 +1,6 @@
 use crate::config;
 use crate::fs::scaffold::{self, TaskImportData};
+use crate::fs::{tokens, writer};
 use crate::state::TaskState;
 use anyhow::Result;
 use colored::Colorize;
@@ -87,11 +88,29 @@ pub fn run_import(
 
     scaffold::scaffold_task_with_data(&tasks_dir, &id, &config.project.language, &data)?;
 
+    let task_path = tasks_dir.join(&id).join("task.md");
+    let task_tokens = tokens::estimate(&std::fs::read_to_string(&task_path).unwrap_or_default());
+    writer::set_frontmatter(
+        &task_path,
+        "tokens",
+        serde_yaml::Value::Number(task_tokens.into()),
+    )?;
+    writer::set_frontmatter(
+        &task_path,
+        "model",
+        serde_yaml::Value::String("human".to_string()),
+    )?;
+
     let state = TaskState::new(&id);
     state.save(&tasks_dir)?;
 
     println!("{} Created tasks/{}/", "✓".green(), id);
-    println!("{} Created tasks/{}/task.md", "✓".green(), id);
+    println!(
+        "{} Created tasks/{}/task.md  ({} tokens)",
+        "✓".green(),
+        id,
+        tokens::fmt(task_tokens)
+    );
     println!("{} State: Imported", "✓".green());
     println!();
     println!("{}", "─".repeat(40));

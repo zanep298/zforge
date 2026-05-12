@@ -1,5 +1,5 @@
 use crate::config;
-use crate::fs::writer;
+use crate::fs::{tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::runner;
 use crate::state::{State, TaskState};
@@ -104,8 +104,23 @@ command: "{}"
 
     let verify_path = tasks_dir.join(task_id).join("verify.md");
     writer::write_file(&verify_path, &verify_content)?;
+    let verify_tokens = tokens::estimate(&verify_content);
+    writer::set_frontmatter(
+        &verify_path,
+        "tokens",
+        serde_yaml::Value::Number(verify_tokens.into()),
+    )?;
+    writer::set_frontmatter(
+        &verify_path,
+        "model",
+        serde_yaml::Value::String("runner".to_string()),
+    )?;
     println!();
-    println!("Verify report: tasks/{}/verify.md", task_id);
+    println!(
+        "Verify report: tasks/{}/verify.md  ({} tokens)",
+        task_id,
+        tokens::fmt(verify_tokens)
+    );
 
     if result.passed {
         ts.advance(State::Verified, "tests passed")?;

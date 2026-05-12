@@ -29,6 +29,8 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         let plan_path = tasks_dir.join(task_id).join("plan.md");
         let plan_tokens = tokens::estimate(&std::fs::read_to_string(&plan_path).unwrap_or_default());
         writer::set_frontmatter(&plan_path, "tokens", serde_yaml::Value::Number(plan_tokens.into()))?;
+        let model = reader::agent_model(&config.agents_dir(), "plan");
+        writer::set_frontmatter(&plan_path, "model", serde_yaml::Value::String(model))?;
 
         ts.advance(State::Planned, "plan generated")?;
         ts.save(&tasks_dir)?;
