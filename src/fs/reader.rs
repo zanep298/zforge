@@ -71,7 +71,12 @@ pub fn agent_model(agents_dir: &Path, phase: &str) -> String {
     let path = agents_dir.join(format!("{}-agent.md", phase));
     MarkdownFile::read(&path)
         .ok()
-        .and_then(|md| md.get_str("model").map(String::from))
+        .and_then(|md| {
+            // Prefer codex_model if present, else use model
+            md.get_str("codex_model")
+                .or_else(|| md.get_str("model"))
+                .map(String::from)
+        })
         .unwrap_or_else(|| "unknown".to_string())
 }
 
