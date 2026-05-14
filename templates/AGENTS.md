@@ -67,7 +67,9 @@ zforge registers an MCP server (`zforge mcp`) globally at `~/.codex/config.toml`
 under the `[mcp_servers.zforge]` table. Run `zforge mcp register --agent codex` to
 add or refresh the entry.
 
-Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`
+Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`, `ship`
+
+`ship` combines the `Coded` state advance + `verify` into a single tool call — call it after you've finished writing code from `get_prompt(phase="code")` instead of advancing state and calling `verify` separately.
 
 ## Agents
 
@@ -114,7 +116,7 @@ There is no project-scoped permissions file at this time — see
 
 When running `zforge` commands through Codex, allow at minimum:
 
-- `zforge status`, `zforge get_prompt`, `zforge approve`, `zforge verify`
+- `zforge status`, `zforge get_prompt`, `zforge approve`, `zforge verify`, `zforge ship`
 - The configured test command (`{{test_command}}`)
 
 ---

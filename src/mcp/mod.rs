@@ -8,9 +8,11 @@
 ///   get_prompt   — render prompt for spec/testspec/plan/code/review
 ///   approve      — mark an artifact as reviewed
 ///   verify       — run the test suite
+///   ship         — advance Coded + run verify in one call (saves a round trip)
 ///   status       — get task phase status
 use crate::config;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
+use crate::state::{State, TaskState};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -107,6 +109,7 @@ fn on_tools_call(id: Value, req: &Value) -> Value {
         "get_prompt" => tool_get_prompt(&args),
         "approve" => tool_approve(&args),
         "verify" => tool_verify(&args),
+        "ship" => tool_ship(&args),
         "status" => tool_status(&args),
         other => Err(anyhow::anyhow!("unknown tool: {other}")),
     };
@@ -261,6 +264,39 @@ fn tool_verify(args: &Value) -> Result<String> {
     ))
 }
 
+/// MCP-side ship: orchestrator has already written code. Advance PlanReviewed → Coded
+/// (if not already) and run verify. Saves one tool round trip vs. separate calls.
+fn tool_ship(args: &Value) -> Result<String> {
+    let task_id = require_str(args, "task_id")?;
+    let command = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(600);
+
+    let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
+    let tasks_dir = config.tasks_dir();
+    let mut ts = TaskState::load(&tasks_dir, task_id)
+        .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
+
+    if ts.state < State::PlanReviewed {
+        anyhow::bail!(
+            "BLOCKED: plan.md requires human review. Call approve(task_id=\"{task_id}\", artifact=\"plan\") first."
+        );
+    }
+
+    if ts.state < State::Coded {
+        ts.advance(State::Coded, "code phase complete (ship)")?;
+        ts.save(&tasks_dir)?;
+    }
+
+    crate::cli::verify::run(task_id, command, timeout)?;
+
+    Ok(format!(
+        "Ship complete for task {task_id}. See .zforge/tasks/{task_id}/verify.md for results. Next: approve(task_id=\"{task_id}\", artifact=\"verify\") then get_prompt(phase=\"review\", task_id=\"{task_id}\")."
+    ))
+}
+
 fn tool_status(args: &Value) -> Result<String> {
     let task_id = args
         .get("task_id")
@@ -326,6 +362,19 @@ fn tool_definitions() -> Value {
         {
             "name": "verify",
             "description": "Run the project test suite and record pass/fail results.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string" },
+                    "command": { "type": "string", "description": "Override test command" },
+                    "timeout": { "type": "number", "description": "Timeout in seconds (default 600)" }
+                },
+                "required": ["task_id"]
+            }
+        },
+        {
+            "name": "ship",
+            "description": "After you've written all code from get_prompt(phase=\"code\"), call this to advance state to Coded and run the test suite in one step. Saves a tool round trip vs. separate state-advance + verify calls.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

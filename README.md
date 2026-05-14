@@ -122,7 +122,7 @@ We're using zforge for this project. Run `zforge status` to see current task
 progress, then help me work through the pipeline. For each phase, run the zforge
 command, wait for my approval before proceeding, and follow the artifacts in
 tasks/<ID>/. Use the zforge MCP tools (task_import, get_prompt, approve, verify,
-status) when available.
+ship, status) when available.
 ```
 
 ### With OpenCode
@@ -162,6 +162,8 @@ tasks/<ID>/. Use the zforge agents in .opencode/ for phase-specific guidance.
 ```
 task import → spec → [approve] → testspec → [approve] → plan → code → verify → review
 ```
+
+`zforge ship <ID>` is a shortcut for `code` + `verify` back-to-back — saves a tool round trip when chained via MCP, and is idempotent (skips the code phase if state is already `Coded`).
 
 For UI tasks, attach Figma design context at import time — it flows through spec and code automatically:
 
@@ -218,6 +220,7 @@ Agents that are not installed are skipped, not failed.
 | `zforge plan <ID>` | Generate implementation plan prompt |
 | `zforge code <ID>` | Generate coding prompt (AI writes tests first) |
 | `zforge verify <ID>` | Run tests, record results |
+| `zforge ship <ID>` | Run `code` + `verify` in one step (idempotent — skips code if already Coded) |
 | `zforge review <ID>` | Generate review prompt, extract patterns |
 | `zforge status` | Show all task progress |
 | `zforge status <ID>` | Show single task status |

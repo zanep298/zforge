@@ -5,6 +5,7 @@ pub mod mcp_register;
 pub mod plan;
 pub mod retry;
 pub mod review;
+pub mod ship;
 pub mod spec;
 pub mod status;
 pub mod task;

@@ -73,7 +73,9 @@ Load a skill with `/file .zforge/skills/<name>.md` before starting that phase.
 zforge registers an MCP server (`zforge mcp`) that exposes the pipeline as tools.
 Claude Code discovers it from the project-local `.mcp.json`.
 
-Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`
+Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`, `ship`
+
+`ship` combines the `Coded` state advance + `verify` into a single tool call — call it after you've finished writing code from `get_prompt(phase="code")` instead of advancing state and calling `verify` separately.
 
 ## Agents
 

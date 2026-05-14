@@ -61,6 +61,14 @@ enum Commands {
         #[arg(long, default_value = "600")]
         timeout: u64,
     },
+    /// Run code + verify in one go. Idempotent: skips code if state already Coded.
+    Ship {
+        task_id: String,
+        #[arg(long)]
+        command: Option<String>,
+        #[arg(long, default_value = "600")]
+        timeout: u64,
+    },
     Review {
         task_id: String,
         #[arg(long)]
@@ -173,6 +181,11 @@ fn main() -> Result<()> {
             command,
             timeout,
         } => cli::verify::run(&task_id, command, timeout),
+        Commands::Ship {
+            task_id,
+            command,
+            timeout,
+        } => cli::ship::run(&task_id, command, timeout),
         Commands::Review { task_id, done } => cli::review::run(&task_id, done),
         Commands::Approve {
             task_id,

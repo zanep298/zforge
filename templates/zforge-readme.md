@@ -18,6 +18,7 @@ zforge approve TASK-123 plan       ← human gate
 zforge code TASK-123            →  generate code prompt  →  implement in OpenCode
 zforge code TASK-123 --done     →  mark coding complete
 zforge verify TASK-123          →  run {{test_command}}
+zforge ship TASK-123            →  shortcut: code + verify in one step (idempotent)
 zforge review TASK-123          →  generate review prompt  →  fill review-summary.md
 zforge review TASK-123 --done   →  extract patterns, mark complete
 ```

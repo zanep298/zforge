@@ -20,7 +20,7 @@ args = ["mcp"]
 ```
 
 Once registered, Codex sessions can call zforge tools (`task_import`,
-`get_prompt`, `approve`, `status`, `verify`).
+`get_prompt`, `approve`, `status`, `verify`, `ship`).
 
 ## Permissions / Allowlists
 

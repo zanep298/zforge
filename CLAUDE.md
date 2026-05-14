@@ -24,7 +24,7 @@ zforge is a single Rust binary (`src/main.rs`) with these modules:
 | `prompt/` | `context.rs` assembles `PromptContext` per phase; `engine.rs` renders `.tmpl` files against context |
 | `state/` | `TaskState` + `State` enum — ordered FSM. `advance()` validates transitions; `require()` guards phase entry |
 | `fs/` | `reader.rs` parses markdown frontmatter; `writer.rs` writes/appends files; `tokens.rs` estimates token counts |
-| `mcp/` | stdio JSON-RPC 2.0 server. Exposes `task_import`, `get_prompt`, `approve`, `verify`, `status` as MCP tools |
+| `mcp/` | stdio JSON-RPC 2.0 server. Exposes `task_import`, `get_prompt`, `approve`, `verify`, `ship`, `status` as MCP tools |
 | `config/` | Loads `.zforge/config.yaml`; walks up from cwd to find it |
 | `jira/` | Fetches Jira tickets and extracts task key from URLs |
 
@@ -35,6 +35,8 @@ Imported → SpecDone → TestspecDone → TestspecReviewed → Planned → Plan
 ```
 
 Human approval gates: `testspec` (TestspecDone → TestspecReviewed) and `plan` (Planned → PlanReviewed). State is persisted per-task in `.zforge/tasks/<ID>/.state.yaml`.
+
+`zforge ship <ID>` (CLI) wraps `code` + `verify`: dispatches the code sub-agent (if state `< Coded`), advances to `Coded`, then runs the test suite. The MCP `ship` tool is the orchestrator-side counterpart — assumes the LLM has already written code and combines the `Coded` advance + `verify` into a single tool call (saves a round trip vs. invoking them separately). Verify itself never calls an LLM — it shells out via `runner::run()`.
 
 ### Prompt / template system
 
