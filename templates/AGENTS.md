@@ -39,8 +39,7 @@ tasks/<TASK-ID>/plan.md
 .zforge/memory/anti-patterns.md
 ```
 
-Then follow the approved plan exactly. Document every decision in
-`tasks/<TASK-ID>/implementation-log.md`.
+Then follow the approved plan exactly.
 
 ---
 

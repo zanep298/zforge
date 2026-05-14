@@ -205,7 +205,7 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
 
     let mut ctx = build_context_for_phase(&config, task_id, prompt_phase)?;
     ctx.output_file = match phase {
-        "code" => format!(".zforge/tasks/{task_id}/implementation-log.md"),
+        "code" => String::new(),
         "review" => format!(".zforge/tasks/{task_id}/review-summary.md"),
         _ => format!(".zforge/tasks/{task_id}/{phase}.md"),
     };
@@ -214,13 +214,21 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
     let engine = Engine::new(&config.agents_dir());
     let prompt = engine.render(phase, &ctx)?;
 
+    let output_line = if ctx.output_file.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Process this prompt and write the output to `{}`.\n",
+            ctx.output_file
+        )
+    };
+
     Ok(format!(
         "## Prompt for phase: {phase} / task: {task_id}\n\n\
-         Process this prompt and write the output to `{}`.\n\
+         {output_line}\
          When done, call approve(task_id=\"{task_id}\", artifact=\"{phase}\") \
          if approval is required, or proceed to the next phase.\n\n\
          ---\n\n{prompt}",
-        ctx.output_file
     ))
 }
 

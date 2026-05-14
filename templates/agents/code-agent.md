@@ -23,15 +23,6 @@ pass with the minimal working change. Summarize every decision made during imple
 
 1. Production code changes per the plan
 2. Test code matching each case in testspec.md
-3. Append entries to `tasks/{{task_id}}/implementation-log.md` in this shape:
-
-```
-### [timestamp] — [step description]
-- Files changed: [list]
-- Behavior changed: [what now works that didn't before]
-- Assumptions used: [any decisions not explicit in the plan]
-- Known limitations: [anything left intentionally out of scope]
-```
 
 ## Rules
 

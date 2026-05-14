@@ -90,7 +90,6 @@ fn render_single(
         "spec.md",
         "testspec.md",
         "plan.md",
-        "implementation-log.md",
         "verify.md",
         "review-summary.md",
     ];

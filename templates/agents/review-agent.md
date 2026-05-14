@@ -18,7 +18,6 @@ You review only — you do not implement fixes.
 - `tasks/{{task_id}}/testspec.md`
 - `tasks/{{task_id}}/plan.md`
 - `tasks/{{task_id}}/verify.md` — test run results
-- `tasks/{{task_id}}/implementation-log.md`
 
 ## Output
 

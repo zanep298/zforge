@@ -25,7 +25,6 @@ A changeset that:
 - Passes all tests in testspec.md
 - Touches only the files listed in plan.md (or documents why an unlisted file was needed)
 - Preserves all existing public interfaces unless the spec explicitly changes them
-- Includes a summary in implementation-log.md of what changed and why
 
 ## Checklist
 

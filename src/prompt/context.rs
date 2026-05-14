@@ -25,7 +25,6 @@ pub struct PromptContext {
     pub plan_ref: String,
     pub verify_ref: String,
     pub figma_ref: String,
-    pub implementation_log_ref: String,
     pub patterns_ref: String,
     pub domain_glossary_ref: String,
     pub anti_patterns_ref: String,
@@ -92,7 +91,6 @@ pub fn build_context_for_phase(
     let plan_path = task_dir.join("plan.md");
     let verify_path = task_dir.join("verify.md");
     let figma_path = task_dir.join("figma.md");
-    let implementation_log_path = task_dir.join("implementation-log.md");
     let patterns_path = memory_dir.join("patterns.md");
     let domain_glossary_path = memory_dir.join("domain-glossary.md");
     let anti_patterns_path = memory_dir.join("anti-patterns.md");
@@ -103,7 +101,6 @@ pub fn build_context_for_phase(
     let plan_ref = file_ref(&plan_path);
     let verify_ref = file_ref(&verify_path);
     let figma_ref = file_ref(&figma_path);
-    let implementation_log_ref = file_ref(&implementation_log_path);
     let patterns_ref = file_ref(&patterns_path);
     let domain_glossary_ref = file_ref(&domain_glossary_path);
     let anti_patterns_ref = file_ref(&anti_patterns_path);
@@ -183,9 +180,6 @@ pub fn build_context_for_phase(
             context_files.push(verify_ref.clone());
             context_files.push(plan_ref.clone());
             context_files.push(testspec_ref.clone());
-            if implementation_log_path.exists() {
-                context_files.push(implementation_log_ref.clone());
-            }
         }
     }
 
@@ -210,7 +204,6 @@ pub fn build_context_for_phase(
         plan_ref,
         verify_ref,
         figma_ref,
-        implementation_log_ref,
         patterns_ref,
         domain_glossary_ref,
         anti_patterns_ref,

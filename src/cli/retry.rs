@@ -100,7 +100,6 @@ fn phase_to_reset(phase: &str) -> (State, Vec<String>) {
                 "spec.md".into(),
                 "testspec.md".into(),
                 "plan.md".into(),
-                "implementation-log.md".into(),
                 "verify.md".into(),
                 "review-summary.md".into(),
             ],
@@ -110,7 +109,6 @@ fn phase_to_reset(phase: &str) -> (State, Vec<String>) {
             vec![
                 "testspec.md".into(),
                 "plan.md".into(),
-                "implementation-log.md".into(),
                 "verify.md".into(),
                 "review-summary.md".into(),
             ],
@@ -119,18 +117,13 @@ fn phase_to_reset(phase: &str) -> (State, Vec<String>) {
             State::TestspecReviewed,
             vec![
                 "plan.md".into(),
-                "implementation-log.md".into(),
                 "verify.md".into(),
                 "review-summary.md".into(),
             ],
         ),
         "code" => (
             State::PlanReviewed,
-            vec![
-                "implementation-log.md".into(),
-                "verify.md".into(),
-                "review-summary.md".into(),
-            ],
+            vec!["verify.md".into(), "review-summary.md".into()],
         ),
         "verify" => (
             State::Coded,
