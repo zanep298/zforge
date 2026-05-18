@@ -31,10 +31,10 @@ Never skip a phase. Never write code before testspec and plan are both approved.
 Read these files in order:
 
 ```
-tasks/<TASK-ID>/task.md
-tasks/<TASK-ID>/spec.md
-tasks/<TASK-ID>/testspec.md
-tasks/<TASK-ID>/plan.md
+.zforge/tasks/<TASK-ID>/task.md
+.zforge/tasks/<TASK-ID>/spec.md
+.zforge/tasks/<TASK-ID>/testspec.md
+.zforge/tasks/<TASK-ID>/plan.md
 .zforge/memory/patterns.md
 .zforge/memory/anti-patterns.md
 ```

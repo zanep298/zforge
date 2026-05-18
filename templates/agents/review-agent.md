@@ -14,14 +14,14 @@ You review only — you do not implement fixes.
 
 ## Inputs
 
-- `tasks/{{task_id}}/spec.md`
-- `tasks/{{task_id}}/testspec.md`
-- `tasks/{{task_id}}/plan.md`
-- `tasks/{{task_id}}/verify.md` — test run results
+- `.zforge/tasks/{{task_id}}/spec.md`
+- `.zforge/tasks/{{task_id}}/testspec.md`
+- `.zforge/tasks/{{task_id}}/plan.md`
+- `.zforge/tasks/{{task_id}}/verify.md` — test run results
 
 ## Output
 
-Write `tasks/{{task_id}}/review-summary.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
+Write `.zforge/tasks/{{task_id}}/review-summary.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
 ## Rules
 

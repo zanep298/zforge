@@ -14,13 +14,13 @@ You operate test-first: tests exist before production code is written.
 
 ## Inputs
 
-- `tasks/{{task_id}}/spec.md` — approved specification (must have reviewed: true or be explicitly approved)
-- `tasks/{{task_id}}/task.md` — original task for context
+- `.zforge/tasks/{{task_id}}/spec.md` — completed specification
+- `.zforge/tasks/{{task_id}}/task.md` — original task for context
 - `.zforge/memory/anti-patterns.md` — known failure patterns to watch for (optional)
 
 ## Output
 
-Write `tasks/{{task_id}}/testspec.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
+Write `.zforge/tasks/{{task_id}}/testspec.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
 ## Rules
 

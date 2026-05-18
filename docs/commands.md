@@ -10,7 +10,7 @@ zforge init --force  # overwrite existing zforge/Claude Code files
 ```
 
 Detects project language automatically from `Cargo.toml`, `go.mod`,
-`package.json`, or `pyproject.toml`.
+`package.json`, `pyproject.toml`, Android Gradle files, or iOS project files.
 
 ---
 
@@ -37,8 +37,9 @@ zforge task import TASK-001 --title "Login screen" \
 When no ID is given, zforge scans the tasks directory and assigns the next available
 `TASK-NNN` number. Explicit IDs must match `[A-Z]+-[0-9]+` (e.g. `AUTH-42`).
 
-Creates `tasks/<TASK-ID>/task.md`. For UI tasks with Figma context, also creates
-`tasks/<TASK-ID>/figma.md` — automatically injected into spec and code prompts.
+Creates `.zforge/tasks/<TASK-ID>/task.md`. For UI tasks with Figma context, also
+creates `.zforge/tasks/<TASK-ID>/figma.md` — automatically injected into spec and
+code prompts.
 
 ### Figma integration (UI tasks)
 
@@ -77,8 +78,8 @@ zforge spec TASK-001 --copy   # copy prompt to clipboard
 zforge spec TASK-001 --done   # mark spec phase complete
 ```
 
-**AI writes:** `tasks/TASK-001/spec.md`
-**Requires:** `tasks/TASK-001/task.md` to exist and be filled in
+**AI writes:** `.zforge/tasks/TASK-001/spec.md`
+**Requires:** `.zforge/tasks/TASK-001/task.md` to exist and be filled in
 
 ---
 
@@ -87,10 +88,11 @@ zforge spec TASK-001 --done   # mark spec phase complete
 Human approval gate. Marks an artifact as reviewed.
 
 ```bash
-zforge approve TASK-001 spec
 zforge approve TASK-001 testspec
-zforge approve TASK-001 spec --note "AC looks good"
-zforge approve TASK-001 spec --yes    # skip confirmation prompt
+zforge approve TASK-001 plan
+zforge approve TASK-001 verify
+zforge approve TASK-001 testspec --note "coverage is complete"
+zforge approve TASK-001 testspec --yes    # skip confirmation prompt
 ```
 
 Sets `reviewed: true` in the artifact's YAML frontmatter.
@@ -107,8 +109,8 @@ zforge testspec TASK-001
 zforge testspec TASK-001 --done
 ```
 
-**Requires:** approved `spec.md`
-**AI writes:** `tasks/TASK-001/testspec.md`
+**Requires:** completed `spec.md`
+**AI writes:** `.zforge/tasks/TASK-001/testspec.md`
 
 ---
 
@@ -121,8 +123,8 @@ zforge plan TASK-001
 zforge plan TASK-001 --done
 ```
 
-**Requires:** approved `spec.md` and `testspec.md`
-**AI writes:** `tasks/TASK-001/plan.md`
+**Requires:** approved `testspec.md`
+**AI writes:** `.zforge/tasks/TASK-001/plan.md`
 
 ---
 
@@ -135,8 +137,8 @@ zforge code TASK-001
 zforge code TASK-001 --done
 ```
 
-**Requires:** approved `spec.md`, `testspec.md`, and completed `plan.md`
-**AI writes:** source code + tests + `tasks/TASK-001/implementation-log.md`
+**Requires:** approved `testspec.md` and approved `plan.md`
+**AI writes:** source code + tests + `.zforge/tasks/TASK-001/implementation-log.md`
 
 ---
 
@@ -151,7 +153,7 @@ zforge verify TASK-001 --timeout 120
 ```
 
 Runs the `test_command` from `.zforge/config.yaml` by default.
-Records pass/fail to `tasks/TASK-001/verify.md`.
+Records pass/fail to `.zforge/tasks/TASK-001/verify.md`.
 
 ---
 
@@ -164,7 +166,7 @@ zforge review TASK-001
 zforge review TASK-001 --done
 ```
 
-**AI writes:** `tasks/TASK-001/review.md`
+**AI writes:** `.zforge/tasks/TASK-001/review-summary.md`
 **AI updates:** `.zforge/memory/patterns.md` with reusable patterns
 
 ---
@@ -225,7 +227,7 @@ opencode:
   context_files: []         # extra files to load as context
 
 paths:
-  tasks: "./tasks"
+  tasks: "./.zforge/tasks"
   agents: "./.zforge/agents"
   memory: "./.zforge/memory"
   skills: "./.zforge/skills"

@@ -11,10 +11,14 @@ task import
     ▼
  spec  ← AI clarifies requirements, defines acceptance criteria, derives test cases
     │
+ testspec  ← AI derives behavior-first test cases
+    │
  approve ──── human gate (zforge approve TASK-001 testspec)
     │
     ▼
  plan          ← AI writes step-by-step implementation plan
+    │
+ approve ──── human gate (zforge approve TASK-001 plan)
     │
     ▼
  code          ← AI writes failing tests first, then minimal implementation
@@ -32,7 +36,7 @@ task import
 
 ### task import
 
-Creates `tasks/<TASK-ID>/task.md` from a template. The task ID is auto-generated
+Creates `.zforge/tasks/<TASK-ID>/task.md` from a template. The task ID is auto-generated
 (`TASK-001`, `TASK-002`, …) unless you supply one explicitly.
 
 ```bash
@@ -52,14 +56,14 @@ zforge task import TASK-001 --title "Login screen" \
 Fill in the task description, context, and "done when" criteria before running any
 other phase. The richer the task description, the sharper the spec.
 
-**UI tasks:** If `--figma-context` is provided, zforge writes `tasks/<ID>/figma.md`
+**UI tasks:** If `--figma-context` is provided, zforge writes `.zforge/tasks/<ID>/figma.md`
 and injects it into the `spec` and `code` prompts automatically. Fetch the context
 using your AI tool's Figma MCP before calling `task import`.
 
 ### spec
 
-The spec-agent reads `task.md` (and `figma.md` if present) and produces **both**
-`tasks/<TASK-ID>/spec.md` and `tasks/<TASK-ID>/testspec.md` in a single LLM call.
+The spec-agent reads `task.md` (and `figma.md` if present) and produces
+`.zforge/tasks/<TASK-ID>/spec.md`.
 
 `spec.md` contains:
 
@@ -70,9 +74,18 @@ The spec-agent reads `task.md` (and `figma.md` if present) and produces **both**
 - **Impacted Areas** — files, modules, APIs that will change
 - **Acceptance Criteria** — observable, testable conditions
 
-`testspec.md` contains a concrete list of test cases written **before** any
-implementation. Each test case maps to one or more acceptance criteria and covers
-happy paths, error cases, and boundary conditions.
+When `spec.md` is complete, mark the phase done:
+
+```bash
+zforge spec TASK-001 --done
+```
+
+### testspec
+
+The testspec-agent reads spec + task context and produces
+`.zforge/tasks/<TASK-ID>/testspec.md`. It contains a concrete list of test cases
+written **before** any implementation. Each test case maps to one or more
+acceptance criteria and covers happy paths, error cases, and boundary conditions.
 
 > **Approval required (testspec gate).** Read both files carefully. Reject vague
 > acceptance criteria and incomplete test coverage. These become the contract for
@@ -84,9 +97,16 @@ happy paths, error cases, and boundary conditions.
 
 ### plan
 
-The plan-agent reads spec + testspec and produces `tasks/<TASK-ID>/plan.md` —
+The plan-agent reads spec + testspec and produces `.zforge/tasks/<TASK-ID>/plan.md` —
 an ordered list of implementation steps with file paths and function signatures.
 No code yet, just a precise map of what will change and why.
+
+> **Approval required (plan gate).** Review the plan for scope, file paths, and
+> execution order before coding.
+>
+> ```bash
+> zforge approve TASK-001 plan
+> ```
 
 ### code
 
@@ -94,14 +114,14 @@ The code-agent reads spec + testspec + plan (and `figma.md` if present) and:
 
 1. Writes failing tests matching every case in `testspec.md`
 2. Implements minimal production code to make them pass
-3. Appends a change log to `tasks/<TASK-ID>/implementation-log.md`
+3. Appends a change log to `.zforge/tasks/<TASK-ID>/implementation-log.md`
 
 The agent must not touch code outside the scope defined in the plan.
 
 ### verify
 
 zforge runs your configured test command (e.g. `cargo test`) and records the
-results in `tasks/<TASK-ID>/verify.md`. Pass/fail is shown in the terminal.
+results in `.zforge/tasks/<TASK-ID>/verify.md`. Pass/fail is shown in the terminal.
 
 If tests fail, copy the failure output back to your AI tool and ask the code-agent
 to fix them. Re-run `zforge verify` after each fix attempt.
@@ -109,7 +129,7 @@ to fix them. Re-run `zforge verify` after each fix attempt.
 ### review
 
 The review-agent reads all artifacts and the final diff and produces
-`tasks/<TASK-ID>/review.md`. It checks for:
+`.zforge/tasks/<TASK-ID>/review-summary.md`. It checks for:
 
 - Spec drift — did the implementation match what was agreed?
 - Uncovered test cases — anything in testspec not tested?
@@ -122,6 +142,7 @@ The review-agent reads all artifacts and the final diff and produces
 ```bash
 zforge approve TASK-001 testspec     # unlocks plan and code phases
 zforge approve TASK-001 plan         # unlocks code phase
+zforge approve TASK-001 verify       # optional: mark verify.md as reviewed
 ```
 
 Approval sets `reviewed: true` in the artifact's YAML frontmatter. zforge blocks
@@ -130,7 +151,7 @@ downstream phases until the required artifact is approved.
 To add a note to an approval:
 
 ```bash
-zforge approve TASK-001 spec --note "scope is correct, AC is testable"
+zforge approve TASK-001 testspec --note "coverage maps to the acceptance criteria"
 ```
 
 ---

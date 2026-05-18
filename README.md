@@ -2,7 +2,7 @@
 
 TDD-first AI development workflow CLI. Orchestrates a gated pipeline —
 spec → testspec → plan → code → verify → review — where each phase
-produces a markdown artifact and requires human approval before proceeding.
+produces a markdown artifact, with human gates before planning and coding.
 
 Works with **Claude Code**, **OpenCode**, and **Codex**.
 
@@ -53,16 +53,21 @@ zforge mcp register --agent claude
 
 # 4. Run your first task
 zforge task import TASK-001 --title "Your task title"
-# edit tasks/TASK-001/task.md, then ask Claude Code:
-# "run zforge spec TASK-001" → review → "zforge approve TASK-001 spec" → ...
+# edit .zforge/tasks/TASK-001/task.md, then ask Claude Code:
+# "run zforge spec TASK-001" → review → "zforge spec TASK-001 --done" → ...
 zforge spec TASK-001
-zforge approve TASK-001 spec
+zforge spec TASK-001 --done
 zforge testspec TASK-001
+zforge testspec TASK-001 --done
 zforge approve TASK-001 testspec
 zforge plan TASK-001
+zforge plan TASK-001 --done
+zforge approve TASK-001 plan
 zforge code TASK-001
+zforge code TASK-001 --done
 zforge verify TASK-001
 zforge review TASK-001
+zforge review TASK-001 --done
 ```
 
 **Session starter prompt for Claude Code:**
@@ -71,7 +76,7 @@ zforge review TASK-001
 We're using zforge for this project. Run `zforge status` to see current task
 progress, then help me work through the pipeline. For each phase, run the zforge
 command, wait for my approval before proceeding, and follow the artifacts in
-tasks/<ID>/. Use the zforge MCP tools when available.
+.zforge/tasks/<ID>/. Use the zforge MCP tools when available.
 ```
 
 ### With Codex
@@ -86,15 +91,19 @@ zforge init --agent codex
 
 # 3. Run your first task (same pipeline)
 zforge task import TASK-001 --title "Your task title"
-# edit tasks/TASK-001/task.md, then:
+# edit .zforge/tasks/TASK-001/task.md, then:
 zforge spec TASK-001
-zforge approve TASK-001 spec
+zforge spec TASK-001 --done
 zforge testspec TASK-001
+zforge testspec TASK-001 --done
 zforge approve TASK-001 testspec
 zforge plan TASK-001
+zforge plan TASK-001 --done
+zforge approve TASK-001 plan
 zforge code TASK-001
-zforge verify TASK-001
+zforge ship TASK-001
 zforge review TASK-001
+zforge review TASK-001 --done
 ```
 
 Codex picks the right model per phase via profiles in `~/.codex/config.toml`:
@@ -121,7 +130,7 @@ codex --profile zforge_review   "run zforge review TASK-001"
 We're using zforge for this project. Run `zforge status` to see current task
 progress, then help me work through the pipeline. For each phase, run the zforge
 command, wait for my approval before proceeding, and follow the artifacts in
-tasks/<ID>/. Use the zforge MCP tools (task_import, get_prompt, approve, verify,
+.zforge/tasks/<ID>/. Use the zforge MCP tools (task_import, get_prompt, approve, verify,
 ship, status) when available.
 ```
 
@@ -137,15 +146,20 @@ zforge init --agent opencode
 
 # 3. Run your first task (same pipeline)
 zforge task import TASK-001 --title "Your task title"
-# edit tasks/TASK-001/task.md, then:
+# edit .zforge/tasks/TASK-001/task.md, then:
 zforge spec TASK-001
-zforge approve TASK-001 spec
+zforge spec TASK-001 --done
 zforge testspec TASK-001
+zforge testspec TASK-001 --done
 zforge approve TASK-001 testspec
 zforge plan TASK-001
+zforge plan TASK-001 --done
+zforge approve TASK-001 plan
 zforge code TASK-001
+zforge code TASK-001 --done
 zforge verify TASK-001
 zforge review TASK-001
+zforge review TASK-001 --done
 ```
 
 **Session starter prompt for OpenCode:**
@@ -154,13 +168,13 @@ zforge review TASK-001
 We're using zforge for this project. Run `zforge status` to see current task
 progress, then help me work through the pipeline. For each phase, run the zforge
 command, wait for my approval before proceeding, and follow the artifacts in
-tasks/<ID>/. Use the zforge agents in .opencode/ for phase-specific guidance.
+.zforge/tasks/<ID>/. Use the zforge agents in .opencode/ for phase-specific guidance.
 ```
 
 ## Pipeline
 
 ```
-task import → spec → [approve] → testspec → [approve] → plan → code → verify → review
+task import → spec → testspec → [approve testspec] → plan → [approve plan] → code → verify → review
 ```
 
 `zforge ship <ID>` is a shortcut for `code` + `verify` back-to-back — saves a tool round trip when chained via MCP, and is idempotent (skips the code phase if state is already `Coded`).
@@ -214,10 +228,10 @@ Agents that are not installed are skipped, not failed.
 | `zforge mcp register` | Register zforge MCP server with Claude Code, Codex, and/or OpenCode |
 | `zforge task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`) |
 | `zforge spec <ID>` | Generate spec prompt |
-| `zforge approve <ID> spec` | Approve spec (human gate) |
 | `zforge testspec <ID>` | Generate test spec prompt |
 | `zforge approve <ID> testspec` | Approve testspec (human gate) |
 | `zforge plan <ID>` | Generate implementation plan prompt |
+| `zforge approve <ID> plan` | Approve implementation plan (human gate) |
 | `zforge code <ID>` | Generate coding prompt (AI writes tests first) |
 | `zforge verify <ID>` | Run tests, record results |
 | `zforge ship <ID>` | Run `code` + `verify` in one step (idempotent — skips code if already Coded) |

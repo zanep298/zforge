@@ -1,7 +1,7 @@
 # Using zforge with OpenCode
 
 OpenCode is a terminal-based AI coding tool. zforge integrates with it by generating
-structured prompts and scaffolding `.opencode/` with agents, skills, and rules that
+structured prompts and scaffolding `.opencode/` with agents and project instructions that
 OpenCode loads automatically at startup.
 
 ## Setup
@@ -17,54 +17,38 @@ cargo install --path .
 Run this in your project root:
 
 ```bash
-zforge init opencode
+zforge init --agent opencode
 ```
 
-This creates:
+This creates project-local files and registers MCP in the user OpenCode config:
 
 ```
+.zforge/
+├── agents/
+├── skills/
+├── memory/
+└── tasks/
 .opencode/
-├── opencode.json        # OpenCode config: model, context files, MCP server
-├── instructions.md      # project overview and workflow summary
 ├── agents/
 │   ├── spec-agent.md
 │   ├── testspec-agent.md
 │   ├── plan-agent.md
 │   ├── code-agent.md
 │   └── review-agent.md
-├── skills/
-│   ├── rust-patterns.md          # language patterns (auto-detected)
-│   ├── rust-testing.md
-│   ├── tdd-workflow.md
-│   ├── verification-loop.md
-│   └── security-review.md
-└── rules/
-    ├── coding-style.md
-    ├── testing.md
-    └── security.md
 ```
 
-> Skills and rules are pulled from your ECC install (`~/.claude/skills/`,
-> `~/.claude/rules/`) when available, so your personal standards flow in
-> automatically.
+`AGENTS.md` is written at the project root, and `.opencode/agents/` symlinks to
+the canonical `.zforge/agents/` files.
 
-`opencode.json` registers `zforge mcp` as a local MCP server so OpenCode's AI
-can call zforge tools directly from inside the TUI.
-
-### 2. Initialize the zforge pipeline
-
-```bash
-zforge init
-```
-
-This creates `.zforge/` with prompt templates and the memory store.
+`~/.config/opencode/opencode.json` registers `zforge mcp` as a local MCP server
+so OpenCode's AI can call zforge tools directly from the TUI.
 
 ---
 
 ## How it works
 
-When `.opencode/agents/` exists in the project and the `opencode` binary is
-available, `zforge` calls OpenCode directly — no copy-paste needed.
+When `.opencode/agents/` exists in the project, OpenCode can use the zforge MCP
+tools and phase-specific agent prompts.
 
 ```
 zforge spec TASK-001
@@ -74,17 +58,16 @@ zforge spec TASK-001
      └─► opencode run "<prompt>" --agent spec-agent
                │
                ▼
-         OpenCode loads .opencode/ context (skills, rules, instructions)
-         and runs the spec-agent
+         OpenCode reads AGENTS.md and the phase agent prompt
                │
                ▼
-         writes tasks/TASK-001/spec.md
+         writes .zforge/tasks/TASK-001/spec.md
                │
                ▼
          control returns to your terminal
                │
                ▼
-     zforge approve TASK-001 spec   (you review, then approve)
+     zforge spec TASK-001 --done
 ```
 
 **Fallback:** if `opencode` is not installed or `.opencode/` does not exist,
@@ -102,7 +85,7 @@ zforge spec TASK-001
 zforge task import TASK-001 --title "Implement logging metrics for OpenTelemetry"
 ```
 
-Open `tasks/TASK-001/task.md` and describe the task:
+Open `.zforge/tasks/TASK-001/task.md` and describe the task:
 
 ```markdown
 ## Task
@@ -138,13 +121,13 @@ zforge detects `.opencode/agents/spec-agent.md` and calls:
 opencode run "<prompt>" --agent spec-agent
 ```
 
-OpenCode runs non-interactively, reads `tasks/TASK-001/task.md`, and writes
-`tasks/TASK-001/spec.md`. Control returns to your terminal when done.
+OpenCode reads `.zforge/tasks/TASK-001/task.md` and writes
+`.zforge/tasks/TASK-001/spec.md`. Control returns to your terminal when done.
 
-Review `spec.md`, then approve:
+Review `spec.md`, then mark the phase complete:
 
 ```bash
-zforge approve TASK-001 spec
+zforge spec TASK-001 --done
 ```
 
 ---
@@ -155,7 +138,7 @@ zforge approve TASK-001 spec
 zforge testspec TASK-001
 ```
 
-Paste prompt into OpenCode → OpenCode writes `tasks/TASK-001/testspec.md`:
+Paste prompt into OpenCode → OpenCode writes `.zforge/tasks/TASK-001/testspec.md`:
 
 ```markdown
 - [ ] span is emitted when HTTP handler is called
@@ -169,6 +152,7 @@ Paste prompt into OpenCode → OpenCode writes `tasks/TASK-001/testspec.md`:
 Approve:
 
 ```bash
+zforge testspec TASK-001 --done
 zforge approve TASK-001 testspec
 ```
 
@@ -180,8 +164,14 @@ zforge approve TASK-001 testspec
 zforge plan TASK-001
 ```
 
-Paste prompt → OpenCode writes `tasks/TASK-001/plan.md` with ordered
+Paste prompt → OpenCode writes `.zforge/tasks/TASK-001/plan.md` with ordered
 implementation steps, file paths, and function signatures. No code yet.
+Mark the phase complete and approve it before coding:
+
+```bash
+zforge plan TASK-001 --done
+zforge approve TASK-001 plan
+```
 
 ---
 
@@ -195,7 +185,13 @@ Paste prompt → OpenCode:
 
 1. Writes failing tests for every case in `testspec.md`
 2. Implements the minimal code to make them pass
-3. Appends a change log to `tasks/TASK-001/implementation-log.md`
+3. Appends a change log to `.zforge/tasks/TASK-001/implementation-log.md`
+
+When code is complete:
+
+```bash
+zforge code TASK-001 --done
+```
 
 ---
 
@@ -220,6 +216,12 @@ zforge review TASK-001
 Paste prompt → OpenCode checks for spec drift, missing coverage, and extracts
 reusable patterns into `.zforge/memory/patterns.md` for future tasks.
 
+When `review-summary.md` is complete:
+
+```bash
+zforge review TASK-001 --done
+```
+
 ---
 
 ---
@@ -233,8 +235,9 @@ when you open the project, giving its AI access to these tools:
 |------|-------------|
 | `task_import` | Create a task and set up `task.md` |
 | `get_prompt` | Render the prompt for spec/testspec/plan/code/review |
-| `approve` | Approve spec or testspec to unlock the next phase |
+| `approve` | Approve testspec, plan, or verify artifacts |
 | `verify` | Run the test suite, return pass/fail |
+| `ship` | Mark code complete and run verify in one tool call |
 | `status` | Show task phase progress |
 
 ### How the AI uses them
@@ -246,36 +249,27 @@ You: "Run the full pipeline for TASK-001"
 
 OpenCode AI:
   1. calls get_prompt(phase="spec", task_id="TASK-001")
-  2. processes the prompt → writes tasks/TASK-001/spec.md
-  3. calls approve(task_id="TASK-001", artifact="spec")
-  4. calls get_prompt(phase="testspec", task_id="TASK-001")
-  5. processes → writes testspec.md
-  6. calls approve(task_id="TASK-001", artifact="testspec")
-  7. calls get_prompt(phase="plan", ...) → writes plan.md
+  2. processes the prompt → writes .zforge/tasks/TASK-001/spec.md
+  3. calls get_prompt(phase="testspec", task_id="TASK-001")
+  4. processes → writes testspec.md
+  5. calls approve(task_id="TASK-001", artifact="testspec")
+  6. calls get_prompt(phase="plan", ...) → writes plan.md
+  7. calls approve(task_id="TASK-001", artifact="plan")
   8. calls get_prompt(phase="code", ...) → implements code
-  9. calls verify(task_id="TASK-001") → runs cargo test
- 10. calls get_prompt(phase="review", ...) → extracts patterns
+  9. calls ship(task_id="TASK-001") → runs cargo test
+ 10. optionally calls approve(task_id="TASK-001", artifact="verify")
+ 11. calls get_prompt(phase="review", ...) → writes review-summary.md
 ```
 
 You never leave the OpenCode TUI. The entire pipeline runs through conversation.
 
-### The opencode.json MCP entry
+### The OpenCode MCP entry
 
-`zforge init opencode` generates this automatically:
+`zforge init --agent opencode` writes this entry to `~/.config/opencode/opencode.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "claude-sonnet-4-5",
-  "instructions": [
-    ".opencode/instructions.md",
-    ".opencode/rules/coding-style.md",
-    ".opencode/rules/testing.md",
-    ".opencode/rules/security.md"
-  ],
-  "skills": {
-    "paths": [".opencode/skills"]
-  },
   "mcp": {
     "zforge": {
       "type": "local",
@@ -293,10 +287,10 @@ via stdio. No separate server management required.
 
 ## Regenerating .opencode/
 
-If you add ECC skills to `~/.claude/skills/` and want them reflected:
+To refresh OpenCode symlinks and MCP registration:
 
 ```bash
-zforge init opencode --force
+zforge init --agent opencode --force
 ```
 
 This overwrites all files in `.opencode/` with the latest content.
@@ -311,7 +305,7 @@ Agent frontmatter had `tools` as a YAML array. Fixed in current version.
 Regenerate:
 
 ```bash
-zforge init opencode --force
+zforge init --agent opencode --force
 ```
 
 ### "Configuration is invalid — Unrecognized key: context_files"
@@ -321,7 +315,7 @@ The correct keys are `instructions` (file list) and `skills.paths` (directory li
 Regenerate:
 
 ```bash
-zforge init opencode --force
+zforge init --agent opencode --force
 ```
 
 ### OpenCode does not load instruction files

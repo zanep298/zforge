@@ -229,9 +229,9 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
     Ok(format!(
         "## Prompt for phase: {phase} / task: {task_id}\n\n\
          {output_line}\
-         When done, call approve(task_id=\"{task_id}\", artifact=\"{phase}\") \
-         if approval is required, or proceed to the next phase.\n\n\
+         When done, follow the next step: {}.\n\n\
          ---\n\n{prompt}",
+        ctx.next_command,
     ))
 }
 
@@ -293,7 +293,7 @@ fn tool_ship(args: &Value) -> Result<String> {
     crate::cli::verify::run(task_id, command, timeout)?;
 
     Ok(format!(
-        "Ship complete for task {task_id}. See .zforge/tasks/{task_id}/verify.md for results. Next: approve(task_id=\"{task_id}\", artifact=\"verify\") then get_prompt(phase=\"review\", task_id=\"{task_id}\")."
+        "Ship complete for task {task_id}. See .zforge/tasks/{task_id}/verify.md for results. Next: get_prompt(phase=\"review\", task_id=\"{task_id}\"). Optionally call approve(task_id=\"{task_id}\", artifact=\"verify\") first to mark verify.md reviewed."
     ))
 }
 
@@ -336,7 +336,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "get_prompt",
-            "description": "Render the AI prompt for a pipeline phase. Process the returned prompt yourself and write output to the specified file. Phases must run in order: spec → testspec → plan → code → review.",
+            "description": "Render the AI prompt for a pipeline phase. Process the returned prompt yourself and write output to the specified file. Phases must run in order: spec → testspec → approve testspec → plan → approve plan → code → ship/verify → review. verify may also be approved to mark verify.md reviewed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -348,12 +348,12 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "approve",
-            "description": "Approve an artifact to unlock the next phase. spec and testspec require explicit approval before plan/code can run.",
+            "description": "Approve an artifact. testspec unlocks planning, plan unlocks coding, and verify marks verify.md as reviewed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "task_id":  { "type": "string" },
-                    "artifact": { "type": "string", "enum": ["spec", "testspec"] },
+                    "artifact": { "type": "string", "enum": ["testspec", "plan", "verify"] },
                     "note":     { "type": "string", "description": "Optional approval note" }
                 },
                 "required": ["task_id", "artifact"]
@@ -422,11 +422,56 @@ fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
 
 fn next_cmd(phase: &str, task_id: &str) -> String {
     match phase {
-        "spec" => format!("approve(task_id=\"{task_id}\", artifact=\"spec\")"),
+        "spec" => format!("get_prompt(phase=\"testspec\", task_id=\"{task_id}\")"),
         "testspec" => format!("approve(task_id=\"{task_id}\", artifact=\"testspec\")"),
-        "plan" => format!("get_prompt(phase=\"code\", task_id=\"{task_id}\")"),
-        "code" => format!("verify(task_id=\"{task_id}\")"),
+        "plan" => format!("approve(task_id=\"{task_id}\", artifact=\"plan\")"),
+        "code" => format!("ship(task_id=\"{task_id}\")"),
         "review" => "Pipeline complete!".to_string(),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approve_schema_matches_cli_artifacts() {
+        let tools = tool_definitions();
+        let approve_tool = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool.get("name").and_then(|v| v.as_str()) == Some("approve"))
+            .unwrap();
+
+        let artifact_enum = approve_tool["inputSchema"]["properties"]["artifact"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(artifact_enum, vec!["testspec", "plan", "verify"]);
+    }
+
+    #[test]
+    fn next_cmd_follows_current_state_machine() {
+        let task_id = "TASK-001";
+
+        assert_eq!(
+            next_cmd("spec", task_id),
+            "get_prompt(phase=\"testspec\", task_id=\"TASK-001\")"
+        );
+        assert_eq!(
+            next_cmd("testspec", task_id),
+            "approve(task_id=\"TASK-001\", artifact=\"testspec\")"
+        );
+        assert_eq!(
+            next_cmd("plan", task_id),
+            "approve(task_id=\"TASK-001\", artifact=\"plan\")"
+        );
+        assert_eq!(next_cmd("code", task_id), "ship(task_id=\"TASK-001\")");
+        assert_eq!(next_cmd("review", task_id), "Pipeline complete!");
     }
 }

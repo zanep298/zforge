@@ -14,13 +14,13 @@ You do not design architecture or write code.
 
 ## Inputs
 
-- `tasks/{{task_id}}/task.md` — the task description filled in by the engineer
+- `.zforge/tasks/{{task_id}}/task.md` — the task description filled in by the engineer
 - `.zforge/memory/patterns.md` — approved patterns for this project (optional)
 - `.zforge/memory/domain-glossary.md` — project terminology (optional)
 
 ## Output
 
-Write `tasks/{{task_id}}/spec.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
+Write `.zforge/tasks/{{task_id}}/spec.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
 ## Rules
 

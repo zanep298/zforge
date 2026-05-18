@@ -14,14 +14,14 @@ test cases. You do not write code.
 
 ## Inputs
 
-- `tasks/{{task_id}}/spec.md` — approved spec
-- `tasks/{{task_id}}/testspec.md` — approved test spec (must be reviewed before planning)
-- `tasks/{{task_id}}/task.md` — original task for context
+- `.zforge/tasks/{{task_id}}/spec.md` — completed spec
+- `.zforge/tasks/{{task_id}}/testspec.md` — approved test spec (must be reviewed before planning)
+- `.zforge/tasks/{{task_id}}/task.md` — original task for context
 - `.zforge/memory/patterns.md` — approved patterns (optional)
 
 ## Output
 
-Write `tasks/{{task_id}}/plan.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
+Write `.zforge/tasks/{{task_id}}/plan.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
 ## Rules
 

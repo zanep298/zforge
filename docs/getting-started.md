@@ -2,8 +2,7 @@
 
 zforge is a TDD-first AI development workflow CLI. It orchestrates a gated
 pipeline — spec → testspec → plan → code → verify → review — where each phase
-produces a markdown artifact and requires explicit human approval before the next
-phase begins.
+produces a markdown artifact, with explicit human gates before planning and coding.
 
 ## Install
 
@@ -40,7 +39,7 @@ Creates the canonical project structure:
     ├── patterns.md
     ├── domain-glossary.md
     └── anti-patterns.md
-tasks/                   # task artifacts live here
+└── tasks/               # task artifacts live here
 ```
 
 Edit `.zforge/config.yaml` and set `project.name` before running any tasks.
@@ -81,20 +80,25 @@ zforge task import --title "Add health check endpoint"
 # or supply an explicit ID: zforge task import AUTH-42 --title "..."
 
 # 2. Fill in the task description (use the printed path)
-$EDITOR tasks/TASK-001/task.md
+$EDITOR .zforge/tasks/TASK-001/task.md
 
 # 3. Run the pipeline
 zforge spec TASK-001        # generates prompt → paste into AI → AI writes spec.md
-zforge approve TASK-001 spec
+zforge spec TASK-001 --done
 
 zforge testspec TASK-001    # AI writes testspec.md
+zforge testspec TASK-001 --done
 zforge approve TASK-001 testspec
 
 zforge plan TASK-001        # AI writes plan.md
+zforge plan TASK-001 --done
+zforge approve TASK-001 plan
 zforge code TASK-001        # AI implements, writes tests first
+zforge code TASK-001 --done
 
 zforge verify TASK-001      # runs your test command automatically
 zforge review TASK-001      # AI reviews, extracts patterns into memory
+zforge review TASK-001 --done
 ```
 
 ## Next steps

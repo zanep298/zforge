@@ -13,9 +13,9 @@ pass with the minimal working change. Summarize every decision made during imple
 
 ## Inputs
 
-- `tasks/{{task_id}}/spec.md` — approved spec
-- `tasks/{{task_id}}/testspec.md` — approved test cases
-- `tasks/{{task_id}}/plan.md` — approved implementation plan (must be reviewed before coding)
+- `.zforge/tasks/{{task_id}}/spec.md` — completed spec
+- `.zforge/tasks/{{task_id}}/testspec.md` — approved test cases
+- `.zforge/tasks/{{task_id}}/plan.md` — approved implementation plan (must be reviewed before coding)
 - `.zforge/memory/patterns.md` — patterns to follow (optional)
 - `.zforge/memory/anti-patterns.md` — patterns to avoid (optional)
 
