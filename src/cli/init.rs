@@ -23,6 +23,26 @@ review:
   auto_approve: false
 "#;
 
+/// Config written by `init --shared` — points agents/skills at the global
+/// `~/.zforge/` store so multiple projects share a single source of truth.
+/// Tasks and memory stay local because they are project-specific.
+const SHARED_CONFIG: &str = r#"project:
+  name: ""
+  language: "rust"
+  test_command: "cargo test"
+  root_dir: "."
+opencode:
+  model: "claude-sonnet-4-5"
+  context_files: []
+paths:
+  tasks: "./.zforge/tasks"
+  agents: "~/.zforge/agents"
+  memory: "./.zforge/memory"
+  skills: "~/.zforge/skills"
+review:
+  auto_approve: false
+"#;
+
 const PATTERNS_MD: &str = "# Coding Patterns\n\n## Approved Patterns\n\n## Test Patterns\n";
 const GLOSSARY_MD: &str = "# Domain Glossary\n";
 const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
@@ -84,7 +104,7 @@ impl InitStats {
     }
 }
 
-pub fn run(agent: Agent, force: bool) -> Result<()> {
+pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
     let cwd = env::current_dir()?;
     let detected = detect_project(&cwd);
 
@@ -98,7 +118,22 @@ pub fn run(agent: Agent, force: bool) -> Result<()> {
         Agent::Codex => "codex",
         Agent::OpenCode => "opencode",
     };
-    println!("Scaffolding zforge for: {}", agent_label.cyan());
+    let mode_label = if local { " (local mode)" } else { "" };
+    println!(
+        "Scaffolding zforge for: {}{}",
+        agent_label.cyan(),
+        mode_label.dimmed()
+    );
+
+    // Default is shared mode: templates + agents + skills live in the
+    // global ~/.zforge/ store and are referenced by symlink. `--local`
+    // forks every file into the project. First-time install of the global
+    // store happens automatically when shared.
+    let global_store = if !local {
+        Some(crate::cli::install::ensure_global_store()?)
+    } else {
+        None
+    };
 
     let zforge_dir = cwd.join(".zforge");
 
@@ -118,8 +153,10 @@ pub fn run(agent: Agent, force: bool) -> Result<()> {
 
     let mut stats = InitStats::new();
 
-    // Config
-    let config_content = DEFAULT_CONFIG
+    // Config — default (shared) mode points paths at ~/.zforge/{agents,skills}.
+    // `--local` keeps everything inside the project at ./.zforge/.
+    let base_config = if local { DEFAULT_CONFIG } else { SHARED_CONFIG };
+    let config_content = base_config
         .replace(
             "language: \"rust\"",
             &format!("language: \"{}\"", detected.language),
@@ -132,58 +169,70 @@ pub fn run(agent: Agent, force: bool) -> Result<()> {
     stats.record(created);
     print_file_status(created, ".zforge/config.yaml");
 
-    // Prompt templates (.tmpl — used by zf spec/testspec/plan/code/verify/review)
-    let tmpl_dir = zforge_dir.join("agents");
-    std::fs::create_dir_all(&tmpl_dir)?;
-    for (name, content) in prompt_templates() {
-        let created = write_safe(&tmpl_dir.join(name), content, force)?;
-        stats.record(created);
-    }
-    println!(
-        "{} .zforge/agents/ — prompt templates",
-        label(stats.created > 0)
-    );
-
-    // Agent definitions (.md — loaded by Claude Code via .claude/agents/ symlinks)
     let lang_skills = lang_skill_templates(&detected.language);
     let vars = Vars {
         language: detected.language.clone(),
         test_command: detected.test_command,
         project_name: detected.project_name,
     };
-    for (name, raw) in agent_templates() {
-        let rendered = apply_vars(raw, &vars);
-        let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
-        stats.record(created);
-    }
-    println!(
-        "{} .zforge/agents/ — Claude Code agent definitions",
-        label(stats.created > 0)
-    );
 
-    // Skills (workflow)
-    let skills_dir = zforge_dir.join("skills");
-    std::fs::create_dir_all(&skills_dir)?;
-    for (name, raw) in skill_templates() {
-        let rendered = apply_vars(raw, &vars);
-        let created = write_safe(&skills_dir.join(name), &rendered, force)?;
-        stats.record(created);
-    }
+    // Local mode forks every template/agent/skill into the project so
+    // each file can be customized standalone. Shared mode (default) skips
+    // these writes; the global store at ~/.zforge/ already holds them.
+    if local {
+        // Prompt templates (.tmpl — used by zf spec/testspec/plan/code/verify/review)
+        let tmpl_dir = zforge_dir.join("agents");
+        std::fs::create_dir_all(&tmpl_dir)?;
+        for (name, content) in prompt_templates() {
+            let created = write_safe(&tmpl_dir.join(name), content, force)?;
+            stats.record(created);
+        }
+        println!(
+            "{} .zforge/agents/ — prompt templates",
+            label(stats.created > 0)
+        );
 
-    // Skills (language-specific)
-    let lang_count = lang_skills.len();
-    for (name, raw) in &lang_skills {
-        let rendered = apply_vars(raw, &vars);
-        let created = write_safe(&skills_dir.join(name), &rendered, force)?;
-        stats.record(created);
+        // Agent definitions (.md — loaded by Claude Code via .claude/agents/ symlinks)
+        for (name, raw) in agent_templates() {
+            let rendered = apply_vars(raw, &vars);
+            let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
+            stats.record(created);
+        }
+        println!(
+            "{} .zforge/agents/ — Claude Code agent definitions",
+            label(stats.created > 0)
+        );
+
+        // Skills (workflow)
+        let skills_dir = zforge_dir.join("skills");
+        std::fs::create_dir_all(&skills_dir)?;
+        for (name, raw) in skill_templates() {
+            let rendered = apply_vars(raw, &vars);
+            let created = write_safe(&skills_dir.join(name), &rendered, force)?;
+            stats.record(created);
+        }
+
+        // Skills (language-specific)
+        let lang_count = lang_skills.len();
+        for (name, raw) in &lang_skills {
+            let rendered = apply_vars(raw, &vars);
+            let created = write_safe(&skills_dir.join(name), &rendered, force)?;
+            stats.record(created);
+        }
+        println!(
+            "{} .zforge/skills/ — {} base/supplementary + {} {} skills",
+            label(stats.created > 0),
+            SKILLS.len(),
+            lang_count,
+            vars.language
+        );
+    } else {
+        println!(
+            "{} agents + skills resolved from {}",
+            "↪".cyan(),
+            "~/.zforge/".dimmed()
+        );
     }
-    println!(
-        "{} .zforge/skills/ — {} base/supplementary + {} {} skills",
-        label(stats.created > 0),
-        SKILLS.len(),
-        lang_count,
-        vars.language
-    );
 
     // Memory
     let mem_dir = zforge_dir.join("memory");
@@ -217,17 +266,39 @@ pub fn run(agent: Agent, force: bool) -> Result<()> {
 
     // --- Claude Code scaffolding --------------------------------------------
     if want_claude {
-        scaffold_claude(&cwd, &zforge_dir, &vars_with_lang, force, &mut stats)?;
+        scaffold_claude(
+            &cwd,
+            &zforge_dir,
+            &vars_with_lang,
+            force,
+            global_store.as_deref(),
+            &mut stats,
+        )?;
     }
 
     // --- Codex CLI scaffolding ----------------------------------------------
     if want_codex {
-        scaffold_codex(&cwd, &zforge_dir, &vars, &vars_with_lang, force, &mut stats)?;
+        scaffold_codex(
+            &cwd,
+            &zforge_dir,
+            &vars,
+            &vars_with_lang,
+            force,
+            global_store.as_deref(),
+            &mut stats,
+        )?;
     }
 
     // --- OpenCode scaffolding -----------------------------------------------
     if want_opencode {
-        scaffold_opencode(&cwd, &zforge_dir, &vars_with_lang, force, &mut stats)?;
+        scaffold_opencode(
+            &cwd,
+            &zforge_dir,
+            &vars_with_lang,
+            force,
+            global_store.as_deref(),
+            &mut stats,
+        )?;
     }
 
     println!();
@@ -251,6 +322,19 @@ pub fn run(agent: Agent, force: bool) -> Result<()> {
         println!("     (OpenCode MCP was registered automatically above)");
     }
     println!("  3. Run: zforge task import TASK-123");
+    if !local {
+        println!();
+        println!(
+            "  {} Templates + skills served from {}",
+            "ℹ".cyan(),
+            "~/.zforge/".dimmed()
+        );
+        println!("     Refresh with: {}", "zforge install --force".cyan());
+        println!(
+            "     Drop {} or pass --local for project-local copies.",
+            ".zforge/agents/<name>.tmpl".cyan()
+        );
+    }
 
     Ok(())
 }
@@ -262,6 +346,7 @@ fn scaffold_claude(
     zforge_dir: &Path,
     vars_with_lang: &VarsExt<'_>,
     force: bool,
+    global_store: Option<&Path>,
     stats: &mut InitStats,
 ) -> Result<()> {
     // CLAUDE.md at project root — auto-loaded by Claude Code
@@ -284,14 +369,16 @@ fn scaffold_claude(
     stats.record(created);
     print_file_status(created, ".claude/settings.json");
 
-    // .claude/agents/ — symlinks to .zforge/agents/
+    // .claude/agents/ — symlinks to the agent store (global or project-local)
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
-    let agent_count = symlink_zforge_agents(&zforge_dir.join("agents"), &claude_agents_dir)?;
+    let (agent_count, target_label) =
+        symlink_agents_into(zforge_dir, &claude_agents_dir, global_store)?;
     println!(
-        "{} .claude/agents/ — {} symlinks → .zforge/agents/",
+        "{} .claude/agents/ — {} symlinks → {}",
         label(agent_count > 0),
-        agent_count
+        agent_count,
+        target_label
     );
 
     // .claude/rules/
@@ -313,6 +400,7 @@ fn scaffold_codex(
     vars: &Vars,
     vars_with_lang: &VarsExt<'_>,
     force: bool,
+    global_store: Option<&Path>,
     stats: &mut InitStats,
 ) -> Result<()> {
     // AGENTS.md at project root — auto-loaded by Codex CLI
@@ -327,16 +415,18 @@ fn scaffold_codex(
         );
     }
 
-    // .codex/agents/ — symlinks to .zforge/agents/
+    // .codex/agents/ — symlinks to the agent store (global or project-local)
     let codex_dir = cwd.join(".codex");
     std::fs::create_dir_all(&codex_dir)?;
     let codex_agents_dir = codex_dir.join("agents");
     std::fs::create_dir_all(&codex_agents_dir)?;
-    let codex_agent_count = symlink_zforge_agents(&zforge_dir.join("agents"), &codex_agents_dir)?;
+    let (codex_agent_count, target_label) =
+        symlink_agents_into(zforge_dir, &codex_agents_dir, global_store)?;
     println!(
-        "{} .codex/agents/ — {} symlinks → .zforge/agents/",
+        "{} .codex/agents/ — {} symlinks → {}",
         label(codex_agent_count > 0),
-        codex_agent_count
+        codex_agent_count,
+        target_label
     );
 
     // .codex/README.md
@@ -354,7 +444,10 @@ fn scaffold_codex(
             "⚠".yellow()
         );
     }
-    if let Err(e) = crate::cli::mcp_register::write_codex_profiles(&zforge_dir.join("agents")) {
+    let codex_agents_source = global_store
+        .map(|g| g.join("agents"))
+        .unwrap_or_else(|| zforge_dir.join("agents"));
+    if let Err(e) = crate::cli::mcp_register::write_codex_profiles(&codex_agents_source) {
         eprintln!(
             "  {} Codex profile write reported errors: {e}",
             "⚠".yellow()
@@ -379,6 +472,7 @@ fn scaffold_opencode(
     zforge_dir: &Path,
     vars_with_lang: &VarsExt<'_>,
     force: bool,
+    global_store: Option<&Path>,
     stats: &mut InitStats,
 ) -> Result<()> {
     // AGENTS.md at project root — OpenCode also reads AGENTS.md
@@ -393,17 +487,18 @@ fn scaffold_opencode(
         );
     }
 
-    // .opencode/agents/ — symlinks to .zforge/agents/
+    // .opencode/agents/ — symlinks to the agent store (global or project-local)
     let opencode_dir = cwd.join(".opencode");
     std::fs::create_dir_all(&opencode_dir)?;
     let opencode_agents_dir = opencode_dir.join("agents");
     std::fs::create_dir_all(&opencode_agents_dir)?;
-    let opencode_agent_count =
-        symlink_zforge_agents(&zforge_dir.join("agents"), &opencode_agents_dir)?;
+    let (opencode_agent_count, target_label) =
+        symlink_agents_into(zforge_dir, &opencode_agents_dir, global_store)?;
     println!(
-        "{} .opencode/agents/ — {} symlinks → .zforge/agents/",
+        "{} .opencode/agents/ — {} symlinks → {}",
         label(opencode_agent_count > 0),
-        opencode_agent_count
+        opencode_agent_count,
+        target_label
     );
 
     // Auto-register OpenCode MCP server in ~/.config/opencode/opencode.json
@@ -483,6 +578,14 @@ fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
     apply_vars(template, v.vars).replace("{{lang_skills_section}}", v.lang_skills_section)
 }
 
+const AGENT_NAMES: [&str; 5] = [
+    "spec-agent.md",
+    "testspec-agent.md",
+    "plan-agent.md",
+    "code-agent.md",
+    "review-agent.md",
+];
+
 /// Create symlinks in `link_dir` pointing to `*.md` files in `zforge_agents_dir`.
 /// `.zforge/agents/` is the single source of truth — agent harnesses (Claude Code,
 /// Codex CLI, …) read via symlinks under their own project directory.
@@ -490,15 +593,8 @@ fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
 /// `link_dir` is expected at depth 2 from the project root (e.g. `.claude/agents/`,
 /// `.codex/agents/`) so the relative target `../../.zforge/agents/` resolves correctly.
 fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path) -> Result<usize> {
-    let agent_names = [
-        "spec-agent.md",
-        "testspec-agent.md",
-        "plan-agent.md",
-        "code-agent.md",
-        "review-agent.md",
-    ];
     let mut count = 0;
-    for name in agent_names {
+    for name in AGENT_NAMES {
         let link = link_dir.join(name);
         if link.exists() || link.symlink_metadata().is_ok() {
             continue; // already linked or file exists
@@ -517,6 +613,56 @@ fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path) -> Result<u
         count += 1;
     }
     Ok(count)
+}
+
+/// Create symlinks in `link_dir` pointing at the global agent store
+/// (`~/.zforge/agents/`). Used by `init --shared` so multiple projects share
+/// one set of agent definitions.
+fn symlink_global_agents(global_agents_dir: &Path, link_dir: &Path) -> Result<usize> {
+    let mut count = 0;
+    for name in AGENT_NAMES {
+        let link = link_dir.join(name);
+        if link.exists() || link.symlink_metadata().is_ok() {
+            continue;
+        }
+        let target = global_agents_dir.join(name);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link)?;
+        #[cfg(not(unix))]
+        {
+            // Windows: fall back to copy from the absolute target
+            if target.exists() {
+                std::fs::copy(&target, &link)?;
+            }
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Dispatch to the project-local or global symlink helper based on whether
+/// the caller passed a `global_store` root. Returns `(count, label)` where
+/// `label` is the human-readable target path printed in progress output.
+fn symlink_agents_into(
+    zforge_dir: &Path,
+    link_dir: &Path,
+    global_store: Option<&Path>,
+) -> Result<(usize, String)> {
+    if let Some(global) = global_store {
+        let agents = global.join("agents");
+        let count = symlink_global_agents(&agents, link_dir)?;
+        let label = match dirs::home_dir() {
+            Some(home) => match agents.strip_prefix(&home) {
+                Ok(rel) => format!("~/{}", rel.display()),
+                Err(_) => agents.display().to_string(),
+            },
+            None => agents.display().to_string(),
+        };
+        Ok((count, label))
+    } else {
+        let count = symlink_zforge_agents(&zforge_dir.join("agents"), link_dir)?;
+        Ok((count, ".zforge/agents/".to_string()))
+    }
 }
 
 fn install_rules_for_claude(rules_dir: &Path, force: bool, stats: &mut InitStats) -> Result<usize> {

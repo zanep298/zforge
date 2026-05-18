@@ -152,6 +152,12 @@ impl Config {
     }
 
     fn resolve_path(&self, p: &Path) -> PathBuf {
+        // Expand `~` / `~/...` against $HOME so config values like
+        // `~/.zforge/agents` work without forcing users to hardcode absolute
+        // paths per machine.
+        if let Some(expanded) = expand_tilde(p) {
+            return expanded;
+        }
         if p.is_absolute() {
             return p.to_path_buf();
         }
@@ -178,6 +184,20 @@ impl Config {
             }
         }
         None
+    }
+}
+
+/// Expand a leading `~` (alone or as `~/...`) against `$HOME`. Returns
+/// `None` if the path doesn't start with `~` or `$HOME` is unavailable —
+/// leaving the caller's existing relative/absolute logic in charge.
+fn expand_tilde(p: &Path) -> Option<PathBuf> {
+    let s = p.to_str()?;
+    let rest = if s == "~" { "" } else { s.strip_prefix("~/")? };
+    let home = dirs::home_dir()?;
+    if rest.is_empty() {
+        Some(home)
+    } else {
+        Some(home.join(rest))
     }
 }
 
@@ -253,6 +273,43 @@ mod tests {
         let cfg = load_from(&path).unwrap();
         let tasks = cfg.tasks_dir();
         assert!(tasks.is_absolute());
+    }
+
+    #[test]
+    fn tilde_expands_to_home() {
+        let home = dirs::home_dir().expect("home dir available in test env");
+        let expanded = expand_tilde(Path::new("~/.zforge/agents")).unwrap();
+        assert_eq!(expanded, home.join(".zforge/agents"));
+    }
+
+    #[test]
+    fn bare_tilde_expands_to_home() {
+        let home = dirs::home_dir().expect("home dir available in test env");
+        let expanded = expand_tilde(Path::new("~")).unwrap();
+        assert_eq!(expanded, home);
+    }
+
+    #[test]
+    fn non_tilde_path_returns_none() {
+        assert!(expand_tilde(Path::new("./foo")).is_none());
+        assert!(expand_tilde(Path::new("/abs/path")).is_none());
+        // `~user` is intentionally not supported — only `~` and `~/`.
+        assert!(expand_tilde(Path::new("~user/foo")).is_none());
+    }
+
+    #[test]
+    fn resolve_path_expands_tilde_in_paths_config() {
+        // A config with paths.agents = "~/.zforge/agents" must resolve to an
+        // absolute path under $HOME (not a project-relative one).
+        let tmp = TempDir::new().unwrap();
+        let path = write_config(
+            &tmp,
+            "project:\n  name: myapp\npaths:\n  agents: \"~/.zforge/agents\"\n",
+        );
+        let cfg = load_from(&path).unwrap();
+        let resolved = cfg.agents_dir();
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(resolved, home.join(".zforge/agents"));
     }
 
     #[test]

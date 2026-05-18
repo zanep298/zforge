@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod embedded;
 mod error;
 mod fs;
 mod jira;
@@ -21,10 +22,24 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold .zforge/ + agent-specific files. Default agent: claude.
+    /// Uses the global ~/.zforge/ store by default; pass --local to copy
+    /// every template, agent definition, and skill into the project.
     Init {
         /// Which AI coding agent to scaffold for: claude (default), codex, opencode, all.
         #[arg(long, default_value = "claude")]
         agent: String,
+        #[arg(long)]
+        force: bool,
+        /// Copy templates, agents, and skills into the project instead of
+        /// sharing the global ~/.zforge/ store. Useful for forks that need
+        /// per-project customization of every file.
+        #[arg(long)]
+        local: bool,
+    },
+    /// Populate the global ~/.zforge/ store with embedded templates,
+    /// agents, and skills. Run once per machine; rerun after upgrading
+    /// zforge to refresh. Use --force to overwrite local edits.
+    Install {
         #[arg(long)]
         force: bool,
     },
@@ -142,10 +157,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { agent, force } => {
+        Commands::Init {
+            agent,
+            force,
+            local,
+        } => {
             let parsed = cli::mcp_register::Agent::parse(&agent)?;
-            cli::init::run(parsed, force)
+            cli::init::run(parsed, force, local)
         }
+        Commands::Install { force } => cli::install::run(force),
         Commands::Task { action } => match action {
             TaskAction::Import {
                 task_id,

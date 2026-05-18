@@ -1,6 +1,7 @@
 use super::context::PromptContext;
+use crate::embedded;
 use crate::fs::tokens;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 
@@ -15,11 +16,63 @@ impl Engine {
         }
     }
 
+    /// Render a template by name. Resolution order:
+    /// 1. `<cwd>/.zforge/agents/<name>.tmpl` — project-local ad-hoc override,
+    ///    checked regardless of what `config.paths.agents` points at so
+    ///    users can drop a single override file in shared-mode projects
+    ///    without rewriting the config.
+    /// 2. `<agents_dir>/<name>.tmpl` — the path resolved from config
+    ///    (project-local in `--local` mode, global in shared mode).
+    /// 3. `~/.zforge/agents/<name>.tmpl` — global store fallback.
+    /// 4. Embedded template baked into the binary (`crate::embedded`).
+    ///
+    /// Falls through on file-not-found; any other I/O error is surfaced.
+    /// Returns an error only when no source has the template at all.
     pub fn render(&self, template_name: &str, ctx: &PromptContext) -> Result<String> {
-        let path = self.agents_dir.join(format!("{}.tmpl", template_name));
-        let template = std::fs::read_to_string(&path)
-            .with_context(|| format!("template not found: {}", path.display()))?;
-        Ok(render_template(&template, ctx))
+        let file_name = format!("{}.tmpl", template_name);
+        let mut tried: Vec<PathBuf> = Vec::new();
+
+        // 1. Project-local ad-hoc override.
+        if let Ok(cwd) = std::env::current_dir() {
+            let project_local = cwd.join(".zforge").join("agents").join(&file_name);
+            if !tried.contains(&project_local) {
+                if let Some(body) = read_if_present(&project_local)? {
+                    return Ok(render_template(&body, ctx));
+                }
+                tried.push(project_local);
+            }
+        }
+
+        // 2. Config-resolved path.
+        let primary = self.agents_dir.join(&file_name);
+        if !tried.contains(&primary) {
+            if let Some(body) = read_if_present(&primary)? {
+                return Ok(render_template(&body, ctx));
+            }
+            tried.push(primary.clone());
+        }
+
+        // 3. Global store fallback (skip if already covered above).
+        if let Some(global) = embedded::global_store_dir() {
+            let global_path = global.join("agents").join(&file_name);
+            if !tried.contains(&global_path) {
+                if let Some(body) = read_if_present(&global_path)? {
+                    return Ok(render_template(&body, ctx));
+                }
+                tried.push(global_path);
+            }
+        }
+
+        // 4. Embedded.
+        if let Some(body) = embedded::prompt_template(&file_name) {
+            return Ok(render_template(body, ctx));
+        }
+
+        Err(anyhow!(
+            "template not found on disk ({}) or in embedded store: {}",
+            primary.display(),
+            file_name
+        ))
     }
 
     pub fn render_and_print(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
@@ -235,6 +288,17 @@ fn find_bin(bin: &str, home_fallbacks: &[&str]) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Read a file if it exists; return `Ok(None)` for not-found, `Err` for any
+/// other I/O failure. Lets `Engine::render` fall through to the next source
+/// only on genuine absence, not on permission or read errors.
+fn read_if_present(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("failed to read template: {}", path.display())),
+    }
 }
 
 pub fn render_template(template: &str, ctx: &PromptContext) -> String {
@@ -523,8 +587,70 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let engine = Engine::new(tmp.path());
         let ctx = make_ctx();
-        let result = engine.render("nonexistent", &ctx);
+        // Unknown name has no disk file, no global store entry, and no
+        // embedded match — render should error.
+        let result = engine.render("definitely_not_a_real_template_name_xyz", &ctx);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn render_falls_back_to_embedded_when_disk_missing() {
+        // agents_dir points at a tempdir with no template files. The engine
+        // must still render via the embedded `crate::embedded` store —
+        // `spec.tmpl` is shipped in every build.
+        let tmp = TempDir::new().unwrap();
+        let engine = Engine::new(tmp.path());
+        let ctx = make_ctx();
+        let result = engine
+            .render("spec", &ctx)
+            .expect("embedded spec.tmpl must render");
+        assert!(!result.trim().is_empty(), "rendered spec must not be empty");
+    }
+
+    #[test]
+    fn project_local_override_beats_config_dir_in_shared_mode() {
+        // Simulate shared mode: agents_dir points at a different store
+        // (here just a tempdir representing ~/.zforge/agents) that has its
+        // own spec.tmpl. A project-local `.zforge/agents/spec.tmpl` in
+        // cwd must still win — that's the ad-hoc override contract.
+        let project = TempDir::new().unwrap();
+        std::fs::create_dir_all(project.path().join(".zforge/agents")).unwrap();
+        std::fs::write(
+            project.path().join(".zforge/agents/spec.tmpl"),
+            "PROJECT-LOCAL {{task_id}}\n",
+        )
+        .unwrap();
+
+        let store = TempDir::new().unwrap();
+        std::fs::write(store.path().join("spec.tmpl"), "STORE\n").unwrap();
+
+        // Engine config-resolved dir points at the "store" (not cwd).
+        let engine = Engine::new(store.path());
+
+        // chdir to project so the project-local probe finds the override.
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(project.path()).unwrap();
+        let ctx = make_ctx();
+        let result = engine.render("spec", &ctx);
+        std::env::set_current_dir(prev).unwrap();
+
+        let rendered = result.unwrap();
+        assert!(
+            rendered.contains("PROJECT-LOCAL TASK-1"),
+            "expected project-local override, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn disk_template_overrides_embedded() {
+        // A disk file in agents_dir wins over the embedded template — lets
+        // users customize prompts per project without touching the binary.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("spec.tmpl"), "OVERRIDE for {{task_id}}\n").unwrap();
+        let engine = Engine::new(tmp.path());
+        let ctx = make_ctx();
+        let result = engine.render("spec", &ctx).unwrap();
+        assert!(result.contains("OVERRIDE for TASK-1"));
     }
 
     #[test]
