@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::Path;
 
 pub struct MarkdownFile {
-    pub frontmatter: HashMap<String, serde_yaml::Value>,
+    pub frontmatter: IndexMap<String, serde_yaml::Value>,
     #[allow(dead_code)]
     pub body: String,
     #[allow(dead_code)]
@@ -48,7 +48,7 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
         if let Some(end) = rest.find("\n---\n") {
             let fm_str = &rest[..end];
             let body = rest[end + 5..].to_string();
-            let frontmatter: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(fm_str)
+            let frontmatter: IndexMap<String, serde_yaml::Value> = serde_yaml::from_str(fm_str)
                 .map_err(|e| {
                     anyhow::anyhow!("failed to parse frontmatter YAML: {e} — input: {fm_str:?}")
                 })?;
@@ -61,7 +61,7 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
     }
 
     Ok(MarkdownFile {
-        frontmatter: HashMap::new(),
+        frontmatter: IndexMap::new(),
         body: raw.to_string(),
         raw: raw.to_string(),
     })

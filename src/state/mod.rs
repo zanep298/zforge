@@ -156,6 +156,26 @@ impl TaskState {
         Ok(())
     }
 
+    /// Rewinds the FSM to `target` and records the rewind in history. Unlike
+    /// `advance`, this is allowed to move backwards — it is the only sanctioned
+    /// way for `retry` to do so. History entries past `target` are dropped, but
+    /// every entry at or below `target` is preserved so the audit trail is not
+    /// wiped (regression: prior implementation in `retry::run` replaced history
+    /// with a single synthetic entry).
+    pub fn reset_to(&mut self, target: State, note: &str) -> Result<()> {
+        let now = Local::now();
+        // Keep every history entry whose state is at or below the reset target.
+        self.history.retain(|entry| entry.state <= target);
+        self.state = target.clone();
+        self.updated_at = now;
+        self.history.push(StateEntry {
+            state: target,
+            at: now,
+            note: note.to_string(),
+        });
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn is(&self, s: &State) -> bool {
         &self.state == s
@@ -229,5 +249,58 @@ mod tests {
         assert!(State::Imported < State::SpecDone);
         assert!(State::SpecDone < State::TestspecDone);
         assert!(State::Coded < State::Verified);
+    }
+
+    #[test]
+    fn reset_to_truncates_future_history() {
+        let mut ts = TaskState::new("TASK-1");
+        for next in [
+            State::SpecDone,
+            State::TestspecDone,
+            State::TestspecReviewed,
+            State::Planned,
+        ] {
+            ts.advance(next, "").unwrap();
+        }
+        assert_eq!(ts.history.len(), 5);
+
+        ts.reset_to(State::SpecDone, "retry from testspec").unwrap();
+
+        assert_eq!(ts.state, State::SpecDone);
+        // Imported + SpecDone + reset entry → 3 entries; nothing past SpecDone retained.
+        assert_eq!(ts.history.len(), 3);
+        assert!(ts.history.iter().all(|e| e.state <= State::SpecDone));
+        assert_eq!(
+            ts.history.last().map(|e| e.note.as_str()),
+            Some("retry from testspec")
+        );
+    }
+
+    #[test]
+    fn reset_to_imported_keeps_initial_entry() {
+        let mut ts = TaskState::new("TASK-1");
+        ts.advance(State::SpecDone, "").unwrap();
+        ts.advance(State::TestspecDone, "").unwrap();
+
+        ts.reset_to(State::Imported, "retry from spec").unwrap();
+
+        assert_eq!(ts.state, State::Imported);
+        // Original Imported + reset Imported = 2 entries.
+        assert_eq!(ts.history.len(), 2);
+        assert!(ts.history.iter().all(|e| e.state == State::Imported));
+    }
+
+    #[test]
+    fn reset_to_persists_across_load() {
+        let tmp = TempDir::new().unwrap();
+        let mut ts = TaskState::new("TASK-42");
+        ts.advance(State::SpecDone, "spec").unwrap();
+        ts.advance(State::TestspecDone, "testspec").unwrap();
+        ts.reset_to(State::SpecDone, "retry").unwrap();
+        ts.save(tmp.path()).unwrap();
+
+        let loaded = TaskState::load(tmp.path(), "TASK-42").unwrap();
+        assert_eq!(loaded.state, State::SpecDone);
+        assert_eq!(loaded.history.len(), 3);
     }
 }

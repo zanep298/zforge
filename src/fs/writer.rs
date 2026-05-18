@@ -1,5 +1,6 @@
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use indexmap::IndexMap;
+use std::collections::HashSet;
 use std::path::Path;
 
 pub fn set_frontmatter(path: &Path, key: &str, value: serde_yaml::Value) -> Result<()> {
@@ -18,7 +19,7 @@ pub fn set_frontmatter(path: &Path, key: &str, value: serde_yaml::Value) -> Resu
     let (mut fm, body) = if let Some(rest) = normalized.strip_prefix("---\n") {
         if let Some(end) = rest.find("\n---\n") {
             let fm_str = &rest[..end];
-            let fm: HashMap<String, serde_yaml::Value> =
+            let fm: IndexMap<String, serde_yaml::Value> =
                 serde_yaml::from_str(fm_str).map_err(|e| {
                     anyhow::anyhow!(
                         "refusing to overwrite {}: existing frontmatter is malformed ({e})",
@@ -27,10 +28,10 @@ pub fn set_frontmatter(path: &Path, key: &str, value: serde_yaml::Value) -> Resu
                 })?;
             (fm, rest[end + 5..].to_string())
         } else {
-            (HashMap::new(), normalized)
+            (IndexMap::new(), normalized)
         }
     } else {
-        (HashMap::new(), normalized)
+        (IndexMap::new(), normalized)
     };
 
     fm.insert(key.to_string(), value);
@@ -223,8 +224,47 @@ mod tests {
         let normalized = raw.replace("\r\n", "\n");
         let end = normalized[4..].find("\n---\n").unwrap();
         let fm_str = &normalized[4..4 + end];
-        let fm: std::collections::HashMap<String, serde_yaml::Value> =
+        let fm: indexmap::IndexMap<String, serde_yaml::Value> =
             serde_yaml::from_str(fm_str).unwrap();
         assert_eq!(fm.get("reviewed").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    // Regression for HashMap-based frontmatter scrambling keys on every set call.
+    #[test]
+    fn set_frontmatter_preserves_existing_key_order() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            "---\nid: \"TASK-1\"\ntype: verify\npassed: true\ntotal_tests: 3\npassed_tests: 3\nfailed_tests: 0\n---\nbody"
+        )
+        .unwrap();
+
+        set_frontmatter(f.path(), "tokens", serde_yaml::Value::Number(42.into())).unwrap();
+        set_frontmatter(
+            f.path(),
+            "model",
+            serde_yaml::Value::String("runner".into()),
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(f.path()).unwrap();
+        let body_start = content.find("\n---\n").unwrap();
+        let fm = &content[4..body_start];
+        let lines: Vec<&str> = fm.lines().filter_map(|l| l.split(':').next()).collect();
+
+        // Original keys keep their relative order; appended keys land at the end.
+        assert_eq!(
+            lines,
+            vec![
+                "id",
+                "type",
+                "passed",
+                "total_tests",
+                "passed_tests",
+                "failed_tests",
+                "tokens",
+                "model",
+            ]
+        );
     }
 }

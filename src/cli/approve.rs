@@ -64,20 +64,10 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
-    let (prev_state, next_state, next_cmd) = match artifact {
-        "testspec" => (
-            State::TestspecDone,
-            Some(State::TestspecReviewed),
-            format!("zf plan {}", task_id),
-        ),
-        "plan" => (
-            State::Planned,
-            Some(State::PlanReviewed),
-            format!("zf code {}", task_id),
-        ),
-        "verify" => (State::Verified, None, format!("zf review {}", task_id)),
-        _ => unreachable!(),
-    };
+    let transition = artifact_transition(artifact, task_id).expect("validated above");
+    let prev_state = transition.prev_state;
+    let next_state = transition.next_state;
+    let next_cmd = transition.next_cmd;
 
     println!(
         "{} tasks/{}/{}.md marked as reviewed",
@@ -100,4 +90,86 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
     println!("Next: {}", next_cmd);
 
     Ok(())
+}
+
+/// State transition triggered by approving an artifact. `next_state` is `None`
+/// for terminal approvals (e.g. `verify`, which only stamps `reviewed` without
+/// advancing the FSM).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApproveTransition {
+    pub prev_state: State,
+    pub next_state: Option<State>,
+    pub next_cmd: String,
+}
+
+pub(crate) fn artifact_transition(artifact: &str, task_id: &str) -> Option<ApproveTransition> {
+    match artifact {
+        "testspec" => Some(ApproveTransition {
+            prev_state: State::TestspecDone,
+            next_state: Some(State::TestspecReviewed),
+            next_cmd: format!("zf plan {}", task_id),
+        }),
+        "plan" => Some(ApproveTransition {
+            prev_state: State::Planned,
+            next_state: Some(State::PlanReviewed),
+            next_cmd: format!("zf code {}", task_id),
+        }),
+        "verify" => Some(ApproveTransition {
+            prev_state: State::Verified,
+            next_state: None,
+            next_cmd: format!("zf review {}", task_id),
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn testspec_transition_advances_to_reviewed() {
+        let t = artifact_transition("testspec", "TASK-1").unwrap();
+        assert_eq!(t.prev_state, State::TestspecDone);
+        assert_eq!(t.next_state, Some(State::TestspecReviewed));
+        assert_eq!(t.next_cmd, "zf plan TASK-1");
+    }
+
+    #[test]
+    fn plan_transition_advances_to_reviewed() {
+        let t = artifact_transition("plan", "PROJ-42").unwrap();
+        assert_eq!(t.prev_state, State::Planned);
+        assert_eq!(t.next_state, Some(State::PlanReviewed));
+        assert_eq!(t.next_cmd, "zf code PROJ-42");
+    }
+
+    #[test]
+    fn verify_transition_does_not_advance() {
+        let t = artifact_transition("verify", "TASK-9").unwrap();
+        assert_eq!(t.prev_state, State::Verified);
+        assert!(t.next_state.is_none());
+        assert_eq!(t.next_cmd, "zf review TASK-9");
+    }
+
+    #[test]
+    fn unknown_artifact_returns_none() {
+        assert!(artifact_transition("nonsense", "TASK-1").is_none());
+        assert!(artifact_transition("", "TASK-1").is_none());
+    }
+
+    #[test]
+    fn valid_artifacts_match_transition_map() {
+        for artifact in VALID_ARTIFACTS {
+            assert!(
+                artifact_transition(artifact, "TASK-1").is_some(),
+                "VALID_ARTIFACTS lists {artifact} but artifact_transition does not handle it"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_artifact_at_entry() {
+        let err = run("TASK-1", "frobnicate", None, true).unwrap_err();
+        assert!(err.to_string().contains("Unknown artifact"));
+    }
 }

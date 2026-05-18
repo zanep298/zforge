@@ -262,3 +262,107 @@ fn format_relative(dt: &DateTime<Local>) -> String {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::TaskState;
+    use tempfile::TempDir;
+
+    fn write_task(tasks_dir: &std::path::Path, id: &str, state: State) {
+        let dir = tasks_dir.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut ts = TaskState::new(id);
+        // Walk the FSM to the requested state.
+        let path = [
+            State::SpecDone,
+            State::TestspecDone,
+            State::TestspecReviewed,
+            State::Planned,
+            State::PlanReviewed,
+            State::Coded,
+            State::Verified,
+            State::Reviewed,
+        ];
+        for step in path {
+            if ts.state >= state {
+                break;
+            }
+            ts.advance(step, "test").unwrap();
+        }
+        ts.save(tasks_dir).unwrap();
+    }
+
+    #[test]
+    fn render_single_short_returns_just_state() {
+        let tmp = TempDir::new().unwrap();
+        write_task(tmp.path(), "TASK-1", State::Coded);
+        let out = render_single(tmp.path(), "TASK-1", false, true).unwrap();
+        assert_eq!(out.trim(), "Coded");
+    }
+
+    #[test]
+    fn render_single_json_includes_state() {
+        let tmp = TempDir::new().unwrap();
+        write_task(tmp.path(), "TASK-1", State::Planned);
+        let out = render_single(tmp.path(), "TASK-1", true, false).unwrap();
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["task_id"], "TASK-1");
+        assert_eq!(v["state"], "Planned");
+    }
+
+    #[test]
+    fn render_single_missing_task_errors() {
+        let tmp = TempDir::new().unwrap();
+        let err = render_single(tmp.path(), "TASK-X", false, true).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn render_all_empty_dir_reports_no_tasks() {
+        let tmp = TempDir::new().unwrap();
+        let out = render_all(tmp.path(), false, false).unwrap();
+        assert!(out.contains("No tasks found"));
+    }
+
+    #[test]
+    fn render_all_missing_dir_reports_no_tasks() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let out = render_all(&missing, false, false).unwrap();
+        assert!(out.contains("No tasks found"));
+    }
+
+    #[test]
+    fn render_all_json_lists_every_task() {
+        let tmp = TempDir::new().unwrap();
+        write_task(tmp.path(), "TASK-1", State::SpecDone);
+        write_task(tmp.path(), "TASK-2", State::Reviewed);
+        let out = render_all(tmp.path(), true, false).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let ids: Vec<&str> = arr.iter().map(|t| t["task_id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"TASK-1"));
+        assert!(ids.contains(&"TASK-2"));
+    }
+
+    #[test]
+    fn render_all_short_lists_ids_and_states() {
+        let tmp = TempDir::new().unwrap();
+        write_task(tmp.path(), "TASK-7", State::Reviewed);
+        let out = render_all(tmp.path(), false, true).unwrap();
+        assert!(out.contains("TASK-7"));
+        assert!(out.contains("Reviewed"));
+    }
+
+    #[test]
+    fn render_all_skips_non_directory_entries() {
+        let tmp = TempDir::new().unwrap();
+        write_task(tmp.path(), "TASK-1", State::SpecDone);
+        std::fs::write(tmp.path().join("stray-file.txt"), "ignore").unwrap();
+        let out = render_all(tmp.path(), true, false).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 1);
+    }
+}

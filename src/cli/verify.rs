@@ -8,7 +8,30 @@ use chrono::Local;
 use colored::Colorize;
 use std::env;
 
+/// Result reported to callers that need to react to pass/fail (e.g. the MCP
+/// server, which must surface failure as a tool-call error rather than a
+/// silent success).
+#[derive(Debug, Clone)]
+pub struct VerifyOutcome {
+    pub passed: bool,
+    pub total_tests: usize,
+    pub passed_tests: usize,
+    pub failed_tests: usize,
+    pub failed_names: Vec<String>,
+}
+
 pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<()> {
+    run_with_outcome(task_id, command, timeout).map(|_| ())
+}
+
+/// Same as [`run`] but returns the test outcome so callers can branch on
+/// pass/fail (for example, the MCP `verify` tool sets `isError: true` on
+/// failure). The CLI entry point discards the outcome.
+pub fn run_with_outcome(
+    task_id: &str,
+    command: Option<String>,
+    timeout: u64,
+) -> Result<VerifyOutcome> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
 
@@ -28,7 +51,7 @@ pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<()> {
 
     println!("{} Running: {}", "🧪".bold(), cmd);
 
-    let result = runner::run(&cmd, &work_dir, timeout)?;
+    let result = runner::run_with_language(&cmd, &work_dir, timeout, &config.project.language)?;
 
     let duration_secs = result.duration.as_secs_f64();
 
@@ -150,7 +173,13 @@ command: "{}"
         println!("{}", "─".repeat(40));
     }
 
-    Ok(())
+    Ok(VerifyOutcome {
+        passed: result.passed,
+        total_tests: result.total_tests,
+        passed_tests: result.passed_tests,
+        failed_tests: result.failed_tests,
+        failed_names: result.failed_names,
+    })
 }
 
 /// Reject MCP/CLI command overrides whose argv[0] differs from the configured test command's

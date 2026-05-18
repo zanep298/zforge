@@ -12,7 +12,7 @@
 ///   status       — get task phase status
 use crate::config;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
-use crate::state::{State, TaskState};
+use crate::state::TaskState;
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -256,11 +256,17 @@ fn tool_verify(args: &Value) -> Result<String> {
         .map(|s| s.to_string());
     let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(600);
 
-    crate::cli::verify::run(task_id, command, timeout)?;
+    let outcome = crate::cli::verify::run_with_outcome(task_id, command, timeout)?;
 
-    // verify::run prints results and writes verify.md; we report success
+    // Surface failure as a tool-call error so the orchestrating LLM does not
+    // mistake an internal test failure for a successful verify step.
+    if !outcome.passed {
+        anyhow::bail!(verify_failure_message(task_id, &outcome));
+    }
+
     Ok(format!(
-        "Tests run for task {task_id}. See .zforge/tasks/{task_id}/verify.md for full results."
+        "Tests passed for task {task_id} ({}/{}). See .zforge/tasks/{task_id}/verify.md for full results.",
+        outcome.passed_tests, outcome.total_tests
     ))
 }
 
@@ -279,22 +285,41 @@ fn tool_ship(args: &Value) -> Result<String> {
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
 
-    if ts.state < State::PlanReviewed {
-        anyhow::bail!(
-            "BLOCKED: plan.md requires human review. Call approve(task_id=\"{task_id}\", artifact=\"plan\") first."
-        );
-    }
+    crate::cli::ship::check_ship_gate(&ts.state, task_id).map_err(|e| {
+        // Rephrase for the MCP audience so the LLM gets the correct next-call hint.
+        anyhow::anyhow!("{e}. Call approve(task_id=\"{task_id}\", artifact=\"plan\") first.")
+    })?;
 
-    if ts.state < State::Coded {
-        ts.advance(State::Coded, "code phase complete (ship)")?;
-        ts.save(&tasks_dir)?;
-    }
+    crate::cli::ship::ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")?;
 
-    crate::cli::verify::run(task_id, command, timeout)?;
+    let outcome = crate::cli::verify::run_with_outcome(task_id, command, timeout)?;
+
+    if !outcome.passed {
+        anyhow::bail!(verify_failure_message(task_id, &outcome));
+    }
 
     Ok(format!(
-        "Ship complete for task {task_id}. See .zforge/tasks/{task_id}/verify.md for results. Next: get_prompt(phase=\"review\", task_id=\"{task_id}\"). Optionally call approve(task_id=\"{task_id}\", artifact=\"verify\") first to mark verify.md reviewed."
+        "Ship complete for task {task_id} ({} tests passed). See .zforge/tasks/{task_id}/verify.md for results. Next: get_prompt(phase=\"review\", task_id=\"{task_id}\"). Optionally call approve(task_id=\"{task_id}\", artifact=\"verify\") first to mark verify.md reviewed.",
+        outcome.passed_tests
     ))
+}
+
+fn verify_failure_message(task_id: &str, outcome: &crate::cli::verify::VerifyOutcome) -> String {
+    let failed_block = if outcome.failed_names.is_empty() {
+        String::new()
+    } else {
+        let names = outcome
+            .failed_names
+            .iter()
+            .map(|n| format!("  - {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\nFailed tests:\n{names}")
+    };
+    format!(
+        "Tests FAILED for task {task_id} ({} failed / {} total). See .zforge/tasks/{task_id}/verify.md for full output.{failed_block}",
+        outcome.failed_tests, outcome.total_tests
+    )
 }
 
 fn tool_status(args: &Value) -> Result<String> {
@@ -453,6 +478,35 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(artifact_enum, vec!["testspec", "plan", "verify"]);
+    }
+
+    #[test]
+    fn verify_failure_message_includes_failed_names() {
+        let outcome = crate::cli::verify::VerifyOutcome {
+            passed: false,
+            total_tests: 3,
+            passed_tests: 1,
+            failed_tests: 2,
+            failed_names: vec!["mod::a".into(), "mod::b".into()],
+        };
+        let msg = verify_failure_message("TASK-1", &outcome);
+        assert!(msg.contains("TASK-1"));
+        assert!(msg.contains("2 failed / 3 total"));
+        assert!(msg.contains("mod::a"));
+        assert!(msg.contains("mod::b"));
+    }
+
+    #[test]
+    fn verify_failure_message_omits_block_when_no_names() {
+        let outcome = crate::cli::verify::VerifyOutcome {
+            passed: false,
+            total_tests: 0,
+            passed_tests: 0,
+            failed_tests: 0,
+            failed_names: vec![],
+        };
+        let msg = verify_failure_message("TASK-1", &outcome);
+        assert!(!msg.contains("Failed tests:"));
     }
 
     #[test]

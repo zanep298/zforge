@@ -18,7 +18,7 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
 
-    let ts = TaskState::load(&tasks_dir, task_id)
+    let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
     let (reset_state, artifacts_to_clear) = phase_to_reset(from);
@@ -65,16 +65,8 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     }
 
     let prev_state = ts.state.as_str().to_string();
-    let mut new_ts = TaskState::new(task_id);
-    // Reset to the desired state by building history
-    new_ts.state = reset_state.clone();
-    new_ts.history = vec![crate::state::StateEntry {
-        state: reset_state.clone(),
-        at: Local::now(),
-        note: format!("retry from {} phase", from),
-    }];
-    new_ts.updated_at = Local::now();
-    new_ts.save(&tasks_dir)?;
+    ts.reset_to(reset_state.clone(), &format!("retry from {} phase", from))?;
+    ts.save(&tasks_dir)?;
 
     println!("{} Backed up {} artifacts", "✓".green(), backed_up);
     println!(
@@ -131,5 +123,83 @@ fn phase_to_reset(phase: &str) -> (State, Vec<String>) {
         ),
         "review" => (State::Verified, vec!["review-summary.md".into()]),
         _ => (State::Imported, vec![]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_from_spec_clears_all_artifacts() {
+        let (state, artifacts) = phase_to_reset("spec");
+        assert_eq!(state, State::Imported);
+        assert_eq!(
+            artifacts,
+            vec![
+                "spec.md",
+                "testspec.md",
+                "plan.md",
+                "verify.md",
+                "review-summary.md",
+            ]
+        );
+    }
+
+    #[test]
+    fn reset_from_testspec_keeps_spec() {
+        let (state, artifacts) = phase_to_reset("testspec");
+        assert_eq!(state, State::SpecDone);
+        assert!(!artifacts.iter().any(|a| a == "spec.md"));
+        assert!(artifacts.iter().any(|a| a == "testspec.md"));
+    }
+
+    #[test]
+    fn reset_from_plan_targets_testspec_reviewed() {
+        let (state, artifacts) = phase_to_reset("plan");
+        assert_eq!(state, State::TestspecReviewed);
+        assert_eq!(artifacts, vec!["plan.md", "verify.md", "review-summary.md"]);
+    }
+
+    #[test]
+    fn reset_from_code_targets_plan_reviewed() {
+        let (state, _) = phase_to_reset("code");
+        assert_eq!(state, State::PlanReviewed);
+    }
+
+    #[test]
+    fn reset_from_verify_targets_coded() {
+        let (state, artifacts) = phase_to_reset("verify");
+        assert_eq!(state, State::Coded);
+        assert_eq!(artifacts, vec!["verify.md", "review-summary.md"]);
+    }
+
+    #[test]
+    fn reset_from_review_keeps_verify() {
+        let (state, artifacts) = phase_to_reset("review");
+        assert_eq!(state, State::Verified);
+        assert_eq!(artifacts, vec!["review-summary.md"]);
+    }
+
+    #[test]
+    fn unknown_phase_falls_back_to_imported() {
+        let (state, artifacts) = phase_to_reset("nonsense");
+        assert_eq!(state, State::Imported);
+        assert!(artifacts.is_empty());
+    }
+
+    #[test]
+    fn artifact_lists_are_monotonically_shrinking() {
+        // Earlier reset phases must clear at least as many artifacts as later ones.
+        let order = ["spec", "testspec", "plan", "code", "verify", "review"];
+        let mut prev = usize::MAX;
+        for phase in order {
+            let (_, artifacts) = phase_to_reset(phase);
+            assert!(
+                artifacts.len() <= prev,
+                "{phase} reset clears more than its predecessor"
+            );
+            prev = artifacts.len();
+        }
     }
 }

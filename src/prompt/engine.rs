@@ -24,6 +24,24 @@ impl Engine {
 
     pub fn render_and_print(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
         let rendered = self.render(template_name, ctx)?;
+        self.print_render_header(template_name, ctx, &rendered);
+        Ok(())
+    }
+
+    pub fn render_and_copy(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
+        let rendered = self.render(template_name, ctx)?;
+        self.print_render_header(template_name, ctx, &rendered);
+        match arboard::Clipboard::new() {
+            Ok(mut cb) => match cb.set_text(rendered) {
+                Ok(_) => println!("{}", "✓ Prompt copied to clipboard".green()),
+                Err(e) => eprintln!("⚠ Could not copy to clipboard: {}", e),
+            },
+            Err(e) => eprintln!("⚠ Could not access clipboard: {}", e),
+        }
+        Ok(())
+    }
+
+    fn print_render_header(&self, template_name: &str, ctx: &PromptContext, rendered: &str) {
         let sep = "═".repeat(43);
         let thin = "─".repeat(43);
         println!("{}", sep.blue());
@@ -48,26 +66,12 @@ impl Engine {
         println!(
             "  {} prompt:  {} tokens",
             "📊".bold(),
-            tokens::fmt(tokens::estimate(&rendered))
+            tokens::fmt(tokens::estimate(rendered))
         );
         if !ctx.next_command.is_empty() {
             println!("{}  Next: {}", "⏭".bold(), ctx.next_command);
         }
         println!("{}", sep.blue());
-        Ok(())
-    }
-
-    pub fn render_and_copy(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
-        self.render_and_print(template_name, ctx)?;
-        let rendered = self.render(template_name, ctx)?;
-        match arboard::Clipboard::new() {
-            Ok(mut cb) => match cb.set_text(rendered) {
-                Ok(_) => println!("{}", "✓ Prompt copied to clipboard".green()),
-                Err(e) => eprintln!("⚠ Could not copy to clipboard: {}", e),
-            },
-            Err(e) => eprintln!("⚠ Could not access clipboard: {}", e),
-        }
-        Ok(())
     }
 
     /// Auto-detect executor. Try Claude Code first (default), then OpenCode as
@@ -205,41 +209,27 @@ impl Engine {
     }
 }
 
-/// Locate the `claude` binary. Checks PATH first, then common install paths.
+/// Locate the `claude` binary. Checks PATH first (cross-platform via the
+/// `which` crate — no `which` subprocess and no Unix-only assumptions), then
+/// falls back to common install paths under `$HOME`.
 fn find_claude_bin() -> Option<PathBuf> {
-    if let Ok(output) = std::process::Command::new("which").arg("claude").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(PathBuf::from(path));
-            }
-        }
-    }
-    if let Some(home) = dirs::home_dir() {
-        for sub in [".claude/local/claude", ".claude/bin/claude"] {
-            let candidate = home.join(sub);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
+    find_bin("claude", &[".claude/local/claude", ".claude/bin/claude"])
 }
 
 /// Locate the `opencode` binary. Checks PATH first, then `~/.opencode/bin/`.
 fn find_opencode_bin() -> Option<PathBuf> {
-    // Check PATH
-    if let Ok(output) = std::process::Command::new("which").arg("opencode").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(PathBuf::from(path));
-            }
-        }
+    find_bin("opencode", &[".opencode/bin/opencode"])
+}
+
+/// Look up `bin` on PATH (works on Windows: respects PATHEXT, returns the
+/// resolved executable path), falling back to `$HOME/<sub>` for each `sub`.
+fn find_bin(bin: &str, home_fallbacks: &[&str]) -> Option<PathBuf> {
+    if let Ok(path) = which::which(bin) {
+        return Some(path);
     }
-    // Check ~/.opencode/bin/opencode (default install location)
-    if let Some(home) = dirs::home_dir() {
-        let candidate = home.join(".opencode").join("bin").join("opencode");
+    let home = dirs::home_dir()?;
+    for sub in home_fallbacks {
+        let candidate = home.join(sub);
         if candidate.exists() {
             return Some(candidate);
         }
@@ -248,62 +238,213 @@ fn find_opencode_bin() -> Option<PathBuf> {
 }
 
 pub fn render_template(template: &str, ctx: &PromptContext) -> String {
-    // Strip comment lines {{/* ... */}}
-    let without_comments = {
-        let mut out = String::new();
-        for line in template.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("{{/*") && trimmed.ends_with("*/}}") {
-                continue;
-            }
-            out.push_str(line);
-            out.push('\n');
-        }
-        out
-    };
+    let stripped = strip_comment_lines(template);
+    let tokens = tokenize(&stripped);
+    let nodes = parse(&tokens);
+    let mut out = String::new();
+    render_nodes(&nodes, ctx, &mut out);
 
-    // Process conditional blocks {{if var}}...{{end}}
-    let after_conditionals = process_conditionals(&without_comments, ctx);
-
-    // Replace {{variable}} tokens
-    let result = replace_vars(&after_conditionals, ctx);
-
-    // Trim trailing whitespace per line
-    result
-        .lines()
+    // Trim trailing whitespace per line so blank conditional blocks don't
+    // leave straggling spaces in the rendered output.
+    out.lines()
         .map(|l| l.trim_end())
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// All template variable names. Must match arms in `get_var`.
-const VAR_NAMES: &[&str] = &[
-    "task_id",
-    "task_file",
-    "spec_file",
-    "testspec_file",
-    "plan_file",
-    "verify_file",
-    "project_name",
-    "language",
-    "test_command",
-    "output_file",
-    "next_command",
-    "failed_tests",
-    "context_files",
-    "figma_context",
-    "task_ref",
-    "spec_ref",
-    "testspec_ref",
-    "plan_ref",
-    "verify_ref",
-    "figma_ref",
-    "patterns_ref",
-    "domain_glossary_ref",
-    "anti_patterns_ref",
-];
+fn strip_comment_lines(template: &str) -> String {
+    let mut out = String::new();
+    for line in template.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("{{/*") && trimmed.ends_with("*/}}") {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Token<'a> {
+    Text(&'a str),
+    Var(&'a str),
+    If(&'a str),
+    End,
+}
+
+/// Scans the template once, emitting tokens. Unrecognized `{{...}}` runs are
+/// preserved as text so the template author sees the unsubstituted token in
+/// the output (loud failure) rather than having it silently disappear.
+fn tokenize(template: &str) -> Vec<Token<'_>> {
+    let mut tokens = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < template.len() {
+        match template[cursor..].find("{{") {
+            None => {
+                tokens.push(Token::Text(&template[cursor..]));
+                break;
+            }
+            Some(rel_open) => {
+                let open = cursor + rel_open;
+                if open > cursor {
+                    tokens.push(Token::Text(&template[cursor..open]));
+                }
+                // Locate matching `}}`. Stay on the same template; allow
+                // arbitrary characters in between (we restrict to ASCII tag
+                // names below).
+                let search_from = open + 2;
+                let close_rel = template[search_from..].find("}}");
+                match close_rel {
+                    None => {
+                        // No closing brace — treat the unterminated tag as text
+                        // and stop scanning further.
+                        tokens.push(Token::Text(&template[open..]));
+                        break;
+                    }
+                    Some(rel_close) => {
+                        let close = search_from + rel_close;
+                        let inner = template[search_from..close].trim();
+                        let next = close + 2;
+
+                        if inner == "end" {
+                            tokens.push(Token::End);
+                        } else if let Some(rest) = inner.strip_prefix("if ") {
+                            let name = rest.trim();
+                            if is_ident(name) {
+                                tokens.push(Token::If(name));
+                            } else {
+                                tokens.push(Token::Text(&template[open..next]));
+                            }
+                        } else if is_ident(inner) {
+                            // Look up the position of `inner` inside the
+                            // original slice so we can hand back a &str
+                            // reference. The trim above may have shifted byte
+                            // offsets; recompute against the source.
+                            let inner_start =
+                                search_from + template[search_from..close].find(inner).unwrap_or(0);
+                            let inner_end = inner_start + inner.len();
+                            tokens.push(Token::Var(&template[inner_start..inner_end]));
+                        } else {
+                            tokens.push(Token::Text(&template[open..next]));
+                        }
+                        cursor = next;
+                    }
+                }
+            }
+        }
+    }
+
+    tokens
+}
+
+fn is_ident(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+#[derive(Debug, Clone)]
+enum Node<'a> {
+    Text(&'a str),
+    Var(&'a str),
+    If(&'a str, Vec<Node<'a>>),
+}
+
+/// Parses the token stream into a node tree. Unmatched `{{end}}` is dropped;
+/// an `{{if}}` without a matching `{{end}}` consumes everything to EOF (its
+/// contents still render — that is the safer failure mode for prompt
+/// templates than silently truncating downstream variables).
+fn parse<'a>(tokens: &'a [Token<'a>]) -> Vec<Node<'a>> {
+    let mut iter = tokens.iter().peekable();
+    parse_until(&mut iter, false)
+}
+
+fn parse_until<'a, I>(iter: &mut std::iter::Peekable<I>, stop_on_end: bool) -> Vec<Node<'a>>
+where
+    I: Iterator<Item = &'a Token<'a>>,
+{
+    let mut out = Vec::new();
+    while let Some(tok) = iter.peek() {
+        match tok {
+            Token::End => {
+                if stop_on_end {
+                    iter.next();
+                    return out;
+                }
+                // Stray `{{end}}` — drop it; it has no opening tag.
+                iter.next();
+            }
+            Token::If(name) => {
+                let name = *name;
+                iter.next();
+                let inner = parse_until(iter, true);
+                out.push(Node::If(name, inner));
+            }
+            Token::Var(name) => {
+                let name = *name;
+                iter.next();
+                out.push(Node::Var(name));
+            }
+            Token::Text(s) => {
+                let s = *s;
+                iter.next();
+                out.push(Node::Text(s));
+            }
+        }
+    }
+    out
+}
+
+fn render_nodes(nodes: &[Node<'_>], ctx: &PromptContext, out: &mut String) {
+    for node in nodes {
+        match node {
+            Node::Text(s) => out.push_str(s),
+            Node::Var(name) => out.push_str(&get_var(name, ctx)),
+            Node::If(name, inner) => {
+                if !get_var_for_condition(name, ctx).trim().is_empty() {
+                    render_nodes(inner, ctx, out);
+                }
+            }
+        }
+    }
+}
+
+/// Resolves a template variable. Unknown variables render as `{{name}}` so
+/// typos in templates are visible in the rendered output instead of silently
+/// becoming empty strings.
 fn get_var(name: &str, ctx: &PromptContext) -> String {
+    match name {
+        "task_id" => ctx.task_id.clone(),
+        "task_file" => ctx.task_file.clone(),
+        "spec_file" => ctx.spec_file.clone(),
+        "testspec_file" => ctx.testspec_file.clone(),
+        "plan_file" => ctx.plan_file.clone(),
+        "verify_file" => ctx.verify_file.clone(),
+        "project_name" => ctx.project_name.clone(),
+        "language" => ctx.language.clone(),
+        "test_command" => ctx.test_command.clone(),
+        "output_file" => ctx.output_file.clone(),
+        "next_command" => ctx.next_command.clone(),
+        "failed_tests" => ctx.failed_tests.clone(),
+        "context_files" => ctx.context_files.join("\n"),
+        "figma_context" => ctx.figma_context.clone(),
+        "task_ref" => ctx.task_ref.clone(),
+        "spec_ref" => ctx.spec_ref.clone(),
+        "testspec_ref" => ctx.testspec_ref.clone(),
+        "plan_ref" => ctx.plan_ref.clone(),
+        "verify_ref" => ctx.verify_ref.clone(),
+        "figma_ref" => ctx.figma_ref.clone(),
+        "patterns_ref" => ctx.patterns_ref.clone(),
+        "domain_glossary_ref" => ctx.domain_glossary_ref.clone(),
+        "anti_patterns_ref" => ctx.anti_patterns_ref.clone(),
+        _ => format!("{{{{{}}}}}", name),
+    }
+}
+
+/// Same as `get_var` but used by the `{{if}}` block check: unknown vars are
+/// treated as empty (not the loud `{{name}}` string), so a stray `{{if foo}}`
+/// in a template hides its block instead of rendering it spuriously.
+fn get_var_for_condition(name: &str, ctx: &PromptContext) -> String {
     match name {
         "task_id" => ctx.task_id.clone(),
         "task_file" => ctx.task_file.clone(),
@@ -330,46 +471,6 @@ fn get_var(name: &str, ctx: &PromptContext) -> String {
         "anti_patterns_ref" => ctx.anti_patterns_ref.clone(),
         _ => String::new(),
     }
-}
-
-fn replace_vars(s: &str, ctx: &PromptContext) -> String {
-    let mut result = s.to_string();
-    for var in VAR_NAMES {
-        let token = format!("{{{{{}}}}}", var);
-        result = result.replace(&token, &get_var(var, ctx));
-    }
-    result
-}
-
-fn process_conditionals(template: &str, ctx: &PromptContext) -> String {
-    let mut result = template.to_string();
-
-    for var in VAR_NAMES {
-        let open_tag = format!("{{{{if {}}}}}", var);
-        let close_tag = "{{end}}";
-
-        while let Some(start) = result.find(&open_tag) {
-            if let Some(end_offset) = result[start..].find(close_tag) {
-                let end = start + end_offset + close_tag.len();
-                let block_inner_start = start + open_tag.len();
-                let block_inner_end = start + end_offset;
-                let block_content = &result[block_inner_start..block_inner_end];
-
-                let value = get_var(var, ctx);
-                let replacement = if value.trim().is_empty() {
-                    String::new()
-                } else {
-                    block_content.to_string()
-                };
-
-                result = format!("{}{}{}", &result[..start], replacement, &result[end..]);
-            } else {
-                break;
-            }
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -448,5 +549,110 @@ mod tests {
         let tmpl = "{{if figma_context}}\nshould not appear\n{{end}}";
         let result = render_template(tmpl, &ctx);
         assert!(!result.contains("should not appear"));
+    }
+
+    // Regression: the old string-scanning renderer paired the outer `{{if}}`
+    // with the first `{{end}}` it could find, dropping content after the inner
+    // close tag. The single-pass parser must respect block nesting.
+    #[test]
+    fn nested_if_blocks_match_their_own_end() {
+        let ctx = PromptContext {
+            task_id: "TASK-1".into(),
+            figma_context: "outer".into(),
+            spec_file: "inner".into(),
+            ..Default::default()
+        };
+        let tmpl = "\
+{{if figma_context}}OUTER-START
+{{if spec_file}}INNER{{end}}
+OUTER-END{{end}}";
+        let result = render_template(tmpl, &ctx);
+        assert!(result.contains("OUTER-START"));
+        assert!(result.contains("INNER"));
+        assert!(result.contains("OUTER-END"));
+    }
+
+    // Regression: two `{{if}}` blocks for the same variable could leak across
+    // each other when the renderer matched openings to closings in document
+    // order instead of by nesting depth.
+    #[test]
+    fn two_adjacent_if_blocks_for_same_var() {
+        let ctx = PromptContext {
+            task_id: "TASK-1".into(),
+            figma_context: "yes".into(),
+            ..Default::default()
+        };
+        let tmpl = "{{if figma_context}}first{{end}} sep {{if figma_context}}second{{end}}";
+        let result = render_template(tmpl, &ctx);
+        assert_eq!(result.trim(), "first sep second");
+    }
+
+    #[test]
+    fn nested_block_hidden_when_outer_empty() {
+        let ctx = PromptContext {
+            task_id: "TASK-1".into(),
+            figma_context: String::new(),
+            spec_file: "inner".into(),
+            ..Default::default()
+        };
+        let tmpl = "{{if figma_context}}{{if spec_file}}should not appear{{end}}{{end}}";
+        let result = render_template(tmpl, &ctx);
+        assert!(!result.contains("should not appear"));
+    }
+
+    #[test]
+    fn stray_end_token_is_dropped() {
+        let ctx = make_ctx();
+        let tmpl = "before {{end}} after";
+        let result = render_template(tmpl, &ctx);
+        assert_eq!(result.trim(), "before  after");
+    }
+
+    #[test]
+    fn unknown_variable_renders_as_loud_placeholder() {
+        let ctx = make_ctx();
+        let tmpl = "value: {{not_a_real_var}}";
+        let result = render_template(tmpl, &ctx);
+        assert!(
+            result.contains("{{not_a_real_var}}"),
+            "expected loud placeholder, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_if_variable_hides_block() {
+        let ctx = make_ctx();
+        let tmpl = "{{if not_a_real_var}}should not appear{{end}}";
+        let result = render_template(tmpl, &ctx);
+        assert!(!result.contains("should not appear"));
+    }
+
+    #[test]
+    fn malformed_open_tag_passes_through_as_text() {
+        // No closing `}}` — must not panic; must not eat the rest of the template.
+        let ctx = make_ctx();
+        let tmpl = "before {{task_id and then text never ends";
+        let result = render_template(tmpl, &ctx);
+        assert!(result.contains("before"));
+        assert!(result.contains("{{task_id"));
+    }
+
+    #[test]
+    fn comment_lines_are_stripped() {
+        let ctx = make_ctx();
+        let tmpl = "keep me\n{{/* hidden */}}\nalso me";
+        let result = render_template(tmpl, &ctx);
+        assert!(result.contains("keep me"));
+        assert!(result.contains("also me"));
+        assert!(!result.contains("hidden"));
+    }
+
+    #[test]
+    fn whitespace_in_tags_is_tolerated() {
+        let ctx = make_ctx();
+        let tmpl = "{{ task_id }} and {{if  task_id  }}yes{{ end }}";
+        let result = render_template(tmpl, &ctx);
+        assert!(result.contains("TASK-1"));
+        assert!(result.contains("yes"));
     }
 }

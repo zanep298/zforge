@@ -73,6 +73,27 @@ fn extract_and_update_memory(
     summary: &str,
 ) -> Result<(usize, usize)> {
     let memory_dir = config.memory_dir();
+    let (patterns_lines, anti_lines) = parse_memory_sections(summary);
+
+    let patterns_count =
+        writer::append_unique_lines(&memory_dir.join("patterns.md"), &patterns_lines)?;
+    let anti_count =
+        writer::append_unique_lines(&memory_dir.join("anti-patterns.md"), &anti_lines)?;
+
+    Ok((patterns_count, anti_count))
+}
+
+/// Section headings the review template emits. The review-summary.md parser
+/// matches these substrings to locate the pattern/anti-pattern bullet blocks.
+/// Keep these in sync with `templates/review.tmpl`.
+pub(crate) const PATTERNS_HEADING: &str = "New approved patterns";
+pub(crate) const ANTIPATTERNS_HEADING: &str = "Anti-patterns discovered";
+
+/// Pure parser: pulls bullet lines from the patterns and anti-patterns
+/// sections of a review summary. A subsequent `## ` heading closes the
+/// active section. Returned lines preserve their original indentation so
+/// `append_unique_lines` can dedup against existing memory files verbatim.
+pub(crate) fn parse_memory_sections(summary: &str) -> (Vec<String>, Vec<String>) {
     let mut patterns_lines: Vec<String> = Vec::new();
     let mut anti_lines: Vec<String> = Vec::new();
 
@@ -80,12 +101,12 @@ fn extract_and_update_memory(
     let mut in_anti = false;
 
     for line in summary.lines() {
-        if line.contains("New approved patterns") {
+        if line.contains(PATTERNS_HEADING) {
             in_patterns = true;
             in_anti = false;
             continue;
         }
-        if line.contains("Anti-patterns discovered") {
+        if line.contains(ANTIPATTERNS_HEADING) {
             in_anti = true;
             in_patterns = false;
             continue;
@@ -103,10 +124,96 @@ fn extract_and_update_memory(
         }
     }
 
-    let patterns_count =
-        writer::append_unique_lines(&memory_dir.join("patterns.md"), &patterns_lines)?;
-    let anti_count =
-        writer::append_unique_lines(&memory_dir.join("anti-patterns.md"), &anti_lines)?;
+    (patterns_lines, anti_lines)
+}
 
-    Ok((patterns_count, anti_count))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_patterns_section() {
+        let summary = "\
+## Summary
+text
+
+## New approved patterns
+- use Result: for fallible ops
+- prefer iterators: over manual loops
+
+## Anti-patterns discovered
+- avoid unwrap: fail loudly with context
+";
+        let (p, a) = parse_memory_sections(summary);
+        assert_eq!(
+            p,
+            vec![
+                "- use Result: for fallible ops",
+                "- prefer iterators: over manual loops",
+            ]
+        );
+        assert_eq!(a, vec!["- avoid unwrap: fail loudly with context"]);
+    }
+
+    #[test]
+    fn next_heading_closes_active_section() {
+        let summary = "\
+## New approved patterns
+- pattern A: desc
+
+## Notes
+- not a pattern: ignore me
+
+## Anti-patterns discovered
+- anti A: bad
+";
+        let (p, a) = parse_memory_sections(summary);
+        assert_eq!(p, vec!["- pattern A: desc"]);
+        assert_eq!(a, vec!["- anti A: bad"]);
+    }
+
+    #[test]
+    fn ignores_non_bullet_lines() {
+        let summary = "\
+## New approved patterns
+A paragraph that is not a bullet.
+- real bullet: keep this
+";
+        let (p, _) = parse_memory_sections(summary);
+        assert_eq!(p, vec!["- real bullet: keep this"]);
+    }
+
+    #[test]
+    fn empty_summary_returns_empty_vecs() {
+        let (p, a) = parse_memory_sections("");
+        assert!(p.is_empty());
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn missing_sections_return_empty_vecs() {
+        let summary = "## Other\n- bullet: nope\n";
+        let (p, a) = parse_memory_sections(summary);
+        assert!(p.is_empty());
+        assert!(a.is_empty());
+    }
+
+    // Compile-time guarantee that the bundled review prompt keeps emitting the
+    // exact section headings the parser scans for. If a future edit to
+    // review.tmpl renames either heading, this test fails at the same commit
+    // — extraction would otherwise silently stop populating memory files.
+    #[test]
+    fn review_template_emits_expected_headings() {
+        const REVIEW_TMPL: &str = include_str!("../../templates/review.tmpl");
+        assert!(
+            REVIEW_TMPL.contains(PATTERNS_HEADING),
+            "templates/review.tmpl no longer contains heading {PATTERNS_HEADING:?}; \
+             update PATTERNS_HEADING in src/cli/review.rs or restore the heading text"
+        );
+        assert!(
+            REVIEW_TMPL.contains(ANTIPATTERNS_HEADING),
+            "templates/review.tmpl no longer contains heading {ANTIPATTERNS_HEADING:?}; \
+             update ANTIPATTERNS_HEADING in src/cli/review.rs or restore the heading text"
+        );
+    }
 }
