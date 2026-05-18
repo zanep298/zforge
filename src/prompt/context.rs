@@ -162,8 +162,19 @@ pub fn build_context_for_phase(
             }
         }
         PromptPhase::Code => {
-            context_files.push(plan_ref.clone());
-            context_files.push(testspec_ref.clone());
+            // plan/testspec/spec may be absent in short flows (fixbug/spike/docs).
+            // Include each only when the file has real content so the prompt
+            // doesn't reference missing artifacts.
+            if let Some(r) = has_content_ref(&plan_path) {
+                context_files.push(r);
+            }
+            if let Some(r) = has_content_ref(&testspec_path) {
+                context_files.push(r);
+            }
+            if let Some(r) = has_content_ref(&spec_path) {
+                context_files.push(r);
+            }
+            context_files.push(task_ref.clone());
             if let Some(r) = has_content_ref(&patterns_path) {
                 context_files.push(r);
             }
@@ -174,12 +185,18 @@ pub fn build_context_for_phase(
         }
         PromptPhase::VerifyAnalysis => {
             context_files.push(verify_ref.clone());
-            context_files.push(testspec_ref.clone());
+            if let Some(r) = has_content_ref(&testspec_path) {
+                context_files.push(r);
+            }
         }
         PromptPhase::Review => {
             context_files.push(verify_ref.clone());
-            context_files.push(plan_ref.clone());
-            context_files.push(testspec_ref.clone());
+            if let Some(r) = has_content_ref(&plan_path) {
+                context_files.push(r);
+            }
+            if let Some(r) = has_content_ref(&testspec_path) {
+                context_files.push(r);
+            }
         }
     }
 

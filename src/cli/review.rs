@@ -1,3 +1,4 @@
+use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
@@ -12,6 +13,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
+    flow_guard::ensure_phase_in_flow(&ts, State::Reviewed, "review")?;
     ts.require(State::Verified)?;
 
     if done {

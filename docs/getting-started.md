@@ -101,6 +101,19 @@ zforge review TASK-001      # AI reviews, extracts patterns into memory
 zforge review TASK-001 --done
 ```
 
+## Shorter pipelines for smaller tasks
+
+The example above uses the full nine-phase pipeline. For bug fixes, spikes, or doc
+edits, pick a shorter preset with `--flow`:
+
+```bash
+zforge task import BUG-42 --flow fixbug   # spec → testspec → code → verify
+zforge task import POC-1  --flow spike    # spec → code
+zforge task import DOC-5  --flow docs     # code only
+```
+
+See [workflow.md](./workflow.md#flows) for details.
+
 ## Next steps
 
 - [commands.md](./commands.md) — full command reference

@@ -1,15 +1,31 @@
 use crate::cli;
+use crate::cli::flow_guard;
 use crate::config;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
-use crate::state::{State, TaskState};
+use crate::state::{dispatch_command, Flow, State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
 
 /// FSM gate for the `ship` command. Returns `Err` when the task has not yet
-/// passed the plan-review approval gate.
-pub(crate) fn check_ship_gate(state: &State, task_id: &str) -> Result<()> {
-    if state < &State::PlanReviewed {
-        anyhow::bail!("BLOCKED: plan.md requires human review. Run: zf approve {task_id} plan");
+/// reached the state immediately preceding `Coded` in its flow (e.g. for
+/// the full flow that is `PlanReviewed`; for fixbug it is `TestspecDone`).
+pub(crate) fn check_ship_gate(flow: &Flow, state: &State, task_id: &str) -> Result<()> {
+    if !flow.contains(&State::Coded) {
+        anyhow::bail!(
+            "flow '{}' has no code phase — ship is not applicable",
+            flow.as_str()
+        );
+    }
+    let Some(prev) = flow.previous_of(&State::Coded) else {
+        return Ok(());
+    };
+    if state < prev {
+        anyhow::bail!(
+            "BLOCKED: {} required before ship (flow: {}). Run: {}",
+            prev.as_str(),
+            flow.as_str(),
+            dispatch_command(prev, task_id)
+        );
     }
     Ok(())
 }
@@ -42,7 +58,9 @@ pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<()> {
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
-    if let Err(e) = check_ship_gate(&ts.state, task_id) {
+    flow_guard::ensure_phase_in_flow(&ts, State::Coded, "code")?;
+
+    if let Err(e) = check_ship_gate(&ts.flow, &ts.state, task_id) {
         eprintln!("{} {}", "⛔".red(), e);
         return Ok(());
     }
@@ -54,8 +72,9 @@ pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<()> {
         let engine = Engine::new(&config.agents_dir());
         engine.dispatch("code", &ctx)?;
 
+        let prev = ts.state.as_str().to_string();
         if ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")? {
-            println!("{} State advanced: PlanReviewed → Coded", "✓".green());
+            println!("{} State advanced: {} → Coded", "✓".green(), prev);
             println!();
         }
     } else {
@@ -82,13 +101,25 @@ mod tests {
             State::TestspecReviewed,
             State::Planned,
         ] {
-            let err = check_ship_gate(&blocked, "TASK-1").unwrap_err();
+            let err = check_ship_gate(&Flow::Full, &blocked, "TASK-1").unwrap_err();
             assert!(
                 err.to_string().contains("BLOCKED"),
                 "state {blocked:?} should block ship but message was: {err}"
             );
             assert!(err.to_string().contains("TASK-1"));
         }
+    }
+
+    #[test]
+    fn fixbug_gate_passes_after_testspec() {
+        check_ship_gate(&Flow::Fixbug, &State::TestspecDone, "TASK-1").unwrap();
+    }
+
+    #[test]
+    fn fixbug_gate_blocks_before_testspec() {
+        let err = check_ship_gate(&Flow::Fixbug, &State::SpecDone, "TASK-1").unwrap_err();
+        assert!(err.to_string().contains("TestspecDone"));
+        assert!(err.to_string().contains("fixbug"));
     }
 
     #[test]
@@ -142,7 +173,7 @@ mod tests {
             State::Verified,
             State::Reviewed,
         ] {
-            check_ship_gate(&ok, "TASK-1")
+            check_ship_gate(&Flow::Full, &ok, "TASK-1")
                 .unwrap_or_else(|e| panic!("state {ok:?} should pass gate but errored: {e}"));
         }
     }

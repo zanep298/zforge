@@ -26,6 +26,11 @@ zforge task import --title "Add health check endpoint"    # auto ID + title
 zforge task import TASK-001 --title "Add health check endpoint"
 zforge task import TASK-001 --title "..." --domain "api"
 
+# Pick a pipeline preset (default: full)
+zforge task import BUG-42 --flow fixbug --title "Login crash"   # spec → testspec → code → verify
+zforge task import SPIKE-1 --flow spike --title "GraphQL POC"   # spec → code
+zforge task import DOC-9  --flow docs   --title "README update" # code only
+
 # Import from Jira (fetches summary + description via JIRA_EMAIL / JIRA_API_TOKEN)
 zforge task import --jira https://company.atlassian.net/browse/PROJ-123
 
@@ -34,6 +39,19 @@ zforge task import TASK-001 --title "Login screen" \
   --figma "https://figma.com/design/FILE/Login?node-id=1" \
   --figma-context "$(cat figma_export.md)"
 ```
+
+### Flow presets (`--flow`)
+
+| Flow | Phases | Skips |
+|------|--------|-------|
+| `full` (default) | spec → testspec → approve → plan → approve → code → verify → review | — |
+| `fixbug` | spec → testspec → code → verify | plan, both approval gates, review |
+| `spike` | spec → code | testspec, plan, verify, review |
+| `docs` | code | everything except code |
+
+The flow is recorded in `.state.yaml` at import and cannot be changed afterwards.
+Phase commands that are not part of the flow (e.g. `zforge plan` on a `fixbug` task)
+fail with a clear error.
 
 When no ID is given, zforge scans the tasks directory and assigns the next available
 `TASK-NNN` number. Explicit IDs must match `[A-Z]+-[0-9]+` (e.g. `AUTH-42`).
@@ -182,6 +200,13 @@ zforge status TASK-001        # detailed status for one task
 zforge status TASK-001 --json # machine-readable output
 zforge status TASK-001 --short
 ```
+
+Single-task output includes a `Flow:` line and a `Next:` hint that follows the
+task's flow (e.g. on a `fixbug` task at state `TestspecDone`, `Next:` shows
+`zf code TASK-001` rather than the full-flow approve step).
+
+A task is reported complete when it reaches its flow's terminal state:
+`Reviewed` for `full`, `Verified` for `fixbug`, `Coded` for `spike` and `docs`.
 
 Phase indicators:
 ```

@@ -179,6 +179,28 @@ task import → spec → testspec → [approve testspec] → plan → [approve p
 
 `zforge ship <ID>` is a shortcut for `code` + `verify` back-to-back — saves a tool round trip when chained via MCP, and is idempotent (skips the code phase if state is already `Coded`).
 
+## Flows (pipeline presets)
+
+The full nine-phase pipeline above is overkill for bug fixes, spikes, or doc edits.
+Pick a shorter preset at import time with `--flow`:
+
+| Flow | Phases | Use when |
+|------|--------|----------|
+| `full` (default) | spec → testspec → approve → plan → approve → code → verify → review | Cross-cutting feature work, anything risky |
+| `fixbug` | spec → testspec → code → verify | Bug fix with a clear reproducer (<50 LOC) |
+| `spike` | spec → code | Research, prototypes, throwaway exploration |
+| `docs` | code | Docs / README / comments only |
+
+```bash
+zforge task import BUG-42 --flow fixbug --title "Login crashes on empty email"
+zforge task import SPIKE-1 --flow spike --title "Try GraphQL adapter"
+zforge task import DOC-9   --flow docs  --title "Document MCP setup"
+```
+
+The flow is persisted in `.zforge/tasks/<ID>/.state.yaml`. Phases not in the chosen
+flow are rejected — e.g. `zforge plan TASK-1` fails on a `fixbug` task. `zforge status`
+displays the active flow and the correct next command.
+
 For UI tasks, attach Figma design context at import time — it flows through spec and code automatically:
 
 ```
@@ -226,7 +248,7 @@ Agents that are not installed are skipped, not failed.
 |---------|-------------|
 | `zforge init` | Scaffold `.zforge/`, `CLAUDE.md`, `.claude/` files |
 | `zforge mcp register` | Register zforge MCP server with Claude Code, Codex, and/or OpenCode |
-| `zforge task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`) |
+| `zforge task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`, `--flow`) |
 | `zforge spec <ID>` | Generate spec prompt |
 | `zforge testspec <ID>` | Generate test spec prompt |
 | `zforge approve <ID> testspec` | Approve testspec (human gate) |

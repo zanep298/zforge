@@ -1,3 +1,6 @@
+pub mod flow;
+pub use flow::{dispatch_command, Flow};
+
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -61,20 +64,6 @@ impl State {
         }
     }
 
-    pub fn valid_next(&self) -> Vec<State> {
-        match self {
-            State::Unknown => vec![State::Imported],
-            State::Imported => vec![State::SpecDone],
-            State::SpecDone => vec![State::TestspecDone],
-            State::TestspecDone => vec![State::TestspecReviewed],
-            State::TestspecReviewed => vec![State::Planned],
-            State::Planned => vec![State::PlanReviewed],
-            State::PlanReviewed => vec![State::Coded],
-            State::Coded => vec![State::Verified],
-            State::Verified => vec![State::Reviewed],
-            State::Reviewed => vec![],
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -87,16 +76,24 @@ pub struct StateEntry {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskState {
     pub task_id: String,
+    #[serde(default)]
+    pub flow: Flow,
     pub state: State,
     pub updated_at: DateTime<Local>,
     pub history: Vec<StateEntry>,
 }
 
 impl TaskState {
+    #[allow(dead_code)]
     pub fn new(task_id: &str) -> Self {
+        Self::new_with_flow(task_id, Flow::default())
+    }
+
+    pub fn new_with_flow(task_id: &str, flow: Flow) -> Self {
         let now = Local::now();
         Self {
             task_id: task_id.to_string(),
+            flow,
             state: State::Imported,
             updated_at: now,
             history: vec![StateEntry {
@@ -105,6 +102,14 @@ impl TaskState {
                 note: String::new(),
             }],
         }
+    }
+
+    /// Dispatch command (no `--done`) for the next phase in this task's
+    /// flow, e.g. `"zf testspec TASK-1"`. Used by `status` and any CLI
+    /// command that prints "Next: …".
+    pub fn next_hint(&self) -> String {
+        self.flow
+            .next_dispatch_command(&self.state, &self.task_id)
     }
 
     pub fn load(tasks_dir: &Path, task_id: &str) -> Result<Self> {
@@ -125,8 +130,12 @@ impl TaskState {
     }
 
     pub fn advance(&mut self, next: State, note: &str) -> Result<()> {
-        let valid = self.state.valid_next();
-        if !valid.contains(&next) {
+        // Advance is flow-aware: only the state that immediately follows
+        // `self.state` *in this task's flow* is a legal transition. This
+        // lets short flows (e.g. fixbug) skip phases like Planned without
+        // sequencing through them.
+        let expected = self.flow.next_after(&self.state).cloned();
+        if expected.as_ref() != Some(&next) {
             return Err(StateError::InvalidTransition {
                 from: self.state.as_str().to_string(),
                 to: next.as_str().to_string(),

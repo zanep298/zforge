@@ -12,7 +12,7 @@
 ///   status       — get task phase status
 use crate::config;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
-use crate::state::TaskState;
+use crate::state::{Flow, State, TaskState};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -162,6 +162,10 @@ fn tool_task_import(args: &Value) -> Result<String> {
         .get("figma_context")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    let flow = args
+        .get("flow")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
 
     // Resolve task_id: explicit > extracted from jira_url > auto-generated
     let resolved_id_hint = task_id.map(str::to_string).or_else(|| {
@@ -178,11 +182,17 @@ fn tool_task_import(args: &Value) -> Result<String> {
         jira_url,
         figma_url,
         figma_context,
+        flow.as_deref(),
     )?;
 
+    // Recommend the next MCP call based on the resolved flow.
+    let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
+    let ts = TaskState::load(&config.tasks_dir(), &id)?;
+    let next_phase = first_phase_of(&ts.flow).unwrap_or("spec");
     Ok(format!(
-        "Task {id} created at .zforge/tasks/{id}/task.md\n\
-         Fill in any missing details, then call get_prompt(phase=\"spec\", task_id=\"{id}\")."
+        "Task {id} created at .zforge/tasks/{id}/task.md (flow: {})\n\
+         Fill in any missing details, then call get_prompt(phase=\"{next_phase}\", task_id=\"{id}\").",
+        ts.flow.as_str()
     ))
 }
 
@@ -206,13 +216,16 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
         _ => unreachable!(),
     };
 
+    // Load flow so the "next" hint matches this task's pipeline preset.
+    let ts = TaskState::load(&config.tasks_dir(), task_id)?;
+
     let mut ctx = build_context_for_phase(&config, task_id, prompt_phase)?;
     ctx.output_file = match phase {
         "code" => String::new(),
         "review" => format!(".zforge/tasks/{task_id}/review-summary.md"),
         _ => format!(".zforge/tasks/{task_id}/{phase}.md"),
     };
-    ctx.next_command = next_cmd(phase, task_id);
+    ctx.next_command = next_cmd_with_flow(ts.flow, phase, task_id);
 
     let engine = Engine::new(&config.agents_dir());
     let prompt = engine.render(phase, &ctx)?;
@@ -285,9 +298,9 @@ fn tool_ship(args: &Value) -> Result<String> {
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
 
-    crate::cli::ship::check_ship_gate(&ts.state, task_id).map_err(|e| {
+    crate::cli::ship::check_ship_gate(&ts.flow, &ts.state, task_id).map_err(|e| {
         // Rephrase for the MCP audience so the LLM gets the correct next-call hint.
-        anyhow::anyhow!("{e}. Call approve(task_id=\"{task_id}\", artifact=\"plan\") first.")
+        anyhow::anyhow!("{e}. Resolve the blocking step before retrying ship.")
     })?;
 
     crate::cli::ship::ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")?;
@@ -355,7 +368,8 @@ fn tool_definitions() -> Value {
                     "description":   { "type": "string", "description": "Task description body (Jira description as plain text)" },
                     "jira_url":      { "type": "string", "description": "Full Jira ticket URL, e.g. https://company.atlassian.net/browse/PROJ-123" },
                     "figma_url":     { "type": "string", "description": "Figma node URL, e.g. https://figma.com/design/FILE/...?node-id=..." },
-                    "figma_context": { "type": "string", "description": "Design context pre-fetched via Figma MCP (get_code/get_metadata output). Injected into spec and code prompts." }
+                    "figma_context": { "type": "string", "description": "Design context pre-fetched via Figma MCP (get_code/get_metadata output). Injected into spec and code prompts." },
+                    "flow":          { "type": "string", "enum": ["full", "fixbug", "spike", "docs"], "description": "Pipeline preset. Defaults to 'full'. 'fixbug' skips plan/review, 'spike' skips tests, 'docs' goes straight from import to code." }
                 }
             }
         },
@@ -445,15 +459,60 @@ fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
         .ok_or_else(|| anyhow::anyhow!("missing required argument: {key}"))
 }
 
+#[cfg(test)]
 fn next_cmd(phase: &str, task_id: &str) -> String {
-    match phase {
-        "spec" => format!("get_prompt(phase=\"testspec\", task_id=\"{task_id}\")"),
-        "testspec" => format!("approve(task_id=\"{task_id}\", artifact=\"testspec\")"),
-        "plan" => format!("approve(task_id=\"{task_id}\", artifact=\"plan\")"),
-        "code" => format!("ship(task_id=\"{task_id}\")"),
-        "review" => "Pipeline complete!".to_string(),
+    next_cmd_with_flow(Flow::Full, phase, task_id)
+}
+
+/// Flow-aware next-tool hint. Differs from the legacy `next_cmd` by
+/// honoring short flows: e.g. `code` on a fixbug task points at `ship`,
+/// `spec` on a docs task points straight at `ship`.
+fn next_cmd_with_flow(flow: Flow, phase: &str, task_id: &str) -> String {
+    // Map the just-rendered phase to the FSM state that completing it produces.
+    let completed_state = match phase {
+        "spec" => State::SpecDone,
+        "testspec" => State::TestspecDone,
+        "plan" => State::Planned,
+        "code" => State::Coded,
+        "review" => State::Reviewed,
+        _ => return String::new(),
+    };
+
+    // The orchestrator hasn't yet advanced FSM state via MCP — so suggest
+    // the tool that gates the *next* logical step, not literally the next
+    // state after the current FSM position.
+    let next_state = flow.next_after(&completed_state);
+    match (phase, next_state) {
+        ("code", _) => format!("ship(task_id=\"{task_id}\")"),
+        ("review", _) | (_, None) => "Pipeline complete!".to_string(),
+        (_, Some(State::TestspecReviewed)) => {
+            format!("approve(task_id=\"{task_id}\", artifact=\"testspec\")")
+        }
+        (_, Some(State::PlanReviewed)) => {
+            format!("approve(task_id=\"{task_id}\", artifact=\"plan\")")
+        }
+        (_, Some(State::TestspecDone)) => {
+            format!("get_prompt(phase=\"testspec\", task_id=\"{task_id}\")")
+        }
+        (_, Some(State::Planned)) => format!("get_prompt(phase=\"plan\", task_id=\"{task_id}\")"),
+        (_, Some(State::Coded)) => format!("get_prompt(phase=\"code\", task_id=\"{task_id}\")"),
+        (_, Some(State::Verified)) => format!("verify(task_id=\"{task_id}\")"),
+        (_, Some(State::Reviewed)) => format!("get_prompt(phase=\"review\", task_id=\"{task_id}\")"),
         _ => String::new(),
     }
+}
+
+/// The first phase prompt that should be rendered for a freshly-imported
+/// task on this flow. Used by `task_import` to point the LLM at the right
+/// next tool call without hardcoding the legacy full-flow path.
+fn first_phase_of(flow: &Flow) -> Option<&'static str> {
+    // The flow's first non-Imported state determines the first phase prompt.
+    let next = flow.next_after(&State::Imported)?;
+    Some(match next {
+        State::SpecDone => "spec",
+        State::Coded => "code",
+        _ => "spec",
+    })
 }
 
 #[cfg(test)]

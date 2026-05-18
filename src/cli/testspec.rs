@@ -1,3 +1,4 @@
+use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
@@ -12,7 +13,8 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
-    ts.require(State::SpecDone)?;
+    flow_guard::ensure_phase_in_flow(&ts, State::TestspecDone, "testspec")?;
+    flow_guard::ensure_predecessor_complete(&ts, State::TestspecDone)?;
 
     if !reader::artifact_exists(&tasks_dir, task_id, "spec.md") {
         anyhow::bail!(
@@ -45,7 +47,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         );
         println!("{} State advanced: SpecDone → TestspecDone", "✓".green());
         println!();
-        println!("Next: zf approve {} testspec", task_id);
+        println!("Next: {}", ts.next_hint());
         return Ok(());
     }
 

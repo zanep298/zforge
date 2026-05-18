@@ -1,7 +1,7 @@
 use crate::config;
 use crate::fs::scaffold::{self, TaskImportData};
 use crate::fs::{tokens, writer};
-use crate::state::TaskState;
+use crate::state::{Flow, TaskState};
 use anyhow::Result;
 use colored::Colorize;
 use regex::Regex;
@@ -31,6 +31,7 @@ fn next_task_id(tasks_dir: &Path) -> Result<String> {
     Ok(format!("TASK-{:03}", max_num + 1))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_import(
     task_id: Option<&str>,
     title: Option<String>,
@@ -39,8 +40,13 @@ pub fn run_import(
     jira_url: Option<String>,
     figma_url: Option<String>,
     figma_context: Option<String>,
+    flow: Option<&str>,
 ) -> Result<String> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
+    let flow = match flow {
+        Some(s) => Flow::parse(s)?,
+        None => Flow::default(),
+    };
 
     let tasks_dir = config.tasks_dir();
     std::fs::create_dir_all(&tasks_dir)?;
@@ -101,7 +107,7 @@ pub fn run_import(
         serde_yaml::Value::String("human".to_string()),
     )?;
 
-    let state = TaskState::new(&id);
+    let state = TaskState::new_with_flow(&id, flow);
     state.save(&tasks_dir)?;
 
     println!("{} Created tasks/{}/", "✓".green(), id);
@@ -111,7 +117,7 @@ pub fn run_import(
         id,
         tokens::fmt(task_tokens)
     );
-    println!("{} State: Imported", "✓".green());
+    println!("{} State: Imported  ({} flow)", "✓".green(), flow.as_str());
     println!();
     println!("{}", "─".repeat(40));
 
@@ -127,7 +133,7 @@ pub fn run_import(
     }
 
     println!();
-    println!("When done, run: zf spec {}", id);
+    println!("When done, run: {}", state.next_hint());
     println!("{}", "─".repeat(40));
 
     Ok(id)

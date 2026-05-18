@@ -1,6 +1,7 @@
+use crate::cli::flow_guard;
 use crate::config;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
-use crate::state::{State, TaskState};
+use crate::state::{dispatch_command, State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
 
@@ -11,18 +12,28 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
-    if ts.state < State::PlanReviewed {
-        eprintln!("{} BLOCKED: plan.md requires human review", "⛔".red());
-        eprintln!("Run: zf approve {} plan", task_id);
-        return Ok(());
+    flow_guard::ensure_phase_in_flow(&ts, State::Coded, "code")?;
+
+    if let Some(prev) = ts.flow.previous_of(&State::Coded) {
+        if ts.state < *prev {
+            eprintln!(
+                "{} BLOCKED: {} required before code (flow: {})",
+                "⛔".red(),
+                prev.as_str(),
+                ts.flow.as_str()
+            );
+            eprintln!("Run: {}", dispatch_command(prev, task_id));
+            return Ok(());
+        }
     }
 
     if done {
+        let from = ts.state.as_str().to_string();
         ts.advance(State::Coded, "coding complete")?;
         ts.save(&tasks_dir)?;
-        println!("{} State advanced: PlanReviewed → Coded", "✓".green());
+        println!("{} State advanced: {} → Coded", "✓".green(), from);
         println!();
-        println!("Next: zf verify {}", task_id);
+        println!("Next: {}", ts.next_hint());
         return Ok(());
     }
 

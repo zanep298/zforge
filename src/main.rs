@@ -150,6 +150,9 @@ enum TaskAction {
         /// Figma design context (pre-fetched via Figma MCP)
         #[arg(long)]
         figma_context: Option<String>,
+        /// Pipeline preset: full (default), fixbug, spike, docs
+        #[arg(long)]
+        flow: Option<String>,
     },
 }
 
@@ -175,6 +178,7 @@ fn main() -> Result<()> {
                 jira,
                 figma,
                 figma_context,
+                flow,
             } => {
                 cli::task::run_import(
                     task_id.as_deref(),
@@ -184,6 +188,7 @@ fn main() -> Result<()> {
                     jira,
                     figma,
                     figma_context,
+                    flow.as_deref(),
                 )?;
                 Ok(())
             }

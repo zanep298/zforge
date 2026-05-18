@@ -9,36 +9,56 @@
 ## Workflow
 
 This project uses a gated TDD workflow managed by `zforge`. Every task moves through
-these phases in order. Two phases require explicit human approval before proceeding.
+the phases defined by its **flow** (chosen at import time, recorded in `.state.yaml`).
 
 ```
 task import → spec → testspec → [APPROVE testspec] → plan → [APPROVE plan] → code → verify → review
 ```
 
-When asked to implement a task, always check the current state first:
+The pipeline above is the default `full` flow. Three shorter presets are available for
+smaller work:
+
+| Flow | Phases | Pick when |
+|------|--------|-----------|
+| `full` (default) | full pipeline above | Features, risky changes, anything cross-cutting |
+| `fixbug` | spec → testspec → code → verify | Bug with a clear reproducer |
+| `spike` | spec → code | Research, throwaway prototypes |
+| `docs` | code | Docs / README / comments only |
+
+```bash
+zforge task import BUG-42 --flow fixbug --title "Login crash"
+```
+
+Always check the active flow + state before starting work:
 
 ```
 zforge status <TASK-ID>
 ```
 
-Never skip a phase. Never write code before testspec and plan are both approved.
+The `Next:` line in `zforge status` (and the output of every phase command) already
+follows the active flow — trust it. Phase commands that are not part of the flow
+(e.g. `zforge plan` on a `fixbug` task) fail with a clear error.
+
+Never skip a phase that *is* in the flow. For the `full` flow, never write code before
+testspec and plan are both approved.
 
 ---
 
 ## Before Implementing Any Task
 
-Read these files in order:
+Read whichever of these files exist for the task (short flows skip some):
 
 ```
 /file .zforge/tasks/<TASK-ID>/task.md
-/file .zforge/tasks/<TASK-ID>/spec.md
-/file .zforge/tasks/<TASK-ID>/testspec.md
-/file .zforge/tasks/<TASK-ID>/plan.md
+/file .zforge/tasks/<TASK-ID>/spec.md          # missing on docs flow
+/file .zforge/tasks/<TASK-ID>/testspec.md      # missing on spike/docs flows
+/file .zforge/tasks/<TASK-ID>/plan.md          # missing on fixbug/spike/docs flows
 /file .zforge/memory/patterns.md
 /file .zforge/memory/anti-patterns.md
 ```
 
-Then follow the approved plan exactly.
+Follow the approved plan exactly when one exists. On shorter flows without a plan,
+follow `task.md` + `spec.md` directly.
 
 ---
 

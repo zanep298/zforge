@@ -1,6 +1,6 @@
 use crate::config;
 use crate::fs::reader;
-use crate::state::{State, TaskState};
+use crate::state::TaskState;
 use anyhow::Result;
 use chrono::{DateTime, Local};
 use colored::Colorize;
@@ -78,6 +78,7 @@ fn render_single(
     writeln!(out, "  {}", header.bold())?;
     writeln!(out, "{}", sep)?;
     writeln!(out, "  State:   {} ✓", ts.state.as_str().green())?;
+    writeln!(out, "  Flow:    {}", ts.flow.as_str())?;
     if !domain.is_empty() {
         writeln!(out, "  Domain:  {}", domain)?;
     }
@@ -144,7 +145,7 @@ fn render_single(
     }
 
     writeln!(out)?;
-    writeln!(out, "  Next:    {}", ts.state.hint())?;
+    writeln!(out, "  Next:    {}", ts.next_hint())?;
     writeln!(out, "{}", sep)?;
 
     Ok(out)
@@ -196,10 +197,8 @@ fn render_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<St
         writeln!(out, "{}", sep)?;
     }
 
-    let complete_count = tasks
-        .iter()
-        .filter(|(_, ts)| ts.state == State::Reviewed)
-        .count();
+    let is_complete = |ts: &TaskState| ts.flow.next_after(&ts.state).is_none();
+    let complete_count = tasks.iter().filter(|(_, ts)| is_complete(ts)).count();
 
     for (id, ts) in &tasks {
         let title = reader::MarkdownFile::read(&tasks_dir.join(id).join("task.md"))
@@ -208,7 +207,7 @@ fn render_all(tasks_dir: &std::path::Path, json: bool, short: bool) -> Result<St
             .unwrap_or_default();
 
         let state_str = ts.state.as_str();
-        let colored_state = if ts.state == State::Reviewed {
+        let colored_state = if is_complete(ts) {
             state_str.green().to_string()
         } else {
             state_str.yellow().to_string()
@@ -266,7 +265,7 @@ fn format_relative(dt: &DateTime<Local>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TaskState;
+    use crate::state::{State, TaskState};
     use tempfile::TempDir;
 
     fn write_task(tasks_dir: &std::path::Path, id: &str, state: State) {

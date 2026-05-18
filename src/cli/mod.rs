@@ -1,5 +1,6 @@
 pub mod approve;
 pub mod code;
+pub mod flow_guard;
 pub mod init;
 pub mod install;
 pub mod mcp_register;

@@ -1,3 +1,4 @@
+use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
@@ -38,6 +39,7 @@ pub fn run_with_outcome(
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
+    flow_guard::ensure_phase_in_flow(&ts, State::Verified, "verify")?;
     ts.require(State::Coded)?;
 
     let cmd = match command {
@@ -156,7 +158,7 @@ command: "{}"
         ts.save(&tasks_dir)?;
         println!();
         println!("{} State advanced: Coded → Verified", "✓".green());
-        println!("Next: zf review {}", task_id);
+        println!("Next: {}", ts.next_hint());
     } else {
         // Generate analysis prompt
         let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::VerifyAnalysis)?;

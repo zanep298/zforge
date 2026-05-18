@@ -3,6 +3,39 @@
 zforge enforces a gated TDD-first pipeline. Each phase produces a markdown artifact.
 Approval gates prevent the AI from moving forward without human sign-off.
 
+## Flows
+
+Not every task needs the full pipeline. Pick a preset with `--flow` at import time:
+
+| Flow | Phases | Best for |
+|------|--------|----------|
+| `full` (default) | spec → testspec → approve → plan → approve → code → verify → review | Features, cross-cutting changes, risky work |
+| `fixbug` | spec → testspec → code → verify | Bug with a clear reproducer; no plan or final review |
+| `spike` | spec → code | Research, prototypes, throwaway code |
+| `docs` | code | README, docs, comments — no spec or tests |
+
+```bash
+zforge task import BUG-42 --flow fixbug --title "Login crash on empty email"
+zforge task import SPIKE-1 --flow spike --title "Evaluate GraphQL adapter"
+zforge task import DOC-9   --flow docs  --title "Document MCP setup"
+zforge task import FEAT-7  --flow full  --title "Add audit log"   # explicit default
+```
+
+What the flow controls:
+
+- **Allowed phases.** Running `zforge plan TASK-1` on a `fixbug` task fails with a
+  clear error. Same for `spec` on a `docs` task.
+- **Approval gates.** `fixbug` drops both human gates (testspec-review, plan-review).
+  `spike` and `docs` have no gates at all.
+- **`Next:` hints.** Every `zforge` command and `zforge status` shows the correct next
+  command for the active flow.
+- **Completion.** `zforge status` reports a task complete when it reaches the flow's
+  terminal state (`Verified` for `fixbug`, `Coded` for `spike`/`docs`, `Reviewed`
+  for `full`).
+
+The flow is recorded once in `.zforge/tasks/<ID>/.state.yaml` and cannot be changed
+after import. If you imported with the wrong flow, re-import a new task.
+
 ## Pipeline overview
 
 ```

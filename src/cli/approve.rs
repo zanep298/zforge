@@ -67,7 +67,19 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
     let transition = artifact_transition(artifact, task_id).expect("validated above");
     let prev_state = transition.prev_state;
     let next_state = transition.next_state;
-    let next_cmd = transition.next_cmd;
+
+    // Reject approvals whose target state isn't part of the task's flow.
+    // E.g. `approve testspec` on a fixbug task — fixbug skips TestspecReviewed.
+    if let Some(next) = &next_state {
+        if !ts.flow.contains(next) {
+            anyhow::bail!(
+                "approve '{}' is not part of the '{}' flow for task {}",
+                artifact,
+                ts.flow.as_str(),
+                task_id
+            );
+        }
+    }
 
     println!(
         "{} tasks/{}/{}.md marked as reviewed",
@@ -87,7 +99,7 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
     }
 
     println!();
-    println!("Next: {}", next_cmd);
+    println!("Next: {}", ts.next_hint());
 
     Ok(())
 }

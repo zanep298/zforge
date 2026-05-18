@@ -1,3 +1,4 @@
+use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{reader, tokens, writer};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
@@ -17,7 +18,8 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
         )
     })?;
 
-    ts.require(State::Imported)?;
+    flow_guard::ensure_phase_in_flow(&ts, State::SpecDone, "spec")?;
+    flow_guard::ensure_predecessor_complete(&ts, State::SpecDone)?;
 
     // Validate task.md fields
     let task_path = tasks_dir.join(task_id).join("task.md");
@@ -54,7 +56,7 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
         );
         println!("{} State advanced: Imported → SpecDone", "✓".green());
         println!();
-        println!("Next: zf testspec {}", task_id);
+        println!("Next: {}", ts.next_hint());
         return Ok(());
     }
 
