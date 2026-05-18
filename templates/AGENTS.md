@@ -61,6 +61,27 @@ Load the file directly before starting that phase.
 
 ---
 
+## Supplementary Skills
+
+Load these only when the task touches that area:
+
+| When | Skill file |
+|------|-----------|
+| Diagnosing a bug | `.zforge/skills/debug.md` |
+| Security check before merge | `.zforge/skills/security-review.md` |
+| Fixing a performance problem | `.zforge/skills/performance-optimize.md` |
+| Backend API contract changes | `.zforge/skills/backend/api-contracts.md` |
+| Database schema or migration changes | `.zforge/skills/backend/database-migrations.md` |
+| Logs, metrics, traces, jobs | `.zforge/skills/backend/observability.md` |
+| Queue, cron, worker changes | `.zforge/skills/backend/background-jobs.md` |
+| React or route UI changes | `.zforge/skills/frontend/react-patterns.md` |
+| Frontend tests | `.zforge/skills/frontend/frontend-testing.md` |
+| Accessibility-sensitive UI | `.zforge/skills/frontend/accessibility.md` |
+| Figma-to-code UI work | `.zforge/skills/frontend/figma-to-ui.md` |
+| Frontend state or data fetching | `.zforge/skills/frontend/state-data-fetching.md` |
+
+---
+
 ## MCP Tools
 
 zforge registers an MCP server (`zforge mcp`) globally at `~/.codex/config.toml`

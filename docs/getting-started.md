@@ -17,7 +17,7 @@ zforge --version
 
 ## Initialize a project
 
-Run inside any Rust, Go, TypeScript, or Python project:
+Run inside any Rust, Go, TypeScript, Python, Android, iOS, or Flutter project:
 
 ```bash
 zforge init

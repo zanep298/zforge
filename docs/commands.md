@@ -10,7 +10,8 @@ zforge init --force  # overwrite existing zforge/Claude Code files
 ```
 
 Detects project language automatically from `Cargo.toml`, `go.mod`,
-`package.json`, `pyproject.toml`, Android Gradle files, or iOS project files.
+`package.json`, `pyproject.toml`, Android Gradle files, iOS project files, or
+`pubspec.yaml`.
 
 ---
 
@@ -218,7 +219,7 @@ Backs up current artifacts before resetting.
 ```yaml
 project:
   name: "my-service"
-  language: "rust"          # rust | go | typescript | python
+  language: "rust"          # rust | go | typescript | python | android | ios | flutter
   test_command: "cargo test"
   root_dir: "."
 

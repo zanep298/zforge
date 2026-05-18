@@ -178,7 +178,7 @@ pub fn run(agent: Agent, force: bool) -> Result<()> {
         stats.record(created);
     }
     println!(
-        "{} .zforge/skills/ — {} workflow + {} {} skills",
+        "{} .zforge/skills/ — {} base/supplementary + {} {} skills",
         label(stats.created > 0),
         SKILLS.len(),
         lang_count,
@@ -479,6 +479,14 @@ pub(crate) fn detect_project(root: &std::path::Path) -> DetectedProject {
             project_name: name,
         };
     }
+    if root.join("pubspec.yaml").exists() {
+        let name = read_pubspec_name(root).unwrap_or_default();
+        return DetectedProject {
+            language: "flutter".into(),
+            test_command: "flutter test".into(),
+            project_name: name,
+        };
+    }
     if root.join("package.json").exists() {
         let name = read_package_json_name(root).unwrap_or_default();
         return DetectedProject {
@@ -645,6 +653,23 @@ fn read_package_json_name(root: &std::path::Path) -> Option<String> {
     None
 }
 
+fn read_pubspec_name(root: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(root.join("pubspec.yaml")).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("name:") {
+            return Some(
+                line.trim_start_matches("name:")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string(),
+            );
+        }
+    }
+    None
+}
+
 pub(crate) fn apply_vars(template: &str, vars: &Vars) -> String {
     template
         .replace("{{language}}", &vars.language)
@@ -717,6 +742,10 @@ fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
                 "ios-ui-patterns.md".into(),
                 include_str!("../../templates/skills/lang/ios-ui-patterns.md"),
             ),
+            (
+                "ios-snapshot-accessibility.md".into(),
+                include_str!("../../templates/skills/lang/ios-snapshot-accessibility.md"),
+            ),
         ],
         "android" => vec![
             (
@@ -726,6 +755,28 @@ fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
             (
                 "android-testing.md".into(),
                 include_str!("../../templates/skills/lang/android-testing.md"),
+            ),
+            (
+                "android-compose-ui.md".into(),
+                include_str!("../../templates/skills/lang/android-compose-ui.md"),
+            ),
+            (
+                "android-instrumented-testing.md".into(),
+                include_str!("../../templates/skills/lang/android-instrumented-testing.md"),
+            ),
+        ],
+        "flutter" => vec![
+            (
+                "flutter-patterns.md".into(),
+                include_str!("../../templates/skills/lang/flutter-patterns.md"),
+            ),
+            (
+                "flutter-testing.md".into(),
+                include_str!("../../templates/skills/lang/flutter-testing.md"),
+            ),
+            (
+                "flutter-ui-patterns.md".into(),
+                include_str!("../../templates/skills/lang/flutter-ui-patterns.md"),
             ),
         ],
         _ => vec![],
@@ -746,7 +797,7 @@ fn build_lang_skills_section(language: &str, skills: &[(String, &str)]) -> Strin
         })
         .collect();
     format!(
-        "## Language Skills\n\nRead these before writing any {} code:\n\n| File | Purpose |\n|------|---------|\\n{}\n",
+        "## Language Skills\n\nRead these before writing any {} code:\n\n| File | Purpose |\n|------|---------|\n{}\n",
         language,
         rows.join("\n")
     )
@@ -887,6 +938,51 @@ const SKILLS: &[(&str, &str)] = &[
         "review-patch.md",
         include_str!("../../templates/skills/review-patch.md"),
     ),
+    ("debug.md", include_str!("../../templates/skills/debug.md")),
+    (
+        "security-review.md",
+        include_str!("../../templates/skills/security-review.md"),
+    ),
+    (
+        "performance-optimize.md",
+        include_str!("../../templates/skills/performance-optimize.md"),
+    ),
+    (
+        "backend/api-contracts.md",
+        include_str!("../../templates/skills/backend/api-contracts.md"),
+    ),
+    (
+        "backend/database-migrations.md",
+        include_str!("../../templates/skills/backend/database-migrations.md"),
+    ),
+    (
+        "backend/observability.md",
+        include_str!("../../templates/skills/backend/observability.md"),
+    ),
+    (
+        "backend/background-jobs.md",
+        include_str!("../../templates/skills/backend/background-jobs.md"),
+    ),
+    (
+        "frontend/react-patterns.md",
+        include_str!("../../templates/skills/frontend/react-patterns.md"),
+    ),
+    (
+        "frontend/frontend-testing.md",
+        include_str!("../../templates/skills/frontend/frontend-testing.md"),
+    ),
+    (
+        "frontend/accessibility.md",
+        include_str!("../../templates/skills/frontend/accessibility.md"),
+    ),
+    (
+        "frontend/figma-to-ui.md",
+        include_str!("../../templates/skills/frontend/figma-to-ui.md"),
+    ),
+    (
+        "frontend/state-data-fetching.md",
+        include_str!("../../templates/skills/frontend/state-data-fetching.md"),
+    ),
 ];
 
 fn prompt_templates() -> &'static [(&'static str, &'static str)] {
@@ -939,6 +1035,75 @@ mod tests {
         assert!(rendered.contains("`zforge mcp register --agent codex`"));
         assert!(rendered.contains("[mcp_servers.zforge]"));
         assert!(!rendered.contains("{{"));
+    }
+
+    #[test]
+    fn detect_project_recognizes_flutter_pubspec() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("pubspec.yaml"), "name: demo_app\n").unwrap();
+
+        let detected = detect_project(tmp.path());
+
+        assert_eq!(detected.language, "flutter");
+        assert_eq!(detected.test_command, "flutter test");
+        assert_eq!(detected.project_name, "demo_app");
+    }
+
+    #[test]
+    fn flutter_language_skills_are_installed() {
+        let skills = lang_skill_templates("flutter");
+        let names = skills.into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "flutter-patterns.md",
+                "flutter-testing.md",
+                "flutter-ui-patterns.md"
+            ]
+        );
+    }
+
+    #[test]
+    fn ios_language_skills_are_installed() {
+        let skills = lang_skill_templates("ios");
+        let names = skills.into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "ios-patterns.md",
+                "ios-testing.md",
+                "ios-ui-patterns.md",
+                "ios-snapshot-accessibility.md",
+            ]
+        );
+    }
+
+    #[test]
+    fn android_language_skills_are_installed() {
+        let skills = lang_skill_templates("android");
+        let names = skills.into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "android-patterns.md",
+                "android-testing.md",
+                "android-compose-ui.md",
+                "android-instrumented-testing.md",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_lang_skills_section_renders_valid_markdown_table() {
+        let skills = lang_skill_templates("flutter");
+        let section = build_lang_skills_section("flutter", &skills);
+
+        // Header separator must be on its own line, not literal `\n`
+        assert!(!section.contains("\\n"));
+        assert!(section.contains("|------|---------|\n| `.zforge/skills/flutter-patterns.md`"));
     }
 
     #[test]
