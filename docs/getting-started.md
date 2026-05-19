@@ -118,4 +118,9 @@ See [workflow.md](./workflow.md#flows) for details.
 
 - [commands.md](./commands.md) — full command reference
 - [workflow.md](./workflow.md) — pipeline phases explained
+- [flows.md](./flows.md) — when to use fixbug, spike, or docs instead of full
+- [retry.md](./retry.md) — rewinding a phase when output is wrong
+- [memory.md](./memory.md) — how patterns accumulate and get injected
+- [mcp.md](./mcp.md) — MCP tools for AI orchestrators
+- [install-global.md](./install-global.md) — global store and shared vs local mode
 - [opencode.md](./opencode.md) — using zforge with OpenCode

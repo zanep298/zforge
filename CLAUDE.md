@@ -23,10 +23,12 @@ zforge is a single Rust binary (`src/main.rs`) with these modules:
 | `cli/` | One file per subcommand. Each `run()` function loads config, checks state, builds context, dispatches to engine |
 | `prompt/` | `context.rs` assembles `PromptContext` per phase; `engine.rs` renders `.tmpl` files against context |
 | `state/` | `TaskState` + `State` enum — ordered FSM. `Flow` (in `state/flow.rs`) picks which subset of states a task walks. `advance()` consults `flow.next_after(state)`; `require()` guards phase entry |
-| `fs/` | `reader.rs` parses markdown frontmatter; `writer.rs` writes/appends files; `tokens.rs` estimates token counts |
+| `fs/` | `reader.rs` parses markdown frontmatter; `writer.rs` writes/appends files; `tokens.rs` estimates token counts; `scaffold.rs` handles directory scaffolding |
+| `runner/` | `run_with_language()` shells out the test command and parses output into `TestResult`. Used by `verify` |
 | `mcp/` | stdio JSON-RPC 2.0 server. Exposes `task_import`, `get_prompt`, `approve`, `verify`, `ship`, `status` as MCP tools |
 | `config/` | Loads `.zforge/config.yaml`; walks up from cwd to find it |
 | `jira/` | Fetches Jira tickets and extracts task key from URLs |
+| `embedded.rs` | All prompt templates, agent definitions, and skill bundles baked in via `include_str!()`. Fallback when no disk file found; consumed by `init` and `install` |
 
 ### Pipeline state machine
 
@@ -51,7 +53,24 @@ Human approval gates: `testspec` (TestspecDone → TestspecReviewed) and `plan` 
 
 `advance()` only accepts the state immediately after the current one *in this task's flow*. CLI phase commands gate entry through `cli/flow_guard.rs` (`ensure_phase_in_flow` + `ensure_predecessor_complete`). All "Next:" output goes through `TaskState::next_hint()` so the suggested command always matches the active flow. MCP routing uses `mcp::next_cmd_with_flow` for the same reason.
 
-`zforge ship <ID>` (CLI) wraps `code` + `verify`: dispatches the code sub-agent (if state `< Coded`), advances to `Coded`, then runs the test suite. The MCP `ship` tool is the orchestrator-side counterpart — assumes the LLM has already written code and combines the `Coded` advance + `verify` into a single tool call (saves a round trip vs. invoking them separately). Verify itself never calls an LLM — it shells out via `runner::run()`.
+`zforge ship <ID>` (CLI) wraps `code` + `verify`: dispatches the code sub-agent (if state `< Coded`), advances to `Coded`, then runs the test suite. The MCP `ship` tool is the orchestrator-side counterpart — assumes the LLM has already written code and combines the `Coded` advance + `verify` into a single tool call (saves a round trip vs. invoking them separately). Verify itself never calls an LLM — it shells out via `runner::run_with_language()`.
+
+### Retry
+
+`zforge retry <ID> --from <phase>` rewinds a task to before a phase. It:
+1. Prompts for confirmation (bypass with `--yes`)
+2. Backs up affected artifacts to `.zforge/tasks/<ID>/.history/<timestamp>/`
+3. Deletes those artifacts and resets state
+
+Valid phases: `spec`, `testspec`, `plan`, `code`, `verify`, `review`. Each phase clears all artifacts from that phase onward.
+
+### Global store and `install`
+
+`zforge install` populates `~/.zforge/` with embedded templates, agent definitions, and skills. Run once per machine; rerun after upgrading to refresh. `zforge init` defaults to symlinking/referencing `~/.zforge/` (shared mode). Pass `--local` to copy everything into the project instead — for forks needing per-project customization.
+
+### Multi-agent support
+
+`zforge init --agent <target>` and `zforge mcp register --agent <target>` support `claude` (default), `codex`, `opencode`, or `all`. Agent detection in `cli/init/detect.rs` also auto-detects project language (Rust, Go, Flutter, etc.) to select appropriate skill bundles.
 
 ### Prompt / template system
 
@@ -61,11 +80,11 @@ Memory files (`.zforge/memory/patterns.md`, `anti-patterns.md`, `domain-glossary
 
 ### `zforge init` scaffolding
 
-Templates are embedded in the binary via `include_str!()` in `cli/init.rs`. Init writes `.zforge/`, `CLAUDE.md`, `.mcp.json`, `.claude/settings.json`, `.claude/agents/` (symlinks → `.zforge/agents/`), and `.claude/rules/` (copies from `~/.claude/rules/` or bundled fallbacks).
+Templates are embedded via `embedded.rs`. Init writes `.zforge/`, `CLAUDE.md`, `.mcp.json`, `.claude/settings.json`, `.claude/agents/` (symlinks → `.zforge/agents/`), and `.claude/rules/` (copies from `~/.claude/rules/` or bundled fallbacks).
 
 ### MCP server
 
-`zforge mcp` runs as a stdio JSON-RPC server. It delegates directly to the same `cli::*` functions the CLI uses — no separate code paths. Registered via project-local `.mcp.json` so Claude Code picks it up automatically.
+`zforge mcp` runs as a stdio JSON-RPC server. It delegates directly to the same `cli::*` functions the CLI uses — no separate code paths. Registered via project-local `.mcp.json` so Claude Code picks it up automatically. `zforge mcp register` writes the registration into the agent's config (supports Claude Code, Codex, OpenCode).
 
 ## Key invariants
 
@@ -74,3 +93,4 @@ Templates are embedded in the binary via `include_str!()` in `cli/init.rs`. Init
 - All paths go through `Config::resolve_path()` — always absolute, always relative to the project root (parent of `.zforge/`), never to cwd.
 - Memory is injected only via `/file` refs in `context_files` — there are no inline `{{patterns}}` / `{{anti_patterns}}` template variables. Variable names listed in `VAR_NAMES` (`engine.rs`) must match arms in `get_var()`.
 - `approve.rs` handles testspec and plan approvals. Review approval (`zforge review <ID> --done`) is handled in `review.rs` and triggers memory extraction.
+- `embedded.rs` is the single source of truth for all bundled assets. `cli::install` and `cli::init` both consume it; `prompt::engine` falls back to it when no disk `.tmpl` is found.

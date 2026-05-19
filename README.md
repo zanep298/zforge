@@ -270,4 +270,9 @@ Agents that are not installed are skipped, not failed.
 | [docs/getting-started.md](docs/getting-started.md) | Install, init, first task |
 | [docs/workflow.md](docs/workflow.md) | Pipeline phases explained |
 | [docs/commands.md](docs/commands.md) | Full command reference |
+| [docs/flows.md](docs/flows.md) | Flow presets: full, fixbug, spike, docs |
+| [docs/retry.md](docs/retry.md) | Rewinding and redoing a phase |
+| [docs/memory.md](docs/memory.md) | How pattern memory accumulates across tasks |
+| [docs/mcp.md](docs/mcp.md) | MCP server tools and orchestrator integration |
+| [docs/install-global.md](docs/install-global.md) | Global store, shared vs local mode |
 | [docs/opencode.md](docs/opencode.md) | Using zforge with OpenCode |
