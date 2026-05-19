@@ -1,6 +1,6 @@
 use super::context::PromptContext;
 use crate::embedded;
-use crate::fs::tokens;
+use crate::fs::{reader, tokens};
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
@@ -189,9 +189,14 @@ impl Engine {
         println!("{}", sep.blue());
         println!();
 
-        let status = std::process::Command::new(claude_bin)
-            .arg("-p")
-            .arg(&rendered)
+        let mut cmd = std::process::Command::new(claude_bin);
+        cmd.arg("-p").arg(&rendered);
+        if let Some(model) =
+            reader::agent_model_for_dispatch(&self.agents_dir, "claude", template_name)
+        {
+            cmd.arg("--model").arg(model);
+        }
+        let status = cmd
             .status()
             .with_context(|| format!("failed to launch claude at {}", claude_bin.display()))?;
 
@@ -237,11 +242,14 @@ impl Engine {
         println!("{}", sep.blue());
         println!();
 
-        let status = std::process::Command::new(opencode_bin)
-            .arg("run")
-            .arg(&rendered)
-            .arg("--agent")
-            .arg(agent_name)
+        let mut cmd = std::process::Command::new(opencode_bin);
+        cmd.arg("run").arg(&rendered).arg("--agent").arg(agent_name);
+        if let Some(model) =
+            reader::agent_model_for_dispatch(&self.agents_dir, "opencode", template_name)
+        {
+            cmd.arg("--model").arg(model);
+        }
+        let status = cmd
             .status()
             .with_context(|| format!("failed to launch opencode at {}", opencode_bin.display()))?;
 

@@ -68,23 +68,60 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
 }
 
 pub fn agent_model(agents_dir: &Path, phase: &str) -> String {
+    if let Some(models) = crate::config::load_models() {
+        if let Some(m) = models.for_assistant("claude", phase) {
+            return m.to_string();
+        }
+    }
     let path = agents_dir.join(format!("{}-agent.md", phase));
     MarkdownFile::read(&path)
         .ok()
-        .and_then(|md| {
-            // Prefer codex_model if present, else use model
-            md.get_str("codex_model")
-                .or_else(|| md.get_str("model"))
-                .map(String::from)
-        })
+        .and_then(|md| md.get_str("model").map(String::from))
         .unwrap_or_else(|| "unknown".to_string())
 }
 
 pub fn agent_codex_model(agents_dir: &Path, phase: &str) -> Option<String> {
+    if let Some(models) = crate::config::load_models() {
+        if let Some(m) = models.for_assistant("codex", phase) {
+            return Some(m.to_string());
+        }
+    }
     let path = agents_dir.join(format!("{}-agent.md", phase));
     MarkdownFile::read(&path)
         .ok()
         .and_then(|md| md.get_str("codex_model").map(String::from))
+}
+
+pub fn agent_opencode_model(agents_dir: &Path, phase: &str) -> Option<String> {
+    if let Some(models) = crate::config::load_models() {
+        if let Some(m) = models.for_assistant("opencode", phase) {
+            return Some(m.to_string());
+        }
+    }
+    let path = agents_dir.join(format!("{}-agent.md", phase));
+    MarkdownFile::read(&path).ok().and_then(|md| {
+        md.get_str("opencode_model")
+            .or_else(|| md.get_str("model"))
+            .map(String::from)
+    })
+}
+
+/// Resolve the model to pass as `--model` when dispatching to an assistant.
+/// Routes through the per-assistant reader so all callers share one path.
+pub fn agent_model_for_dispatch(agents_dir: &Path, assistant: &str, phase: &str) -> Option<String> {
+    match assistant {
+        "claude" => {
+            let m = agent_model(agents_dir, phase);
+            if m == "unknown" {
+                None
+            } else {
+                Some(m)
+            }
+        }
+        "codex" => agent_codex_model(agents_dir, phase),
+        "opencode" => agent_opencode_model(agents_dir, phase),
+        _ => None,
+    }
 }
 
 pub fn artifact_exists(tasks_dir: &Path, task_id: &str, artifact: &str) -> bool {

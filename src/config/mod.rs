@@ -79,7 +79,7 @@ fn default_root_dir() -> PathBuf {
 }
 
 fn default_model() -> String {
-    "claude-sonnet-4-5".to_string()
+    "claude-sonnet-4-6".to_string()
 }
 
 fn default_tasks_path() -> PathBuf {
@@ -201,6 +201,68 @@ fn expand_tilde(p: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Per-phase model selection for one coding assistant.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct PhaseModels {
+    pub spec: Option<String>,
+    pub testspec: Option<String>,
+    pub plan: Option<String>,
+    pub code: Option<String>,
+    pub review: Option<String>,
+}
+
+impl PhaseModels {
+    pub fn for_phase(&self, phase: &str) -> Option<&str> {
+        match phase {
+            "spec" => self.spec.as_deref(),
+            "testspec" => self.testspec.as_deref(),
+            "plan" => self.plan.as_deref(),
+            "code" => self.code.as_deref(),
+            "review" => self.review.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+/// Model configuration loaded from `.zforge/models.yaml`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ModelsConfig {
+    #[serde(default)]
+    pub claude: PhaseModels,
+    #[serde(default)]
+    pub codex: PhaseModels,
+    #[serde(default)]
+    pub opencode: PhaseModels,
+}
+
+impl ModelsConfig {
+    pub fn for_assistant(&self, assistant: &str, phase: &str) -> Option<&str> {
+        match assistant {
+            "claude" => self.claude.for_phase(phase),
+            "codex" => self.codex.for_phase(phase),
+            "opencode" => self.opencode.for_phase(phase),
+            _ => None,
+        }
+    }
+}
+
+/// Load `.zforge/models.yaml` from the project found by walking up from cwd.
+/// Returns `None` if the file doesn't exist — callers fall back to agent
+/// frontmatter defaults. Emits a stderr warning on parse error so the user
+/// knows their config is being ignored.
+pub fn load_models() -> Option<ModelsConfig> {
+    let config_path = Config::find_config_file()?;
+    let models_path = config_path.parent()?.join("models.yaml");
+    let content = std::fs::read_to_string(&models_path).ok()?;
+    match serde_yaml::from_str::<ModelsConfig>(&content) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!("warning: failed to parse {}: {e}", models_path.display());
+            None
+        }
+    }
+}
+
 pub fn load() -> Result<Config> {
     let path = Config::find_config_file().ok_or(ConfigError::NotFound)?;
     load_from(&path)
@@ -262,7 +324,7 @@ mod tests {
         let cfg = load_from(&path).unwrap();
         assert_eq!(cfg.project.language, "rust");
         assert_eq!(cfg.project.test_command, "cargo test");
-        assert_eq!(cfg.opencode.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.opencode.model, "claude-sonnet-4-6");
         assert!(!cfg.review.auto_approve);
     }
 

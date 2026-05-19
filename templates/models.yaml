@@ -1,0 +1,24 @@
+# Model selection per coding assistant and pipeline phase.
+# Edit to change which model runs each phase.
+# Values here take precedence over agent frontmatter defaults.
+
+claude:
+  spec: claude-haiku-4-5-20251001
+  testspec: claude-haiku-4-5-20251001
+  plan: claude-sonnet-4-6
+  code: claude-sonnet-4-6
+  review: claude-sonnet-4-6
+
+codex:
+  spec: gpt-5.4-mini
+  testspec: gpt-5.4-mini
+  plan: gpt-5.4
+  code: gpt-5.3-codex
+  review: gpt-5.4
+
+opencode:
+  spec: claude-haiku-4-5-20251001
+  testspec: claude-haiku-4-5-20251001
+  plan: claude-sonnet-4-6
+  code: claude-sonnet-4-6
+  review: claude-sonnet-4-6

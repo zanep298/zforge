@@ -12,7 +12,7 @@ const DEFAULT_CONFIG: &str = r#"project:
   test_command: "cargo test"
   root_dir: "."
 opencode:
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-4-6"
   context_files: []
 paths:
   tasks: "./.zforge/tasks"
@@ -32,7 +32,7 @@ const SHARED_CONFIG: &str = r#"project:
   test_command: "cargo test"
   root_dir: "."
 opencode:
-  model: "claude-sonnet-4-5"
+  model: "claude-sonnet-4-6"
   context_files: []
 paths:
   tasks: "./.zforge/tasks"
@@ -168,6 +168,14 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
     let created = write_safe(&zforge_dir.join("config.yaml"), &config_content, force)?;
     stats.record(created);
     print_file_status(created, ".zforge/config.yaml");
+
+    let created = write_safe(
+        &zforge_dir.join("models.yaml"),
+        include_str!("../../templates/models.yaml"),
+        force,
+    )?;
+    stats.record(created);
+    print_file_status(created, ".zforge/models.yaml");
 
     let lang_skills = lang_skill_templates(&detected.language);
     let vars = Vars {
