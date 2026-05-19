@@ -43,6 +43,9 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Download and install the latest zforge release from GitHub.
+    /// Replaces the current binary in-place. No brew update required.
+    Update,
     Task {
         #[command(subcommand)]
         action: TaskAction,
@@ -169,6 +172,7 @@ fn main() -> Result<()> {
             cli::init::run(parsed, force, local)
         }
         Commands::Install { force } => cli::install::run(force),
+        Commands::Update => cli::update::run(),
         Commands::Task { action } => match action {
             TaskAction::Import {
                 task_id,
