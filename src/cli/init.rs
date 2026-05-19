@@ -381,7 +381,7 @@ fn scaffold_claude(
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
     let (agent_count, target_label) =
-        symlink_agents_into(zforge_dir, &claude_agents_dir, global_store)?;
+        symlink_agents_into(zforge_dir, &claude_agents_dir, global_store, force)?;
     println!(
         "{} .claude/agents/ — {} symlinks → {}",
         label(agent_count > 0),
@@ -429,7 +429,7 @@ fn scaffold_codex(
     let codex_agents_dir = codex_dir.join("agents");
     std::fs::create_dir_all(&codex_agents_dir)?;
     let (codex_agent_count, target_label) =
-        symlink_agents_into(zforge_dir, &codex_agents_dir, global_store)?;
+        symlink_agents_into(zforge_dir, &codex_agents_dir, global_store, force)?;
     println!(
         "{} .codex/agents/ — {} symlinks → {}",
         label(codex_agent_count > 0),
@@ -501,7 +501,7 @@ fn scaffold_opencode(
     let opencode_agents_dir = opencode_dir.join("agents");
     std::fs::create_dir_all(&opencode_agents_dir)?;
     let (opencode_agent_count, target_label) =
-        symlink_agents_into(zforge_dir, &opencode_agents_dir, global_store)?;
+        symlink_agents_into(zforge_dir, &opencode_agents_dir, global_store, force)?;
     println!(
         "{} .opencode/agents/ — {} symlinks → {}",
         label(opencode_agent_count > 0),
@@ -600,12 +600,17 @@ const AGENT_NAMES: [&str; 5] = [
 ///
 /// `link_dir` is expected at depth 2 from the project root (e.g. `.claude/agents/`,
 /// `.codex/agents/`) so the relative target `../../.zforge/agents/` resolves correctly.
-fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path) -> Result<usize> {
+fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path, force: bool) -> Result<usize> {
     let mut count = 0;
     for name in AGENT_NAMES {
         let link = link_dir.join(name);
-        if link.exists() || link.symlink_metadata().is_ok() {
-            continue; // already linked or file exists
+        let exists = link.exists() || link.symlink_metadata().is_ok();
+        if exists {
+            if force {
+                std::fs::remove_file(&link)?;
+            } else {
+                continue;
+            }
         }
         let target = Path::new("../../.zforge/agents").join(name);
         #[cfg(unix)]
@@ -626,12 +631,17 @@ fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path) -> Result<u
 /// Create symlinks in `link_dir` pointing at the global agent store
 /// (`~/.zforge/agents/`). Used by `init --shared` so multiple projects share
 /// one set of agent definitions.
-fn symlink_global_agents(global_agents_dir: &Path, link_dir: &Path) -> Result<usize> {
+fn symlink_global_agents(global_agents_dir: &Path, link_dir: &Path, force: bool) -> Result<usize> {
     let mut count = 0;
     for name in AGENT_NAMES {
         let link = link_dir.join(name);
-        if link.exists() || link.symlink_metadata().is_ok() {
-            continue;
+        let exists = link.exists() || link.symlink_metadata().is_ok();
+        if exists {
+            if force {
+                std::fs::remove_file(&link)?;
+            } else {
+                continue;
+            }
         }
         let target = global_agents_dir.join(name);
         #[cfg(unix)]
@@ -655,10 +665,11 @@ fn symlink_agents_into(
     zforge_dir: &Path,
     link_dir: &Path,
     global_store: Option<&Path>,
+    force: bool,
 ) -> Result<(usize, String)> {
     if let Some(global) = global_store {
         let agents = global.join("agents");
-        let count = symlink_global_agents(&agents, link_dir)?;
+        let count = symlink_global_agents(&agents, link_dir, force)?;
         let label = match dirs::home_dir() {
             Some(home) => match agents.strip_prefix(&home) {
                 Ok(rel) => format!("~/{}", rel.display()),
@@ -668,7 +679,7 @@ fn symlink_agents_into(
         };
         Ok((count, label))
     } else {
-        let count = symlink_zforge_agents(&zforge_dir.join("agents"), link_dir)?;
+        let count = symlink_zforge_agents(&zforge_dir.join("agents"), link_dir, force)?;
         Ok((count, ".zforge/agents/".to_string()))
     }
 }
@@ -769,7 +780,7 @@ mod tests {
         let codex_agents = root.join(".codex").join("agents");
         std::fs::create_dir_all(&codex_agents).unwrap();
 
-        let count = symlink_zforge_agents(&zforge_agents, &codex_agents).unwrap();
+        let count = symlink_zforge_agents(&zforge_agents, &codex_agents, false).unwrap();
         assert_eq!(count, 5);
 
         // Relative target resolves from .codex/agents/ back into .zforge/agents/
@@ -804,7 +815,7 @@ mod tests {
         // Pre-existing user-edited file — must be left alone
         std::fs::write(codex_agents.join("spec-agent.md"), "preexisting\n").unwrap();
 
-        let count = symlink_zforge_agents(&zforge_agents, &codex_agents).unwrap();
+        let count = symlink_zforge_agents(&zforge_agents, &codex_agents, false).unwrap();
         assert_eq!(
             count, 4,
             "should symlink 4 missing agents, skip the existing one"
