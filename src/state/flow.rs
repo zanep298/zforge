@@ -145,10 +145,7 @@ mod tests {
     #[test]
     fn spike_has_no_tests() {
         let s = Flow::Spike.states();
-        assert_eq!(
-            s,
-            &[State::Imported, State::SpecDone, State::Coded][..]
-        );
+        assert_eq!(s, &[State::Imported, State::SpecDone, State::Coded][..]);
     }
 
     #[test]

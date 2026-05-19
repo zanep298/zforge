@@ -497,7 +497,9 @@ fn next_cmd_with_flow(flow: Flow, phase: &str, task_id: &str) -> String {
         (_, Some(State::Planned)) => format!("get_prompt(phase=\"plan\", task_id=\"{task_id}\")"),
         (_, Some(State::Coded)) => format!("get_prompt(phase=\"code\", task_id=\"{task_id}\")"),
         (_, Some(State::Verified)) => format!("verify(task_id=\"{task_id}\")"),
-        (_, Some(State::Reviewed)) => format!("get_prompt(phase=\"review\", task_id=\"{task_id}\")"),
+        (_, Some(State::Reviewed)) => {
+            format!("get_prompt(phase=\"review\", task_id=\"{task_id}\")")
+        }
         _ => String::new(),
     }
 }

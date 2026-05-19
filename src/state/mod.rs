@@ -63,7 +63,6 @@ impl State {
             State::Reviewed => "task complete",
         }
     }
-
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -108,8 +107,7 @@ impl TaskState {
     /// flow, e.g. `"zf testspec TASK-1"`. Used by `status` and any CLI
     /// command that prints "Next: …".
     pub fn next_hint(&self) -> String {
-        self.flow
-            .next_dispatch_command(&self.state, &self.task_id)
+        self.flow.next_dispatch_command(&self.state, &self.task_id)
     }
 
     pub fn load(tasks_dir: &Path, task_id: &str) -> Result<Self> {
