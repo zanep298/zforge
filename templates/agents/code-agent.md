@@ -22,6 +22,7 @@ pass with the minimal working change. Summarize every decision made during imple
 
 1. Production code changes per the plan
 2. Test code matching each case in testspec.md
+3. `.zforge/tasks/{{task_id}}/implementation-notes.md` — running log of decisions not in the spec, plan deviations, tradeoffs, and anything the reviewer should know. Append as you go.
 
 ## Rules
 
