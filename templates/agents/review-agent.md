@@ -17,6 +17,7 @@ You review only — you do not implement fixes.
 - `.zforge/tasks/{{task_id}}/testspec.md`
 - `.zforge/tasks/{{task_id}}/plan.md`
 - `.zforge/tasks/{{task_id}}/verify.md` — test run results
+- `.zforge/tasks/{{task_id}}/implementation-notes.md` — decisions, plan deviations, and tradeoffs recorded during coding (if present)
 
 ## Output
 

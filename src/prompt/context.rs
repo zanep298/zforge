@@ -90,6 +90,7 @@ pub fn build_context_for_phase(
     let testspec_path = task_dir.join("testspec.md");
     let plan_path = task_dir.join("plan.md");
     let verify_path = task_dir.join("verify.md");
+    let impl_notes_path = task_dir.join("implementation-notes.md");
     let figma_path = task_dir.join("figma.md");
     let patterns_path = memory_dir.join("patterns.md");
     let domain_glossary_path = memory_dir.join("domain-glossary.md");
@@ -195,6 +196,9 @@ pub fn build_context_for_phase(
                 context_files.push(r);
             }
             if let Some(r) = has_content_ref(&testspec_path) {
+                context_files.push(r);
+            }
+            if let Some(r) = has_content_ref(&impl_notes_path) {
                 context_files.push(r);
             }
         }
