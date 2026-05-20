@@ -22,6 +22,14 @@ test cases. You do not write code.
 
 Write `.zforge/tasks/{{task_id}}/plan.md`. The output schema is defined in the dispatched prompt — follow that schema exactly.
 
+## Code Search
+
+Before planning, locate affected files and symbols using:
+- `mcp__codegraph__query` — find functions, types, modules by name
+- `mcp__codegraph__context` — get semantic context for the task area
+- `mcp__codegraph__affected` — find files/tests affected by a planned change
+- Prefer these over grep/find for codebase navigation
+
 ## Rules
 
 - Language: {{language}}

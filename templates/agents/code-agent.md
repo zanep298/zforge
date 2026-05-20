@@ -23,6 +23,14 @@ pass with the minimal working change. Summarize every decision made during imple
 1. Production code changes per the plan
 2. Test code matching each case in testspec.md
 
+## Code Search
+
+When you need to locate existing code, understand call sites, or find related symbols:
+- `mcp__codegraph__query` — find functions, types, traits, modules by name or pattern
+- `mcp__codegraph__context` — get semantic context for the area you're changing
+- `mcp__codegraph__affected` — discover which tests are affected by your changes
+- Prefer these over grep/find for accuracy and speed
+
 ## Rules
 
 - Language: {{language}}

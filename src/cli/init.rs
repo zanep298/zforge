@@ -55,7 +55,11 @@ const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__zforge__get_prompt",
       "mcp__zforge__approve",
       "mcp__zforge__verify",
-      "mcp__zforge__status"
+      "mcp__zforge__status",
+      "mcp__codegraph__query",
+      "mcp__codegraph__context",
+      "mcp__codegraph__files",
+      "mcp__codegraph__affected"
     ]
   }
 }
@@ -309,6 +313,8 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
         )?;
     }
 
+    setup_codegraph(&cwd);
+
     println!();
     println!(
         "  {} created, {} skipped (already existed)",
@@ -345,6 +351,137 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+// --- codegraph setup ---
+
+fn codegraph_is_installed() -> bool {
+    std::process::Command::new("codegraph")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn setup_codegraph(cwd: &Path) {
+    println!();
+    println!("Setting up codegraph…");
+
+    if !codegraph_is_installed() {
+        println!("  Installing @colbymchenry/codegraph via npm…");
+        let status = std::process::Command::new("npm")
+            .args(["install", "-g", "@colbymchenry/codegraph"])
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                println!("{} codegraph installed", "✓".green());
+            }
+            Ok(s) => {
+                eprintln!(
+                    "  {} npm install exited with {s} — skipping codegraph init",
+                    "⚠".yellow()
+                );
+                return;
+            }
+            Err(e) => {
+                eprintln!(
+                    "  {} npm not found ({e}) — skipping codegraph init",
+                    "⚠".yellow()
+                );
+                return;
+            }
+        }
+    } else {
+        println!("{} codegraph already installed", "–".dimmed());
+    }
+
+    let status = std::process::Command::new("codegraph")
+        .arg("init")
+        .current_dir(cwd)
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("{} codegraph init — .codegraph/ created", "✓".green());
+        }
+        Ok(s) => {
+            eprintln!("  {} codegraph init exited with {s}", "⚠".yellow());
+            return;
+        }
+        Err(e) => {
+            eprintln!("  {} codegraph init failed: {e}", "⚠".yellow());
+            return;
+        }
+    }
+
+    println!("  Indexing codebase…");
+    let status = std::process::Command::new("codegraph")
+        .args(["index", "--quiet"])
+        .current_dir(cwd)
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("{} codegraph index — codebase indexed", "✓".green());
+        }
+        Ok(s) => {
+            eprintln!("  {} codegraph index exited with {s}", "⚠".yellow());
+        }
+        Err(e) => {
+            eprintln!("  {} codegraph index failed: {e}", "⚠".yellow());
+        }
+    }
+
+    register_codegraph_mcp(cwd);
+}
+
+fn register_codegraph_mcp(cwd: &Path) {
+    let mcp_path = cwd.join(".mcp.json");
+    let mut root: serde_json::Value = if mcp_path.exists() {
+        match std::fs::read_to_string(&mcp_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+        {
+            Some(v) => v,
+            None => serde_json::json!({}),
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    let servers = root
+        .as_object_mut()
+        .and_then(|o| {
+            if !o.contains_key("mcpServers") {
+                o.insert(
+                    "mcpServers".to_string(),
+                    serde_json::json!({}),
+                );
+            }
+            o.get_mut("mcpServers")?.as_object_mut()
+        });
+
+    if let Some(servers) = servers {
+        if servers.contains_key("codegraph") {
+            println!("{} .mcp.json — codegraph already registered", "–".dimmed());
+            return;
+        }
+        servers.insert(
+            "codegraph".to_string(),
+            serde_json::json!({
+                "command": "codegraph",
+                "args": ["serve", "--mcp"]
+            }),
+        );
+    }
+
+    match serde_json::to_string_pretty(&root) {
+        Ok(content) => match std::fs::write(&mcp_path, content + "\n") {
+            Ok(_) => println!("{} .mcp.json — codegraph MCP registered", "✓".green()),
+            Err(e) => eprintln!("  {} write .mcp.json failed: {e}", "⚠".yellow()),
+        },
+        Err(e) => eprintln!("  {} serialize .mcp.json failed: {e}", "⚠".yellow()),
+    }
 }
 
 // --- per-agent scaffolders ---
