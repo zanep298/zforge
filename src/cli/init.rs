@@ -313,6 +313,7 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
         )?;
     }
 
+    setup_rtk();
     setup_codegraph(&cwd);
 
     println!();
@@ -353,6 +354,11 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
     Ok(())
 }
 
+// --- rtk setup ---
+
+fn rtk_is_installed() -> bool {
+    std::process::Command::new("rtk")
+
 // --- codegraph setup ---
 
 fn codegraph_is_installed() -> bool {
@@ -363,6 +369,44 @@ fn codegraph_is_installed() -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn setup_rtk() {
+    println!();
+    println!("Setting up rtk…");
+
+    if !rtk_is_installed() {
+        // Try brew first, fall back to curl install script
+        let brew = std::process::Command::new("brew")
+            .args(["install", "rtk"])
+            .status();
+        match brew {
+            Ok(s) if s.success() => println!("{} rtk installed via brew", "✓".green()),
+            _ => {
+                println!("  brew unavailable, trying curl installer…");
+                let curl = std::process::Command::new("sh")
+                    .args(["-c", "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"])
+                    .status();
+                match curl {
+                    Ok(s) if s.success() => println!("{} rtk installed via curl", "✓".green()),
+                    Ok(s) => { eprintln!("  {} rtk install exited with {s}", "⚠".yellow()); return; }
+                    Err(e) => { eprintln!("  {} rtk install failed: {e}", "⚠".yellow()); return; }
+                }
+            }
+        }
+    } else {
+        println!("{} rtk already installed", "–".dimmed());
+    }
+
+    // rtk init -g wires Claude Code hooks globally
+    let init = std::process::Command::new("rtk")
+        .args(["init", "-g"])
+        .status();
+    match init {
+        Ok(s) if s.success() => println!("{} rtk init -g — Claude Code hooks configured", "✓".green()),
+        Ok(s) => eprintln!("  {} rtk init exited with {s}", "⚠".yellow()),
+        Err(e) => eprintln!("  {} rtk init failed: {e}", "⚠".yellow()),
+    }
 }
 
 fn setup_codegraph(cwd: &Path) {
