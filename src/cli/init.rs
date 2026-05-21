@@ -580,7 +580,60 @@ fn scaffold_claude(
         rule_count
     );
 
+    // caveman — terse output mode (saves ~65% output tokens)
+    ensure_caveman();
+
     Ok(())
+}
+
+fn ensure_caveman() {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let activate = home.join(".claude").join("hooks").join("caveman-activate.js");
+    if activate.exists() {
+        println!("{} caveman already installed", "–".dimmed());
+        return;
+    }
+
+    println!();
+    println!("Installing caveman (terse output mode)…");
+
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "irm https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1 | iex",
+        ])
+        .status();
+
+    #[cfg(not(target_os = "windows"))]
+    let status = std::process::Command::new("bash")
+        .arg("-c")
+        .arg("curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash")
+        .status();
+
+    let manual = if cfg!(target_os = "windows") {
+        "irm https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1 | iex"
+    } else {
+        "curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash"
+    };
+
+    match status {
+        Ok(s) if s.success() => {
+            println!("{} caveman installed", "✓".green());
+        }
+        Ok(s) => {
+            eprintln!("  {} caveman install exited {s}. Run manually: {manual}", "⚠".yellow());
+        }
+        Err(e) => {
+            eprintln!("  {} caveman install failed: {e}. Run manually: {manual}", "⚠".yellow());
+        }
+    }
 }
 
 fn scaffold_codex(
