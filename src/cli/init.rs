@@ -358,6 +358,13 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
 
 fn rtk_is_installed() -> bool {
     std::process::Command::new("rtk")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
 // --- codegraph setup ---
 
