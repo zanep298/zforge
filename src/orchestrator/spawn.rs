@@ -114,7 +114,12 @@ pub fn spawn_agent(spec: &AgentSpec, prompt: &str, timeout_secs: u64) -> Result<
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
+    // Unix-gated: tests below shell out to `sh` and `sleep`, which are not
+    // available on stock Windows runners. The production code is
+    // cross-platform; verifying it on Windows needs a separate suite
+    // using `cmd /c timeout` etc.
     use super::*;
 
     #[test]

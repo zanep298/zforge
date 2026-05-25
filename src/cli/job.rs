@@ -258,50 +258,48 @@ fn cancel(a: CancelArgs) -> Result<()> {
     };
 
     if pid_alive(pid) {
-        // Worker was spawned with `process_group(0)` (see job::spawn) so its
-        // PID is also its process-group leader. Child agent processes
-        // (claude / codex) inherit the same pgrp by default. `kill(-pid, ...)`
-        // signals every process in the group — worker + all child agents.
-        // Without this, cancelling a worker leaves the claude subprocess
-        // running as an orphan, burning API quota until it finishes.
-        send_pgroup_signal(pid, libc::SIGTERM);
-        let grace = Duration::from_secs(5);
-        let start = Instant::now();
-        while pid_alive(pid) && start.elapsed() < grace {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        if pid_alive(pid) {
-            send_pgroup_signal(pid, libc::SIGKILL);
-        }
+        terminate_worker_gracefully(pid);
     }
     mark_cancelled(&config, &a.job_id)?;
     println!("cancelled {}", a.job_id);
     Ok(())
 }
 
+/// SIGTERM the worker's process group, wait up to 5s, escalate to SIGKILL
+/// if still alive. Worker was spawned with `process_group(0)` (see
+/// `job::spawn`) so its PID is also its process-group leader. `kill(-pid,
+/// ...)` signals every process in the group — worker + all child agents
+/// (claude / codex / etc.) — preventing orphan LLM subprocesses from
+/// outliving cancel.
 #[cfg(unix)]
-#[allow(dead_code)]
-fn send_signal(pid: u32, sig: i32) {
-    // SAFETY: `kill` is async-signal-safe and side-effect-free beyond the
-    // intended signal delivery. ESRCH (already dead) is harmless.
+fn terminate_worker_gracefully(pid: u32) {
+    // SAFETY: `kill` is async-signal-safe. Negative pid is the documented
+    // group-signal form in POSIX `kill(2)`. ESRCH (already dead) is harmless.
     unsafe {
-        libc::kill(pid as i32, sig);
+        libc::kill(-(pid as i32), libc::SIGTERM);
+    }
+    let grace = Duration::from_secs(5);
+    let start = Instant::now();
+    while pid_alive(pid) && start.elapsed() < grace {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if pid_alive(pid) {
+        // SAFETY: same as above.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
     }
 }
 
-/// Signal every process in the group whose leader is `pgid`. Negative arg
-/// to `kill(2)` selects a process group. zforge workers always start a new
-/// group via `process_group(0)`, so the worker's PID == its pgid.
-#[cfg(unix)]
-fn send_pgroup_signal(pgid: u32, sig: i32) {
-    // SAFETY: same guarantee as `kill(pid, sig)`. Negative pid is the
-    // documented group-signal form in POSIX `kill(2)`.
-    unsafe {
-        libc::kill(-(pgid as i32), sig);
-    }
+/// Windows stub. Job-cancel semantics on Windows would need
+/// `TerminateProcess` via winapi, or a Win32 Job Object that auto-kills
+/// children. Track in a follow-up. Until then, cancel is best-effort on
+/// Windows: the registry entry flips to `cancelled` but the worker
+/// subprocess is not actually killed.
+#[cfg(not(unix))]
+fn terminate_worker_gracefully(_pid: u32) {
+    eprintln!(
+        "warning: cancel on Windows does not yet terminate the worker — \
+         mark-only. Track in zforge issue tracker."
+    );
 }
-
-#[cfg(not(unix))]
-fn send_signal(_pid: u32, _sig: i32) {}
-#[cfg(not(unix))]
-fn send_pgroup_signal(_pgid: u32, _sig: i32) {}

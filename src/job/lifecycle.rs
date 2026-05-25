@@ -92,8 +92,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn pid_alive_false_for_reaped_pid() {
-        // Spawn /bin/true (or equivalent), wait, then check.
+        // Spawn /bin/true (Unix-only), wait, then check. Windows doesn't
+        // ship a `true` binary; this test is gated to Unix.
         let mut child = std::process::Command::new("true")
             .spawn()
             .expect("spawn true");
