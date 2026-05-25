@@ -224,40 +224,100 @@ impl PhaseModels {
     }
 }
 
-/// Model configuration loaded from `.zforge/models.yaml`.
+/// Model configuration loaded from `models.yaml`. Top-level YAML keys are
+/// agent names (e.g. `claude`, `codex`, `opencode`, `agy`, or any custom name
+/// the user adds). Backward-compatible with the previous fixed-field shape:
+/// existing YAML files with `claude:`, `codex:`, `opencode:` keys parse
+/// without change.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ModelsConfig {
-    #[serde(default)]
-    pub claude: PhaseModels,
-    #[serde(default)]
-    pub codex: PhaseModels,
-    #[serde(default)]
-    pub opencode: PhaseModels,
+    #[serde(flatten)]
+    pub agents: std::collections::BTreeMap<String, PhaseModels>,
 }
 
 impl ModelsConfig {
     pub fn for_assistant(&self, assistant: &str, phase: &str) -> Option<&str> {
-        match assistant {
-            "claude" => self.claude.for_phase(phase),
-            "codex" => self.codex.for_phase(phase),
-            "opencode" => self.opencode.for_phase(phase),
-            _ => None,
+        self.agents.get(assistant)?.for_phase(phase)
+    }
+
+    /// Overlay `top` onto `self` — every `Some` field in `top` replaces the
+    /// corresponding field in `self`. Used to layer project-local
+    /// `.zforge/models.yaml` on top of global `~/.zforge/models.yaml`.
+    pub fn overlay(mut self, top: ModelsConfig) -> Self {
+        for (agent, top_phases) in top.agents {
+            let base = self.agents.entry(agent).or_default();
+            overlay_phases(base, top_phases);
         }
+        self
     }
 }
 
-/// Load `.zforge/models.yaml` from the project found by walking up from cwd.
-/// Returns `None` if the file doesn't exist — callers fall back to agent
-/// frontmatter defaults. Emits a stderr warning on parse error so the user
-/// knows their config is being ignored.
+fn overlay_phases(base: &mut PhaseModels, top: PhaseModels) {
+    if top.spec.is_some() {
+        base.spec = top.spec;
+    }
+    if top.testspec.is_some() {
+        base.testspec = top.testspec;
+    }
+    if top.plan.is_some() {
+        base.plan = top.plan;
+    }
+    if top.code.is_some() {
+        base.code = top.code;
+    }
+    if top.review.is_some() {
+        base.review = top.review;
+    }
+}
+
+/// Resolve `models.yaml` with two-layer precedence: project-local overrides
+/// global, per (agent, phase) field. Both layers optional.
+///
+/// - Global: `$ZFORGE_HOME/models.yaml` (default `~/.zforge/models.yaml`)
+/// - Local: `<project>/.zforge/models.yaml`
+///
+/// Returns `None` only when neither file exists. Parse errors on either
+/// layer emit a stderr warning and that layer is skipped — the other layer
+/// still wins.
 pub fn load_models() -> Option<ModelsConfig> {
-    let config_path = Config::find_config_file()?;
-    let models_path = config_path.parent()?.join("models.yaml");
-    let content = std::fs::read_to_string(&models_path).ok()?;
+    let local_path = Config::find_config_file()
+        .and_then(|p| p.parent().map(|d| d.join("models.yaml")));
+    load_models_layered(local_path.as_deref())
+}
+
+/// Same as [`load_models`] but uses an explicit `project_root` for the local
+/// layer instead of walking up from cwd. Used by paths handed `project_root`
+/// directly (e.g. the orchestrator).
+pub fn load_models_from_root(project_root: &Path) -> Option<ModelsConfig> {
+    let local_path = project_root.join(".zforge").join("models.yaml");
+    load_models_layered(Some(&local_path))
+}
+
+fn load_models_layered(local_path: Option<&Path>) -> Option<ModelsConfig> {
+    let global = global_models_path().and_then(|p| load_models_from_file(&p));
+    let local = local_path.and_then(load_models_from_file);
+    match (global, local) {
+        (None, None) => None,
+        (Some(g), None) => Some(g),
+        (None, Some(l)) => Some(l),
+        (Some(g), Some(l)) => Some(g.overlay(l)),
+    }
+}
+
+/// `$ZFORGE_HOME/models.yaml` — reuses the registry's home resolver so
+/// integration tests can redirect via `ZFORGE_HOME`.
+fn global_models_path() -> Option<PathBuf> {
+    crate::registry::paths::registry_dir()
+        .ok()
+        .map(|d| d.join("models.yaml"))
+}
+
+fn load_models_from_file(path: &Path) -> Option<ModelsConfig> {
+    let content = std::fs::read_to_string(path).ok()?;
     match serde_yaml::from_str::<ModelsConfig>(&content) {
         Ok(c) => Some(c),
         Err(e) => {
-            eprintln!("warning: failed to parse {}: {e}", models_path.display());
+            eprintln!("warning: failed to parse {}: {e}", path.display());
             None
         }
     }
@@ -349,6 +409,68 @@ mod tests {
         let home = dirs::home_dir().expect("home dir available in test env");
         let expanded = expand_tilde(Path::new("~")).unwrap();
         assert_eq!(expanded, home);
+    }
+
+    #[test]
+    fn models_config_parses_arbitrary_agent_keys() {
+        // BTreeMap-flattened — any top-level key becomes an agent entry,
+        // including custom names the user adds.
+        let yaml = "claude:\n  plan: opus\nmystery_agent:\n  code: gpt-5\n";
+        let cfg: ModelsConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.for_assistant("claude", "plan"), Some("opus"));
+        assert_eq!(cfg.for_assistant("mystery_agent", "code"), Some("gpt-5"));
+        assert_eq!(cfg.for_assistant("missing", "plan"), None);
+    }
+
+    #[test]
+    fn models_config_legacy_three_agent_yaml_still_loads() {
+        // The pre-PR7 shape with fixed claude/codex/opencode keys must keep
+        // working without migration.
+        let yaml = "claude:\n  plan: opus\ncodex:\n  code: zforge_code\nopencode:\n  review: haiku\n";
+        let cfg: ModelsConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.for_assistant("claude", "plan"), Some("opus"));
+        assert_eq!(cfg.for_assistant("codex", "code"), Some("zforge_code"));
+        assert_eq!(cfg.for_assistant("opencode", "review"), Some("haiku"));
+    }
+
+    #[test]
+    fn overlay_local_wins_per_field() {
+        let mut global = ModelsConfig::default();
+        global.agents.insert(
+            "claude".into(),
+            PhaseModels {
+                plan: Some("opus".into()),
+                code: Some("sonnet".into()),
+                ..PhaseModels::default()
+            },
+        );
+        let mut local = ModelsConfig::default();
+        local.agents.insert(
+            "claude".into(),
+            PhaseModels {
+                code: Some("haiku".into()), // override only `code`
+                ..PhaseModels::default()
+            },
+        );
+        let merged = global.overlay(local);
+        // plan inherited from global; code overridden by local.
+        assert_eq!(merged.for_assistant("claude", "plan"), Some("opus"));
+        assert_eq!(merged.for_assistant("claude", "code"), Some("haiku"));
+    }
+
+    #[test]
+    fn overlay_adds_agent_missing_from_base() {
+        let global = ModelsConfig::default();
+        let mut local = ModelsConfig::default();
+        local.agents.insert(
+            "agy".into(),
+            PhaseModels {
+                spec: Some("agy-mini".into()),
+                ..PhaseModels::default()
+            },
+        );
+        let merged = global.overlay(local);
+        assert_eq!(merged.for_assistant("agy", "spec"), Some("agy-mini"));
     }
 
     #[test]

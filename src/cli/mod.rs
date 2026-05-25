@@ -1,11 +1,15 @@
 pub mod approve;
+pub mod cost;
 pub mod update;
 pub mod code;
+pub mod dispatch_helper;
 pub mod flow_guard;
 pub mod init;
+pub mod job;
 pub mod install;
 pub mod mcp_register;
 pub mod plan;
+pub mod project;
 pub mod retry;
 pub mod review;
 pub mod ship;

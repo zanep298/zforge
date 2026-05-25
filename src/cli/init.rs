@@ -108,7 +108,14 @@ impl InitStats {
     }
 }
 
-pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
+pub fn run(
+    agent: Agent,
+    force: bool,
+    local: bool,
+    no_register: bool,
+    name: Option<String>,
+    switch: bool,
+) -> Result<()> {
     let cwd = env::current_dir()?;
     let detected = detect_project(&cwd);
 
@@ -349,6 +356,31 @@ pub fn run(agent: Agent, force: bool, local: bool) -> Result<()> {
             "     Drop {} or pass --local for project-local copies.",
             ".zforge/agents/<name>.tmpl".cyan()
         );
+    }
+
+    if !no_register {
+        match crate::registry::auto::auto_register(&cwd, name.as_deref(), switch) {
+            Ok(crate::registry::auto::AutoResult::Registered { name }) => {
+                println!("registered project {name} in ~/.zforge/registry.yaml");
+            }
+            Ok(crate::registry::auto::AutoResult::AlreadyExists { name }) => {
+                println!("project {name} already registered");
+            }
+            Ok(crate::registry::auto::AutoResult::Suffixed {
+                requested,
+                final_name,
+            }) => {
+                eprintln!(
+                    "warning: name {requested:?} already in registry; registered as {final_name:?}"
+                );
+            }
+            Ok(crate::registry::auto::AutoResult::Updated { old_name, new_name }) => {
+                println!("renamed registry entry: {old_name} -> {new_name}");
+            }
+            Err(e) => {
+                eprintln!("warning: registry update failed: {e:#}");
+            }
+        }
     }
 
     Ok(())

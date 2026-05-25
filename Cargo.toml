@@ -1,6 +1,6 @@
 [package]
 name = "zforge"
-version = "0.0.18"
+version = "0.1.0"
 edition = "2021"
 description = "TDD-first AI development workflow CLI"
 license = "MIT"
@@ -32,7 +32,10 @@ shlex = "1"
 wait-timeout = "0.2"
 indexmap = { version = "2", features = ["serde"] }
 which = "6"
+fs2 = "0.4"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
 assert_fs = "1"
+serial_test = "3"

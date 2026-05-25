@@ -1,11 +1,25 @@
 pub mod flow;
+pub mod task_lock;
 pub use flow::{dispatch_command, Flow};
+pub use task_lock::{try_acquire as try_acquire_task_lock, TaskLockError, TaskLockGuard};
 
 use anyhow::Result;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
+
+/// One swap from primary → fallback during orchestration. Appended by the
+/// PR3 orchestrator each time a retryable error triggers a fallback. PR2
+/// only persists the field; nothing here writes entries.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FallbackEntry {
+    pub timestamp: DateTime<Utc>,
+    pub from: String,
+    pub to: String,
+    pub reason: String,
+    pub phase: String,
+}
 
 #[derive(Error, Debug)]
 pub enum StateError {
@@ -80,6 +94,21 @@ pub struct TaskState {
     pub state: State,
     pub updated_at: DateTime<Local>,
     pub history: Vec<StateEntry>,
+    /// Agent assigned at import time. IMMUTABLE — audit trail. None for tasks
+    /// imported before PR2 or imported without `--agent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_agent: Option<String>,
+    /// Optional fallback agent. The PR3 orchestrator swaps `active_agent` to
+    /// this name when the primary returns a retryable failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_agent: Option<String>,
+    /// Currently active agent. Equals `assigned_agent` at import; mutated by
+    /// the orchestrator on fallback. None falls back to `assigned_agent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_agent: Option<String>,
+    /// Append-only fallback log. Empty for tasks that never failed over.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_history: Vec<FallbackEntry>,
 }
 
 impl TaskState {
@@ -100,7 +129,21 @@ impl TaskState {
                 at: now,
                 note: String::new(),
             }],
+            assigned_agent: None,
+            fallback_agent: None,
+            active_agent: None,
+            fallback_history: Vec::new(),
         }
+    }
+
+    /// Agent that should be invoked right now. `active_agent` wins if set
+    /// (orchestrator may have swapped it); otherwise the original
+    /// `assigned_agent`; otherwise None (caller falls back to init-detected
+    /// default).
+    pub fn effective_agent(&self) -> Option<&str> {
+        self.active_agent
+            .as_deref()
+            .or(self.assigned_agent.as_deref())
     }
 
     /// Dispatch command (no `--done`) for the next phase in this task's
@@ -295,6 +338,59 @@ mod tests {
         // Original Imported + reset Imported = 2 entries.
         assert_eq!(ts.history.len(), 2);
         assert!(ts.history.iter().all(|e| e.state == State::Imported));
+    }
+
+    #[test]
+    fn effective_agent_prefers_active_then_assigned() {
+        let mut ts = TaskState::new("TASK-1");
+        assert_eq!(ts.effective_agent(), None);
+        ts.assigned_agent = Some("claude".into());
+        assert_eq!(ts.effective_agent(), Some("claude"));
+        ts.active_agent = Some("codex".into());
+        assert_eq!(ts.effective_agent(), Some("codex"));
+    }
+
+    #[test]
+    fn legacy_state_yaml_without_agent_fields_loads() {
+        let raw = r#"
+task_id: TASK-9
+flow: Full
+state: Imported
+updated_at: 2026-01-01T00:00:00+00:00
+history:
+  - state: Imported
+    at: 2026-01-01T00:00:00+00:00
+    note: ""
+"#;
+        let ts: TaskState = serde_yaml::from_str(raw).unwrap();
+        assert_eq!(ts.task_id, "TASK-9");
+        assert!(ts.assigned_agent.is_none());
+        assert!(ts.fallback_agent.is_none());
+        assert!(ts.active_agent.is_none());
+        assert!(ts.fallback_history.is_empty());
+        assert_eq!(ts.effective_agent(), None);
+    }
+
+    #[test]
+    fn fully_populated_state_roundtrips() {
+        let mut ts = TaskState::new("TASK-7");
+        ts.assigned_agent = Some("claude".into());
+        ts.fallback_agent = Some("codex".into());
+        ts.active_agent = Some("claude".into());
+        ts.fallback_history.push(FallbackEntry {
+            timestamp: Utc::now(),
+            from: "claude".into(),
+            to: "codex".into(),
+            reason: "exit_code:124".into(),
+            phase: "code".into(),
+        });
+        let y = serde_yaml::to_string(&ts).unwrap();
+        let back: TaskState = serde_yaml::from_str(&y).unwrap();
+        assert_eq!(back.assigned_agent.as_deref(), Some("claude"));
+        assert_eq!(back.fallback_agent.as_deref(), Some("codex"));
+        assert_eq!(back.active_agent.as_deref(), Some("claude"));
+        assert_eq!(back.fallback_history.len(), 1);
+        assert_eq!(back.fallback_history[0].phase, "code");
     }
 
     #[test]

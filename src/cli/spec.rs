@@ -1,3 +1,4 @@
+use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{reader, tokens, writer};
@@ -64,12 +65,11 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
     ctx.output_file = format!(".zforge/tasks/{}/spec.md", task_id);
     ctx.next_command = format!("zf spec {} --done", task_id);
 
-    let engine = Engine::new(&config.agents_dir());
-
     if copy {
+        let engine = Engine::new(&config.agents_dir());
         engine.render_and_copy("spec", &ctx)?;
     } else {
-        engine.dispatch("spec", &ctx)?;
+        run_phase_for_task(&config, &ts, "spec", &ctx)?;
     }
 
     Ok(())

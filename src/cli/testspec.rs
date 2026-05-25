@@ -1,7 +1,8 @@
+use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{reader, tokens, writer};
-use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
+use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -55,8 +56,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     ctx.output_file = format!(".zforge/tasks/{}/testspec.md", task_id);
     ctx.next_command = format!("zf testspec {} --done", task_id);
 
-    let engine = Engine::new(&config.agents_dir());
-    engine.dispatch("testspec", &ctx)?;
+    run_phase_for_task(&config, &ts, "testspec", &ctx)?;
 
     Ok(())
 }

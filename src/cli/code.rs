@@ -1,6 +1,7 @@
+use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
 use crate::config;
-use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
+use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{dispatch_command, State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -40,8 +41,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::Code)?;
     ctx.next_command = format!("zf verify {}", task_id);
 
-    let engine = Engine::new(&config.agents_dir());
-    engine.dispatch("code", &ctx)?;
+    run_phase_for_task(&config, &ts, "code", &ctx)?;
 
     Ok(())
 }

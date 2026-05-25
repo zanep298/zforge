@@ -9,6 +9,26 @@ Open these only if the plan or testspec is ambiguous:
 {{spec_ref}}
 {{task_ref}}
 
+{{if failed_tests}}
+## Previous Attempt Failed — Verifier Feedback
+
+The last code attempt did not pass the verifier. Read the verify report carefully
+before changing anything.
+
+Failing tests:
+{{failed_tests}}
+
+Verify report:
+{{verify_ref}}
+
+Retry instructions:
+- Re-read `plan.md` and `testspec.md` — confirm the expected behavior.
+- Inspect each failing test — understand expected vs actual.
+- Make the smallest possible change to make the failing tests pass.
+- Do not modify the tests themselves unless `testspec.md` itself is wrong.
+- Do not break any test that was passing before.
+
+{{end}}
 ## Instructions
 1. Read plan.md and testspec.md first.
 2. Write failing tests for the testspec case IDs.

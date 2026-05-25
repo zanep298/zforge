@@ -12,6 +12,40 @@ fn validate_task_id(id: &str) -> bool {
     re.is_match(id)
 }
 
+/// Reject `--agent` / `--fallback` combinations that the orchestrator cannot
+/// honor: unknown names (not in `~/.zforge/registry.yaml`) and primary ==
+/// fallback. Runs before any scaffold so a typo leaves the disk untouched.
+///
+/// Empty `agents{}` in the registry means *any* `--agent X` will fail — the
+/// error explicitly tells the user to populate the registry.
+pub fn validate_agent_args(agent: Option<&str>, fallback: Option<&str>) -> Result<()> {
+    if agent.is_none() && fallback.is_none() {
+        return Ok(());
+    }
+    let registry = crate::registry::io::load()?;
+    if let Some(name) = agent {
+        if !registry.agents.contains_key(name) {
+            anyhow::bail!(
+                "unknown agent {name:?}: not in ~/.zforge/registry.yaml agents{{}} map. \
+                 Populate it (PR3 will land an editor) or omit --agent."
+            );
+        }
+    }
+    if let Some(name) = fallback {
+        if !registry.agents.contains_key(name) {
+            anyhow::bail!(
+                "unknown fallback agent {name:?}: not in ~/.zforge/registry.yaml agents{{}} map."
+            );
+        }
+    }
+    if let (Some(a), Some(f)) = (agent, fallback) {
+        if a == f {
+            anyhow::bail!("--agent and --fallback must differ; both are {a:?}");
+        }
+    }
+    Ok(())
+}
+
 fn next_task_id(tasks_dir: &Path) -> Result<String> {
     let re = Regex::new(r"^([A-Z]+)-([0-9]+)$").unwrap();
     let mut max_num: u32 = 0;
@@ -41,12 +75,18 @@ pub fn run_import(
     figma_url: Option<String>,
     figma_context: Option<String>,
     flow: Option<&str>,
+    agent: Option<String>,
+    fallback: Option<String>,
 ) -> Result<String> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let flow = match flow {
         Some(s) => Flow::parse(s)?,
         None => Flow::default(),
     };
+
+    // Validate agent flags before touching the filesystem — a typo on
+    // `--agent` must not leave a half-scaffolded task behind.
+    validate_agent_args(agent.as_deref(), fallback.as_deref())?;
 
     let tasks_dir = config.tasks_dir();
     std::fs::create_dir_all(&tasks_dir)?;
@@ -107,7 +147,10 @@ pub fn run_import(
         serde_yaml::Value::String("human".to_string()),
     )?;
 
-    let state = TaskState::new_with_flow(&id, flow);
+    let mut state = TaskState::new_with_flow(&id, flow);
+    state.assigned_agent = agent.clone();
+    state.fallback_agent = fallback.clone();
+    state.active_agent = agent.clone();
     state.save(&tasks_dir)?;
 
     println!("{} Created tasks/{}/", "✓".green(), id);

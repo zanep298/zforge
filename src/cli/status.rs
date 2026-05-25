@@ -5,12 +5,141 @@ use anyhow::Result;
 use chrono::{DateTime, Local};
 use colored::Colorize;
 use std::fmt::Write as _;
+use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 use walkdir::WalkDir;
 
 pub fn run(task_id: Option<String>, json: bool, short: bool) -> Result<()> {
     let out = render(task_id, json, short)?;
     print!("{}", out);
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GlobalRow {
+    pub project: String,
+    pub task_id: String,
+    pub state: String,
+    pub flow: String,
+    pub active_agent: Option<String>,
+}
+
+pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
+    let (rows, warnings) = collect_global(timeout_ms)?;
+
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        print_global_table(&rows);
+    }
+    Ok(())
+}
+
+pub fn collect_global(timeout_ms: u64) -> Result<(Vec<GlobalRow>, Vec<String>)> {
+    let registry = crate::registry::io::load()?;
+    let mut rows: Vec<GlobalRow> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    for entry in &registry.projects {
+        let path = entry.path.clone();
+        let name = entry.name.clone();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let result = scan_project_tasks(&path);
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+            Ok(Ok(tasks)) => {
+                for t in tasks {
+                    rows.push(GlobalRow {
+                        project: name.clone(),
+                        task_id: t.task_id,
+                        state: t.state,
+                        flow: t.flow,
+                        active_agent: t.active_agent,
+                    });
+                }
+            }
+            Ok(Err(e)) => {
+                warnings.push(format!("skip {name}: {e}"));
+            }
+            Err(_) => {
+                warnings.push(format!("skip {name}: timeout after {timeout_ms}ms"));
+            }
+        }
+    }
+
+    Ok((rows, warnings))
+}
+
+struct TaskSummary {
+    task_id: String,
+    state: String,
+    flow: String,
+    active_agent: Option<String>,
+}
+
+fn scan_project_tasks(project_path: &Path) -> Result<Vec<TaskSummary>> {
+    let tasks_dir = project_path.join(".zforge/tasks");
+    if !tasks_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&tasks_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let task_id = entry.file_name().to_string_lossy().into_owned();
+        let state_file = entry.path().join(".state.yaml");
+        if !state_file.exists() {
+            continue;
+        }
+        let raw = match std::fs::read_to_string(&state_file) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let parsed: TaskState = match serde_yaml::from_str(&raw) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if parsed.flow.next_after(&parsed.state).is_none() {
+            // terminal in flow — exclude
+            continue;
+        }
+        out.push(TaskSummary {
+            task_id,
+            state: parsed.state.as_str().to_string(),
+            flow: parsed.flow.as_str().to_string(),
+            // TODO(PR2): read `active_agent` from extended .state.yaml schema.
+            active_agent: None,
+        });
+    }
+    Ok(out)
+}
+
+fn print_global_table(rows: &[GlobalRow]) {
+    let header = ("PROJECT", "TASK", "STATE", "FLOW", "AGENT");
+    println!(
+        "{:<24} {:<16} {:<18} {:<8} {}",
+        header.0, header.1, header.2, header.3, header.4
+    );
+    for r in rows {
+        println!(
+            "{:<24} {:<16} {:<18} {:<8} {}",
+            r.project,
+            r.task_id,
+            r.state,
+            r.flow,
+            r.active_agent.as_deref().unwrap_or("-")
+        );
+    }
 }
 
 /// Render status output to a `String` without touching stdout. Used by the MCP server
