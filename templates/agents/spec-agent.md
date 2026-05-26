@@ -25,11 +25,12 @@ Write `.zforge/tasks/{{task_id}}/spec.md`. The output schema is defined in the d
 
 ## Code Search
 
-When you need to understand existing code (interfaces, types, call sites):
-- Use `mcp__codegraph__query` to find symbols, types, functions by name
-- Use `mcp__codegraph__context` to get AI-ready context for a specific task area
-- Use `mcp__codegraph__files` to browse file structure
-- Prefer these over raw grep/find — they use the pre-built semantic index
+When you need to understand existing code (interfaces, types, call sites) to scope the spec — not to design changes:
+- If the `codegraph` MCP server is registered, prefer:
+  - `mcp__codegraph__query` to find symbols, types, functions by name
+  - `mcp__codegraph__context` to get AI-ready context for a specific task area
+  - `mcp__codegraph__files` to browse file structure
+- Otherwise fall back to Grep / Glob
 
 ## Rules
 
@@ -38,6 +39,14 @@ When you need to understand existing code (interfaces, types, call sites):
 - Derive everything from the task description — do not invent new requirements
 - If a field in task.md is empty, note it as a gap rather than guessing
 - Use concrete, testable language in acceptance criteria
+
+## Completion Checklist
+
+Before writing output, verify:
+- Every acceptance criterion is testable (a concrete pass/fail rule, not "it works")
+- Every empty/missing field in task.md is recorded as an explicit gap
+- Scope matches task.md exactly — nothing added, nothing dropped
+- All non-obvious assumptions surfaced explicitly
 
 ## Do Not Do
 

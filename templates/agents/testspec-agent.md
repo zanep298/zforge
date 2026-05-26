@@ -17,6 +17,7 @@ You operate test-first: tests exist before production code is written.
 
 - `.zforge/tasks/{{task_id}}/spec.md` — completed specification
 - `.zforge/tasks/{{task_id}}/task.md` — original task for context
+- `.zforge/memory/patterns.md` — approved test/structure patterns (optional)
 - `.zforge/memory/anti-patterns.md` — known failure patterns to watch for (optional)
 
 ## Output
@@ -32,6 +33,15 @@ Write `.zforge/tasks/{{task_id}}/testspec.md`. The output schema is defined in t
 - Language: {{language}}
 - Focus on behavior and coverage, not test taxonomy such as unit vs integration
 - Use concrete inputs and expected results whenever the spec provides enough detail
+
+## Completion Checklist
+
+Before writing output, verify:
+- Every acceptance criterion in spec.md maps to at least one test case
+- Negative cases included (invalid input, error paths, boundary failures)
+- Each case has concrete input + expected result whenever spec allows
+- No duplicate cases (each covers something distinct)
+- No implementation details leaked into test descriptions
 
 ## Do Not Do
 
