@@ -92,10 +92,7 @@ fn claude_phase_plan_gets_model_opus_injected() {
 
     let proj = tempfile::tempdir().unwrap();
     make_project(proj.path());
-    scaffold_project_with_models(
-        proj.path(),
-        "claude:\n  plan: opus\n  code: sonnet\n",
-    );
+    scaffold_project_with_models(proj.path(), "claude:\n  plan: opus\n  code: sonnet\n");
     make_task_with_agent(proj.path(), "T1", "claude");
     seed_registry("claude");
 
@@ -129,10 +126,7 @@ fn claude_phase_code_gets_model_sonnet_injected() {
 
     let proj = tempfile::tempdir().unwrap();
     make_project(proj.path());
-    scaffold_project_with_models(
-        proj.path(),
-        "claude:\n  plan: opus\n  code: sonnet\n",
-    );
+    scaffold_project_with_models(proj.path(), "claude:\n  plan: opus\n  code: sonnet\n");
     make_task_with_agent(proj.path(), "T1", "claude");
     seed_registry("claude");
 

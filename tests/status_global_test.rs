@@ -110,7 +110,11 @@ fn terminal_tasks_excluded() {
     let a = tempfile::tempdir().unwrap();
     make_project(a.path());
 
-    write_task(&a.path().join(".zforge/tasks"), "TASK-DONE", State::Reviewed);
+    write_task(
+        &a.path().join(".zforge/tasks"),
+        "TASK-DONE",
+        State::Reviewed,
+    );
     write_task(&a.path().join(".zforge/tasks"), "TASK-LIVE", State::Planned);
 
     auto_register(a.path(), Some("alpha"), false).unwrap();

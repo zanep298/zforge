@@ -1,6 +1,6 @@
 use crate::registry::{
     io, lock,
-    schema::{ProjectEntry, Registry, RegisteredBy},
+    schema::{ProjectEntry, RegisteredBy, Registry},
     validate,
 };
 use anyhow::{anyhow, Context, Result};

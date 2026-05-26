@@ -49,12 +49,18 @@ pub enum TaskLockError {
 impl std::fmt::Display for TaskLockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TaskLockError::Busy { task_id, owner_pid: Some(pid) } => write!(
+            TaskLockError::Busy {
+                task_id,
+                owner_pid: Some(pid),
+            } => write!(
                 f,
                 "task {task_id} is locked by another zforge process (pid {pid}). \
                  If that process is gone, retry; flock auto-releases on exit."
             ),
-            TaskLockError::Busy { task_id, owner_pid: None } => write!(
+            TaskLockError::Busy {
+                task_id,
+                owner_pid: None,
+            } => write!(
                 f,
                 "task {task_id} is locked by another zforge process. \
                  If you're sure it crashed, retry — flock auto-releases on exit."
@@ -82,9 +88,7 @@ pub fn try_acquire(tasks_dir: &Path, task_id: &str) -> Result<TaskLockGuard, Tas
         .write(true)
         .truncate(false)
         .open(&path)
-        .map_err(|e| {
-            TaskLockError::Io(anyhow::Error::from(e).context(format!("open {path:?}")))
-        })?;
+        .map_err(|e| TaskLockError::Io(anyhow::Error::from(e).context(format!("open {path:?}"))))?;
 
     match FileExt::try_lock_exclusive(&file) {
         Ok(()) => {

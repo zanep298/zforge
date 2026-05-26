@@ -12,7 +12,10 @@ fn roundtrip_default_registry() {
     let y = serde_yaml::to_string(&r).unwrap();
     let back: Registry = serde_yaml::from_str(&y).unwrap();
     assert_eq!(back.projects.len(), 0);
-    assert_eq!(back.fallback_policy.max_retries, r.fallback_policy.max_retries);
+    assert_eq!(
+        back.fallback_policy.max_retries,
+        r.fallback_policy.max_retries
+    );
 }
 
 #[test]

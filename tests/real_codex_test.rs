@@ -68,16 +68,14 @@ fn codex_spec(extra_args_after_exec: &[&str]) -> AgentSpec {
 #[test]
 #[serial]
 fn codex_exec_reads_prompt_from_stdin() {
-    let Some(_) = codex_available() else { return; };
+    let Some(_) = codex_available() else {
+        return;
+    };
 
     let spec = codex_spec(&[]);
     let started = Instant::now();
-    let outcome = spawn_agent(
-        &spec,
-        "Respond with exactly the single word: PONG\n",
-        180,
-    )
-    .expect("spawn codex");
+    let outcome = spawn_agent(&spec, "Respond with exactly the single word: PONG\n", 180)
+        .expect("spawn codex");
 
     eprintln!(
         "codex exit={} timed_out={} stdout_len={} stderr_len={} elapsed={:?}",
@@ -101,7 +99,9 @@ fn codex_exec_reads_prompt_from_stdin() {
 #[test]
 #[serial]
 fn codex_model_flag_accepted() {
-    let Some(_) = codex_available() else { return; };
+    let Some(_) = codex_available() else {
+        return;
+    };
 
     // Don't pass -m — default model. zforge's `model_args_for_agent` for
     // codex returns empty (profile-based) so the real case in production
@@ -138,7 +138,9 @@ fn codex_model_flag_accepted() {
 #[test]
 #[serial]
 fn codex_invalid_model_yields_stdout_error_with_exit_zero() {
-    let Some(_) = codex_available() else { return; };
+    let Some(_) = codex_available() else {
+        return;
+    };
 
     let spec = codex_spec(&["-m", "absolutely-not-a-real-model-xyz"]);
     let outcome = spawn_agent(&spec, "Reply: 1\n", 60).expect("spawn codex");
@@ -168,7 +170,9 @@ fn codex_invalid_model_yields_stdout_error_with_exit_zero() {
 #[test]
 #[serial]
 fn codex_handles_large_prompt_without_deadlock() {
-    let Some(_) = codex_available() else { return; };
+    let Some(_) = codex_available() else {
+        return;
+    };
 
     let filler = "x".repeat(50_000);
     let prompt = format!("{filler}\n\nIgnore filler. Respond: DONE\n");
@@ -182,7 +186,10 @@ fn codex_handles_large_prompt_without_deadlock() {
         elapsed < Duration::from_secs(180),
         "pipe deadlock suspected — elapsed {elapsed:?}"
     );
-    assert!(!outcome.timed_out, "spawn timed out — investigate writer thread");
+    assert!(
+        !outcome.timed_out,
+        "spawn timed out — investigate writer thread"
+    );
     // codex may or may not include DONE; the binding assertion is "no
     // deadlock + no timeout".
 }
@@ -193,7 +200,9 @@ fn codex_handles_large_prompt_without_deadlock() {
 #[test]
 #[serial]
 fn codex_respects_zforge_spawn_timeout() {
-    let Some(_) = codex_available() else { return; };
+    let Some(_) = codex_available() else {
+        return;
+    };
 
     let spec = codex_spec(&[]);
     let started = Instant::now();

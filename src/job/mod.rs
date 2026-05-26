@@ -12,11 +12,11 @@
 //!   log        # combined stdout + stderr stream
 //! ```
 
-pub mod schema;
-pub mod store;
 pub mod lifecycle;
+pub mod schema;
 pub mod spawn;
+pub mod store;
 pub mod worker;
 
-pub use schema::{Job, JobStatus, JobKind};
+pub use schema::{Job, JobKind, JobStatus};
 pub use store::{create_job, list_jobs, load_job, save_atomic};

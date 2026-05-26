@@ -98,9 +98,7 @@ pub fn spawn_agent(spec: &AgentSpec, prompt: &str, timeout_secs: u64) -> Result<
         // can write rules like `(?i)spawn timeout` if they want extra
         // matching beyond exit-code 124. Also helps log readers spot the
         // distinction between agent-emitted 124 and zforge-injected 124.
-        stderr.push_str(&format!(
-            "\nzforge: spawn timeout after {timeout_secs}s\n"
-        ));
+        stderr.push_str(&format!("\nzforge: spawn timeout after {timeout_secs}s\n"));
     }
     let duration_ms = started.elapsed().as_millis();
 

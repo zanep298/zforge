@@ -62,16 +62,14 @@ fn claude_spec(extra_args: &[&str]) -> AgentSpec {
 #[test]
 #[serial]
 fn claude_reads_prompt_from_stdin() {
-    let Some(_bin) = claude_available() else { return; };
+    let Some(_bin) = claude_available() else {
+        return;
+    };
 
     let spec = claude_spec(&["--model", "haiku"]);
     let started = Instant::now();
-    let outcome = spawn_agent(
-        &spec,
-        "Respond with exactly the single word: PONG\n",
-        120,
-    )
-    .expect("spawn claude");
+    let outcome = spawn_agent(&spec, "Respond with exactly the single word: PONG\n", 120)
+        .expect("spawn claude");
 
     let elapsed = started.elapsed();
     eprintln!(
@@ -102,11 +100,12 @@ fn claude_reads_prompt_from_stdin() {
 #[test]
 #[serial]
 fn claude_accepts_model_flag() {
-    let Some(_) = claude_available() else { return; };
+    let Some(_) = claude_available() else {
+        return;
+    };
 
     let spec = claude_spec(&["--model", "haiku"]);
-    let outcome = spawn_agent(&spec, "Reply with only the digit 1.\n", 120)
-        .expect("spawn claude");
+    let outcome = spawn_agent(&spec, "Reply with only the digit 1.\n", 120).expect("spawn claude");
 
     assert_eq!(
         outcome.exit_code, 0,
@@ -125,7 +124,9 @@ fn claude_accepts_model_flag() {
 #[test]
 #[serial]
 fn claude_missing_binary_returns_error_not_panic() {
-    let Some(_) = claude_available() else { return; };
+    let Some(_) = claude_available() else {
+        return;
+    };
 
     let spec = AgentSpec {
         command: "/definitely/does/not/exist/zforge_claude_ghost".into(),
@@ -144,14 +145,14 @@ fn claude_missing_binary_returns_error_not_panic() {
 #[test]
 #[serial]
 fn claude_handles_large_prompt_without_pipe_deadlock() {
-    let Some(_) = claude_available() else { return; };
+    let Some(_) = claude_available() else {
+        return;
+    };
 
     // ~50KB of context + a tiny instruction at the end so the response stays
     // short and cheap.
     let filler = "x".repeat(50_000);
-    let prompt = format!(
-        "{filler}\n\nIgnore the filler above. Respond with: DONE"
-    );
+    let prompt = format!("{filler}\n\nIgnore the filler above. Respond with: DONE");
 
     let spec = claude_spec(&["--model", "haiku"]);
     let started = Instant::now();
@@ -194,18 +195,23 @@ fn claude_handles_large_prompt_without_pipe_deadlock() {
 #[test]
 #[serial]
 fn claude_failure_emits_identifiable_signature() {
-    let Some(_) = claude_available() else { return; };
+    let Some(_) = claude_available() else {
+        return;
+    };
 
     let spec = claude_spec(&["--model", "totally-invalid-model-name"]);
-    let outcome = spawn_agent(&spec, "Respond with: AUTH\n", 60)
-        .expect("spawn must not panic on failure");
+    let outcome =
+        spawn_agent(&spec, "Respond with: AUTH\n", 60).expect("spawn must not panic on failure");
 
     eprintln!(
         "[claude-failure snapshot] exit={} stdout={:?} stderr={:?}",
         outcome.exit_code, outcome.stdout, outcome.stderr
     );
 
-    assert_ne!(outcome.exit_code, 0, "expected non-zero exit on invalid model");
+    assert_ne!(
+        outcome.exit_code, 0,
+        "expected non-zero exit on invalid model"
+    );
     let combined = format!("{} {}", outcome.stdout, outcome.stderr);
     assert!(
         combined.to_lowercase().contains("model"),
@@ -221,7 +227,9 @@ fn claude_failure_emits_identifiable_signature() {
 #[test]
 #[serial]
 fn claude_oauth_credentials_override_env_api_key() {
-    let Some(_) = claude_available() else { return; };
+    let Some(_) = claude_available() else {
+        return;
+    };
 
     let prev = std::env::var("ANTHROPIC_API_KEY").ok();
     std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-INVALID-FOR-TEST");
@@ -259,7 +267,9 @@ fn claude_oauth_credentials_override_env_api_key() {
 #[test]
 #[serial]
 fn claude_moderate_response_under_60s() {
-    let Some(_) = claude_available() else { return; };
+    let Some(_) = claude_available() else {
+        return;
+    };
 
     let spec = claude_spec(&["--model", "haiku"]);
     let started = Instant::now();
@@ -280,5 +290,8 @@ fn claude_moderate_response_under_60s() {
     // Loose word count check — just to confirm we got real output, not a
     // truncated stub.
     let word_count = outcome.stdout.split_whitespace().count();
-    assert!(word_count > 50, "suspiciously short output: {word_count} words");
+    assert!(
+        word_count > 50,
+        "suspiciously short output: {word_count} words"
+    );
 }

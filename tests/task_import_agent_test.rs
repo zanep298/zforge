@@ -199,9 +199,7 @@ fn mcp_task_import_schema_well_formed_json() {
     assert!(src.contains(r#""name": "task_import""#));
     // Spot-check both new fields land under the same properties block.
     let agent_idx = src.find(r#""agent":         { "type": "string""#).unwrap();
-    let fallback_idx = src
-        .find(r#""fallback":      { "type": "string""#)
-        .unwrap();
+    let fallback_idx = src.find(r#""fallback":      { "type": "string""#).unwrap();
     assert!(agent_idx < fallback_idx);
     // Sanity: the JSON value parses standalone if we wrap it.
     let probe = json!({

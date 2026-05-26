@@ -31,9 +31,7 @@ pub fn run(job_id: &str) -> Result<()> {
 
     mark_running(&config, job_id, std::process::id())?;
 
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        dispatch(&job)
-    }));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&job)));
 
     let result: Result<()> = match outcome {
         Ok(r) => r,

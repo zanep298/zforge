@@ -163,7 +163,10 @@ fn fake_primary_429_falls_back_to_real_claude() {
     );
     std::env::remove_var("ZFORGE_HEADLESS");
 
-    assert!(result.is_ok(), "orchestrator should succeed via fallback: {result:?}");
+    assert!(
+        result.is_ok(),
+        "orchestrator should succeed via fallback: {result:?}"
+    );
 
     let ts = load_state(proj.path(), "T1");
     assert_eq!(
@@ -196,5 +199,9 @@ fn fake_primary_429_falls_back_to_real_claude() {
     // Sanity: state file should reflect what would survive a process kill.
     let reloaded = TaskState::load(&proj.path().join(".zforge/tasks"), "T1").unwrap();
     assert_eq!(reloaded.active_agent.as_deref(), Some("real_claude"));
-    assert_eq!(reloaded.state, State::Imported, "state advance is caller-driven, not orchestrator's job");
+    assert_eq!(
+        reloaded.state,
+        State::Imported,
+        "state advance is caller-driven, not orchestrator's job"
+    );
 }

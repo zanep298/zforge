@@ -151,6 +151,12 @@ enum Commands {
         #[command(subcommand)]
         cmd: crate::cli::cost::CostCmd,
     },
+    /// Git primitives for the auto-approve branch workflow.
+    /// Invoked by the `/zforge` slash command via Bash; safe to call manually.
+    Git {
+        #[command(subcommand)]
+        cmd: crate::cli::git::GitCmd,
+    },
     /// INTERNAL: background worker entry point — invoked by `ship --async`.
     /// Do not call directly.
     #[command(hide = true)]
@@ -306,6 +312,7 @@ fn main() -> Result<()> {
         Commands::Project { cmd } => cli::project::run(cmd),
         Commands::Job { cmd } => cli::job::run(cmd),
         Commands::Cost { cmd } => cli::cost::run(cmd),
+        Commands::Git { cmd } => cli::git::run(cmd),
         Commands::Worker { job_id } => zforge::job::worker::run(&job_id),
     }
 }

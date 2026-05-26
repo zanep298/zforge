@@ -1,9 +1,9 @@
 pub mod cli;
 pub mod config;
+pub mod cost;
 pub mod embedded;
 pub mod error;
 pub mod fs;
-pub mod cost;
 pub mod jira;
 pub mod job;
 pub mod mcp;

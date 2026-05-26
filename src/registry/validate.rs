@@ -32,7 +32,11 @@ pub fn sanitize_basename(raw: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim_matches('-');
-    let s = if trimmed.is_empty() { "project" } else { trimmed };
+    let s = if trimmed.is_empty() {
+        "project"
+    } else {
+        trimmed
+    };
     s.chars().take(64).collect()
 }
 

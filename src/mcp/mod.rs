@@ -481,10 +481,7 @@ fn tool_job_wait(args: &Value) -> Result<String> {
         .get("timeout_ms")
         .and_then(|v| v.as_u64())
         .unwrap_or(60_000);
-    let poll_ms = args
-        .get("poll_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(500);
+    let poll_ms = args.get("poll_ms").and_then(|v| v.as_u64()).unwrap_or(500);
 
     let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
@@ -508,12 +505,15 @@ fn tool_job_wait(args: &Value) -> Result<String> {
 
 fn tool_job_log(args: &Value) -> Result<String> {
     let job_id = require_str(args, "job_id")?;
-    let tail = args.get("tail").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let tail = args
+        .get("tail")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
 
     let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
     let path = crate::job::store::job_log_path(&config, job_id);
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("read log {path:?}: {e}"))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("read log {path:?}: {e}"))?;
     let out = match tail {
         Some(n) => {
             let lines: Vec<&str> = content.lines().collect();

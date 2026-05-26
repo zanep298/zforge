@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use zforge::job::lifecycle::reconcile_dead_worker;
 use zforge::job::schema::JobStatus;
-use zforge::job::store::{load_job, job_log_path};
+use zforge::job::store::{job_log_path, load_job};
 use zforge::registry::{
     io,
     schema::{AgentSpec, FallbackPolicy, Registry},
@@ -243,7 +243,10 @@ fn async_ship_marks_failed_when_tests_fail() {
 
     let job = load_job(&config, &job_id).unwrap();
     assert!(
-        job.error.as_deref().unwrap_or("").contains("budget exhausted"),
+        job.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("budget exhausted"),
         "error: {:?}",
         job.error
     );

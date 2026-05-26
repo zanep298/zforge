@@ -36,11 +36,7 @@ fn agent_spec(extra_args: &[&str]) -> AgentSpec {
     }
 }
 
-fn seed_registry(
-    primary_args: &[&str],
-    fallback_args: Option<&[&str]>,
-    policy: FallbackPolicy,
-) {
+fn seed_registry(primary_args: &[&str], fallback_args: Option<&[&str]>, policy: FallbackPolicy) {
     let mut r = Registry {
         fallback_policy: policy,
         ..Default::default()
@@ -211,9 +207,7 @@ fn fallback_on_codex_stdout_429_with_exit_zero() {
         "codex-style exit-0-but-stdout-error must fire fallback"
     );
     assert!(
-        ts.fallback_history[0]
-            .reason
-            .starts_with("output_match:"),
+        ts.fallback_history[0].reason.starts_with("output_match:"),
         "reason: {}",
         ts.fallback_history[0].reason
     );

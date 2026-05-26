@@ -71,7 +71,9 @@ fn main() -> ExitCode {
         let _ = writeln!(std::io::stdout(), "{s}");
     }
 
-    let sleep_ms = cfg.sleep_ms.or_else(|| env_override::<u64>("FAKE_SLEEP_MS"));
+    let sleep_ms = cfg
+        .sleep_ms
+        .or_else(|| env_override::<u64>("FAKE_SLEEP_MS"));
     if let Some(ms) = sleep_ms {
         std::thread::sleep(Duration::from_millis(ms));
     }

@@ -280,8 +280,8 @@ fn overlay_phases(base: &mut PhaseModels, top: PhaseModels) {
 /// layer emit a stderr warning and that layer is skipped — the other layer
 /// still wins.
 pub fn load_models() -> Option<ModelsConfig> {
-    let local_path = Config::find_config_file()
-        .and_then(|p| p.parent().map(|d| d.join("models.yaml")));
+    let local_path =
+        Config::find_config_file().and_then(|p| p.parent().map(|d| d.join("models.yaml")));
     load_models_layered(local_path.as_deref())
 }
 
@@ -426,7 +426,8 @@ mod tests {
     fn models_config_legacy_three_agent_yaml_still_loads() {
         // The pre-PR7 shape with fixed claude/codex/opencode keys must keep
         // working without migration.
-        let yaml = "claude:\n  plan: opus\ncodex:\n  code: zforge_code\nopencode:\n  review: haiku\n";
+        let yaml =
+            "claude:\n  plan: opus\ncodex:\n  code: zforge_code\nopencode:\n  review: haiku\n";
         let cfg: ModelsConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.for_assistant("claude", "plan"), Some("opus"));
         assert_eq!(cfg.for_assistant("codex", "code"), Some("zforge_code"));

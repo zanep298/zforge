@@ -159,12 +159,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_max_iterations() {
-        let err = iterate::<_, _>(
-            0,
-            |_, _| Ok(()),
-            || Ok(outcome(true, &[])),
-        )
-        .unwrap_err();
+        let err = iterate::<_, _>(0, |_, _| Ok(()), || Ok(outcome(true, &[]))).unwrap_err();
         assert!(err.to_string().contains("max_iterations"));
     }
 

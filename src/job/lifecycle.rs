@@ -51,7 +51,11 @@ pub fn reconcile_dead_worker(config: &Config, job_id: &str) -> Result<JobStatus>
         None => return Ok(job.status),
     };
     if !pid_alive(pid) {
-        mark_failed(config, job_id, "worker process died without recording outcome")?;
+        mark_failed(
+            config,
+            job_id,
+            "worker process died without recording outcome",
+        )?;
         return Ok(JobStatus::Failed);
     }
     Ok(JobStatus::Running)

@@ -286,7 +286,10 @@ fn ship_exhausts_budget_when_tests_never_pass() {
         .trim()
         .parse()
         .unwrap();
-    assert_eq!(counter, 2, "verifier should have run exactly max_iterations times");
+    assert_eq!(
+        counter, 2,
+        "verifier should have run exactly max_iterations times"
+    );
 }
 
 #[test]
@@ -312,8 +315,15 @@ fn single_shot_ship_propagates_verify_failure() {
     // (it doesn't error on test failure; it writes verify.md and reports).
     // Behavior here matches pre-PR4 ship.
     let result = zforge::cli::ship::run("T1", None, 60, 1);
-    assert!(result.is_ok(), "single-shot ship returns Ok even on verify fail (legacy contract)");
+    assert!(
+        result.is_ok(),
+        "single-shot ship returns Ok even on verify fail (legacy contract)"
+    );
 
     let ts = TaskState::load(&proj.path().join(".zforge/tasks"), "T1").unwrap();
-    assert_eq!(ts.state, State::Coded, "state stays at Coded when verify fails");
+    assert_eq!(
+        ts.state,
+        State::Coded,
+        "state stays at Coded when verify fails"
+    );
 }

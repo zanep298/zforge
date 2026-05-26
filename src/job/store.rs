@@ -68,8 +68,7 @@ pub fn create_job(
 
 pub fn load_job(config: &Config, job_id: &str) -> Result<Job> {
     let path = job_yaml_path(config, job_id);
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow!("read {path:?}: {e}"))?;
+    let raw = std::fs::read_to_string(&path).map_err(|e| anyhow!("read {path:?}: {e}"))?;
     serde_yaml::from_str(&raw).with_context(|| format!("parse {path:?}"))
 }
 

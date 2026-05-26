@@ -70,7 +70,11 @@ pub fn run() -> Result<()> {
         std::io::copy(&mut resp.into_reader(), &mut out)?;
     }
 
-    let bin_name = if cfg!(windows) { "zforge.exe" } else { "zforge" };
+    let bin_name = if cfg!(windows) {
+        "zforge.exe"
+    } else {
+        "zforge"
+    };
     extract_binary(&archive_path, &tmp_dir, bin_name)?;
 
     let extracted = tmp_dir.join(bin_name);
@@ -78,8 +82,7 @@ pub fn run() -> Result<()> {
         bail!("extraction succeeded but {bin_name} not found in archive");
     }
 
-    let current_exe =
-        env::current_exe().context("cannot determine current executable path")?;
+    let current_exe = env::current_exe().context("cannot determine current executable path")?;
 
     // Move old binary aside, copy new one in, restore on failure
     let old_path = current_exe.with_extension("old");
@@ -132,11 +135,7 @@ fn detect_target() -> Result<&'static str> {
     }
 }
 
-fn extract_binary(
-    archive: &std::path::Path,
-    dest: &std::path::Path,
-    bin_name: &str,
-) -> Result<()> {
+fn extract_binary(archive: &std::path::Path, dest: &std::path::Path, bin_name: &str) -> Result<()> {
     if cfg!(windows) {
         let status = Command::new("powershell")
             .args([

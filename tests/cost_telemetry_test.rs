@@ -93,7 +93,11 @@ fn successful_spawn_writes_one_cost_entry() {
     orchestrator::run_phase("T1", "plan", proj.path(), "test prompt").unwrap();
 
     let entries = load_all(proj.path()).unwrap();
-    assert_eq!(entries.len(), 1, "exactly one cost entry per successful spawn");
+    assert_eq!(
+        entries.len(),
+        1,
+        "exactly one cost entry per successful spawn"
+    );
     let e = &entries[0];
     assert_eq!(e.task_id, "T1");
     assert_eq!(e.phase, "plan");
