@@ -35,8 +35,7 @@ pub fn load_all(project_root: &Path) -> Result<Vec<CostEntry>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {path:?}"))?;
+    let content = std::fs::read_to_string(&path).with_context(|| format!("read {path:?}"))?;
     let mut entries = Vec::new();
     for (idx, line) in content.lines().enumerate() {
         if line.trim().is_empty() {
@@ -45,10 +44,7 @@ pub fn load_all(project_root: &Path) -> Result<Vec<CostEntry>> {
         match serde_json::from_str::<CostEntry>(line) {
             Ok(e) => entries.push(e),
             Err(e) => {
-                eprintln!(
-                    "warning: skipping cost-log.jsonl line {}: {e}",
-                    idx + 1
-                );
+                eprintln!("warning: skipping cost-log.jsonl line {}: {e}", idx + 1);
             }
         }
     }
@@ -76,7 +72,10 @@ mod tests {
             timed_out: false,
             est_input_tokens: 300,
             est_output_tokens: 200,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
             reported_total_tokens: None,
+            tokens_source: "estimated".into(),
             est_cost_usd: 0.0195,
         }
     }

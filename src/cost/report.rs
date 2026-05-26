@@ -40,7 +40,12 @@ fn key_for(entry: &CostEntry, by: GroupBy) -> String {
         GroupBy::Task => entry.task_id.clone(),
         GroupBy::Phase => entry.phase.clone(),
         GroupBy::Agent => entry.agent.clone(),
-        GroupBy::Model => entry.model.clone().unwrap_or_else(|| "(none)".into()),
+        GroupBy::Model => {
+            // Include agent so unknown-model rows don't collapse into one
+            // "(none)" bucket across different agents (claude/codex/etc).
+            let model = entry.model.as_deref().unwrap_or("(none)");
+            format!("{}/{model}", entry.agent)
+        }
     }
 }
 
@@ -154,7 +159,10 @@ mod tests {
             timed_out: false,
             est_input_tokens: in_tok,
             est_output_tokens: out_tok,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
             reported_total_tokens: None,
+            tokens_source: "estimated".into(),
             est_cost_usd: cost,
         }
     }

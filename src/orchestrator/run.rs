@@ -3,6 +3,7 @@ use crate::cost::{
     log as cost_log,
     prices::cost_usd,
     schema::{estimate_tokens, CostEntry},
+    usage::{parse_claude_usage, parse_codex_tokens, UsageReport},
 };
 use crate::orchestrator::{
     fallback::CompiledPolicy,
@@ -38,12 +39,7 @@ fn is_headless() -> bool {
 /// Returns `Ok(())` on the first successful spawn (exit 0). Non-retryable
 /// failures propagate immediately. Retryable failures consume the policy's
 /// retry budget; exhaustion is a terminal `Err`.
-pub fn run_phase(
-    task_id: &str,
-    phase: &str,
-    project_root: &Path,
-    prompt: &str,
-) -> Result<()> {
+pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) -> Result<()> {
     let registry = registry::io::load()?;
     let policy = CompiledPolicy::compile(&registry.fallback_policy)?;
     let spawn_timeout_secs = registry.fallback_policy.spawn_timeout_secs;
@@ -75,16 +71,23 @@ pub fn run_phase(
         let spec = with_model_args(&base_spec, &agent_name, phase, models.as_ref());
         let spec = with_headless_args(spec, &agent_name, is_headless());
 
+        // Model resolution precedence for telemetry:
+        //   1. models.yaml override for (agent, phase)
+        //   2. `--model X` baked into the (possibly model-args-augmented)
+        //      AgentSpec.args — covers users who hardcode model in registry
+        //   3. None — price table lookup will return 0 for unknown agent/model
         let resolved_model = models
             .as_ref()
             .and_then(|m| m.for_assistant(&agent_name, phase))
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+            .or_else(|| sniff_model_from_args(&spec.args));
 
         let outcome = spawn_agent(&spec, prompt, spawn_timeout_secs)?;
 
         // Telemetry: append a CostEntry per spawn. Best-effort — a log
-        // failure must not block orchestration.
-        let _ = record_cost(
+        // failure must not block orchestration, but DO emit a warning so
+        // disk-full / corrupt-path bugs are visible during debugging.
+        if let Err(e) = record_cost(
             project_root,
             task_id,
             phase,
@@ -92,7 +95,9 @@ pub fn run_phase(
             resolved_model.as_deref(),
             prompt,
             &outcome,
-        );
+        ) {
+            eprintln!("warning: cost log append failed: {e}");
+        }
 
         // Real binaries (claude, codex) print failure messages to stdout
         // — not stderr. Codex also exits 0 even on API errors. Concatenate
@@ -190,10 +195,23 @@ fn with_headless_args(mut spec: AgentSpec, agent_name: &str, headless: bool) -> 
     spec
 }
 
-/// Build + append one CostEntry. Codex `tokens used N` line in stdout (if
-/// present) becomes `reported_total_tokens`; otherwise we estimate from
-/// char counts. Failure is logged-and-swallowed — telemetry must never
-/// block the orchestrator's hot path.
+/// Build + append one CostEntry.
+///
+/// Token accounting precedence:
+///   1. If the agent emitted a parseable usage block (claude JSON `usage`),
+///      use those real counts AND attribute cache_read / cache_creation
+///      separately so prompt-caching discounts flow into cost.
+///   2. If codex emitted `tokens used N` (total, no input/output split),
+///      record as `reported_total_tokens` for visibility; cost still uses
+///      estimates because we can't split, but codex price is $0/token on
+///      ChatGPT Plus so the inaccuracy is moot.
+///   3. Otherwise estimate from byte length. stdout only — stderr is
+///      banner / debug / error output, not LLM tokens. Counting it as
+///      output charges the user for every verbose error trace.
+///
+/// `prompt_chars` / `stdout_chars` / `stderr_chars` stay in BYTES (not
+/// char count) so non-ASCII prompts don't underreport. The field names
+/// keep "chars" for backward compat with already-written log lines.
 fn record_cost(
     project_root: &Path,
     task_id: &str,
@@ -203,18 +221,28 @@ fn record_cost(
     prompt: &str,
     outcome: &SpawnOutcome,
 ) -> Result<()> {
-    let prompt_chars = prompt.chars().count();
-    let stdout_chars = outcome.stdout.chars().count();
-    let stderr_chars = outcome.stderr.chars().count();
-    let est_input_tokens = estimate_tokens(prompt_chars);
-    let est_output_tokens = estimate_tokens(stdout_chars + stderr_chars);
+    let prompt_bytes = prompt.len();
+    let stdout_bytes = outcome.stdout.len();
+    let stderr_bytes = outcome.stderr.len();
 
-    // Codex emits `tokens used N` in its non-interactive output. Parse if
-    // present so reports show real totals for codex; estimates stay for
-    // claude / others.
+    let claude_usage = if agent == "claude" {
+        parse_claude_usage(&outcome.stdout)
+    } else {
+        None
+    };
     let reported_total_tokens = parse_codex_tokens(&outcome.stdout, &outcome.stderr);
 
-    let est_cost_usd = cost_usd(agent, model, est_input_tokens, est_output_tokens);
+    let (est_input_tokens, est_output_tokens, tokens_source, cache_read, cache_create) =
+        derive_token_counts(prompt_bytes, stdout_bytes, claude_usage.as_ref());
+
+    let est_cost_usd = cost_usd(
+        agent,
+        model,
+        est_input_tokens,
+        est_output_tokens,
+        cache_read.unwrap_or(0),
+        cache_create.unwrap_or(0),
+    );
 
     let entry = CostEntry {
         timestamp: Utc::now(),
@@ -222,35 +250,74 @@ fn record_cost(
         phase: phase.to_string(),
         agent: agent.to_string(),
         model: model.map(str::to_string),
-        prompt_chars,
-        stdout_chars,
-        stderr_chars,
+        prompt_chars: prompt_bytes,
+        stdout_chars: stdout_bytes,
+        stderr_chars: stderr_bytes,
         duration_ms: outcome.duration_ms,
         exit_code: outcome.exit_code,
         timed_out: outcome.timed_out,
         est_input_tokens,
         est_output_tokens,
+        cache_read_input_tokens: cache_read,
+        cache_creation_input_tokens: cache_create,
         reported_total_tokens,
+        tokens_source: tokens_source.to_string(),
         est_cost_usd,
     };
     cost_log::record(project_root, &entry)
 }
 
-/// Codex prints a line like `tokens used 9963` after the conversation.
-/// Returns the total when found in either stream. Regex-free for hot path:
-/// substring scan + parse.
-fn parse_codex_tokens(stdout: &str, stderr: &str) -> Option<u64> {
-    for stream in [stdout, stderr] {
-        for line in stream.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("tokens used ") {
-                if let Ok(n) = rest.trim().parse::<u64>() {
-                    return Some(n);
-                }
+/// Pick the best available token counts. Reported claude `usage` block
+/// wins per-field; missing fields fall back to estimates so partial
+/// reports still produce non-zero rows.
+fn derive_token_counts(
+    prompt_bytes: usize,
+    stdout_bytes: usize,
+    reported: Option<&UsageReport>,
+) -> (usize, usize, &'static str, Option<u64>, Option<u64>) {
+    let input_estimate = estimate_tokens(prompt_bytes);
+    let output_estimate = estimate_tokens(stdout_bytes);
+    match reported {
+        Some(u) => {
+            let input = u.input_tokens.map(|n| n as usize).unwrap_or(input_estimate);
+            let output = u
+                .output_tokens
+                .map(|n| n as usize)
+                .unwrap_or(output_estimate);
+            let source = if u.input_tokens.is_some() || u.output_tokens.is_some() {
+                "reported"
+            } else {
+                "estimated"
+            };
+            (
+                input,
+                output,
+                source,
+                u.cache_read_input_tokens,
+                u.cache_creation_input_tokens,
+            )
+        }
+        None => (input_estimate, output_estimate, "estimated", None, None),
+    }
+}
+
+/// Scan `--model X` (and `--model=X`) out of an AgentSpec's args. Last
+/// occurrence wins to match left-to-right CLI parsing — `with_model_args`
+/// appends models.yaml's value LAST so it overrides any earlier hardcoded
+/// flag. Returns None when no `--model` flag is present.
+fn sniff_model_from_args(args: &[String]) -> Option<String> {
+    let mut found: Option<String> = None;
+    let mut iter = args.iter().peekable();
+    while let Some(arg) = iter.next() {
+        if arg == "--model" {
+            if let Some(val) = iter.next() {
+                found = Some(val.clone());
             }
+        } else if let Some(rest) = arg.strip_prefix("--model=") {
+            found = Some(rest.to_string());
         }
     }
-    None
+    found
 }
 
 fn load_state(path: &Path) -> Result<TaskState> {
@@ -365,6 +432,62 @@ mod tests {
         let result = with_headless_args(spec, "codex", true);
         assert!(result.args.iter().any(|a| a == "-a"));
         assert!(result.args.iter().any(|a| a == "never"));
+    }
+
+    #[test]
+    fn sniff_model_finds_spaced_form() {
+        let args = vec!["-p".into(), "--model".into(), "haiku".into()];
+        assert_eq!(sniff_model_from_args(&args).as_deref(), Some("haiku"));
+    }
+
+    #[test]
+    fn sniff_model_finds_equals_form() {
+        let args = vec!["--model=sonnet".into(), "-p".into()];
+        assert_eq!(sniff_model_from_args(&args).as_deref(), Some("sonnet"));
+    }
+
+    #[test]
+    fn sniff_model_last_occurrence_wins() {
+        let args = vec![
+            "--model".into(),
+            "haiku".into(),
+            "--model".into(),
+            "opus".into(),
+        ];
+        assert_eq!(sniff_model_from_args(&args).as_deref(), Some("opus"));
+    }
+
+    #[test]
+    fn sniff_model_returns_none_when_absent() {
+        let args = vec!["-p".into(), "--verbose".into()];
+        assert_eq!(sniff_model_from_args(&args), None);
+    }
+
+    #[test]
+    fn derive_uses_reported_when_present() {
+        let report = UsageReport {
+            input_tokens: Some(100),
+            output_tokens: Some(200),
+            cache_read_input_tokens: Some(50),
+            cache_creation_input_tokens: Some(10),
+            total_tokens: None,
+        };
+        let (i, o, src, cr, cc) = derive_token_counts(4_000, 8_000, Some(&report));
+        assert_eq!(i, 100);
+        assert_eq!(o, 200);
+        assert_eq!(src, "reported");
+        assert_eq!(cr, Some(50));
+        assert_eq!(cc, Some(10));
+    }
+
+    #[test]
+    fn derive_falls_back_to_estimate_when_no_report() {
+        let (i, o, src, cr, cc) = derive_token_counts(8, 16, None);
+        // 8 bytes / 4 = 2 input tokens; 16/4 = 4 output tokens.
+        assert_eq!(i, 2);
+        assert_eq!(o, 4);
+        assert_eq!(src, "estimated");
+        assert!(cr.is_none() && cc.is_none());
     }
 
     #[test]
