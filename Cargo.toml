@@ -1,6 +1,6 @@
 [package]
 name = "zforge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "TDD-first AI development workflow CLI"
 license = "MIT"
