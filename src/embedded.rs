@@ -19,6 +19,9 @@ pub const PROMPT_TEMPLATES: &[(&str, &str)] = &[
     ),
 ];
 
+pub const COMMANDS: &[(&str, &str)] =
+    &[("zforge.md", include_str!("../templates/commands/zforge.md"))];
+
 pub const AGENTS: &[(&str, &str)] = &[
     (
         "spec-agent.md",
