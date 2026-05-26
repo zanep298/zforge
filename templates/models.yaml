@@ -23,8 +23,8 @@ codex:
   review: gpt-5.4
 
 opencode:
-  spec: claude-haiku-4-5-20251001
-  testspec: claude-haiku-4-5-20251001
-  plan: claude-sonnet-4-6
-  code: claude-sonnet-4-6
-  review: claude-sonnet-4-6
+  spec: opencode-go/qwen3.5-plus
+  testspec: opencode-go/qwen3.5-plus
+  plan: opencode-go/kimi-k2.6
+  code: opencode-go/qwen3.6-plus
+  review: opencode-go/deepseek-v4-pro
