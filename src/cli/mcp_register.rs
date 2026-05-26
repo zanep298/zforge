@@ -169,34 +169,45 @@ fn register_codex(force: bool) -> Outcome {
 
 pub const PHASES: &[&str] = &["spec", "testspec", "plan", "code", "review"];
 
+/// Default codex model used when an agent template has no `codex_model:`
+/// frontmatter. Keeps `write_codex_profiles` producing a usable
+/// `~/.codex/config.toml` even when templates aren't fully annotated.
+pub const DEFAULT_CODEX_MODEL: &str = "gpt-5-codex";
+
 /// Write `[profiles.zforge_<phase>]` blocks to `~/.codex/config.toml` for each
-/// agent phase that has a `codex_model:` frontmatter key. Existing blocks are
-/// replaced (stripped then re-appended) so re-running `zforge init --force`
-/// picks up model changes in agent templates.
-pub fn write_codex_profiles(agents_dir: &std::path::Path) -> Result<()> {
+/// pipeline phase. Reads `codex_model:` frontmatter from the matching agent
+/// template; falls back to `DEFAULT_CODEX_MODEL` so codex always has a usable
+/// profile per phase. Existing blocks are replaced (stripped then
+/// re-appended) so re-running `zforge init --force` picks up model changes.
+///
+/// Returns the list of `(phase, model)` pairs actually written so callers
+/// can report exactly which profiles landed and whether any fell back to
+/// the default.
+pub fn write_codex_profiles(agents_dir: &std::path::Path) -> Result<Vec<(&'static str, String)>> {
     let Some(path) = codex_config_path() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
 
     let mut content = fs::read_to_string(&path).unwrap_or_default();
+    let mut written: Vec<(&'static str, String)> = Vec::new();
 
     for phase in PHASES {
-        let Some(model) = crate::fs::reader::agent_codex_model(agents_dir, phase) else {
-            continue;
-        };
+        let model = crate::fs::reader::agent_codex_model(agents_dir, phase)
+            .unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string());
         let header = format!("[profiles.zforge_{phase}]");
         if content.lines().any(|l| l.trim() == header) {
             content = strip_toml_section(&content, &header);
         }
         let block = format!("{header}\nmodel = \"{model}\"\n");
         content = append_block(&content, &block);
+        written.push((*phase, model));
     }
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&path, content)?;
-    Ok(())
+    Ok(written)
 }
 
 fn strip_toml_section(content: &str, header: &str) -> String {

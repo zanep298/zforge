@@ -1,25 +1,83 @@
 use crate::registry::{
     io, lock,
-    schema::{ProjectEntry, RegisteredBy, Registry},
+    schema::{AgentSpec, ProjectEntry, RegisteredBy, Registry},
     validate,
 };
 use anyhow::Result;
 use chrono::Utc;
 use std::path::Path;
 
-#[derive(Debug)]
-pub enum AutoResult {
-    Registered { name: String },
-    AlreadyExists { name: String },
-    Suffixed { requested: String, final_name: String },
-    Updated { old_name: String, new_name: String },
+/// Default CLI invocation for each well-known agent. Used by
+/// `ensure_default_agents` to seed `registry.agents{}` on first init so the
+/// orchestrator can resolve `--agent claude` / `--agent codex` /
+/// `--agent opencode` without the user editing `~/.zforge/registry.yaml`
+/// by hand.
+///
+/// Codex args: `exec` is the non-interactive subcommand. The orchestrator
+/// auto-appends `--profile zforge_<phase>` at spawn time per phase.
+fn default_agent_specs() -> &'static [(&'static str, &'static str, &'static [&'static str])] {
+    &[
+        ("claude", "claude", &["-p"]),
+        ("codex", "codex", &["exec"]),
+        ("opencode", "opencode", &["run"]),
+    ]
 }
 
-pub fn auto_register(
-    cwd: &Path,
-    name_override: Option<&str>,
-    switch: bool,
-) -> Result<AutoResult> {
+/// Insert default AgentSpec rows for the listed agent names when absent.
+/// Existing entries are left untouched so user customization survives.
+/// Returns the names actually inserted.
+pub fn ensure_default_agents(agent_names: &[&str]) -> Result<Vec<String>> {
+    lock::with_lock(|| {
+        let mut registry = io::load()?;
+        let defaults: std::collections::BTreeMap<&str, AgentSpec> = default_agent_specs()
+            .iter()
+            .map(|(name, cmd, args)| {
+                (
+                    *name,
+                    AgentSpec {
+                        command: (*cmd).into(),
+                        args: args.iter().map(|s| (*s).to_string()).collect(),
+                    },
+                )
+            })
+            .collect();
+        let mut inserted = Vec::new();
+        for name in agent_names {
+            if registry.agents.contains_key(*name) {
+                continue;
+            }
+            let Some(spec) = defaults.get(*name) else {
+                continue;
+            };
+            registry.agents.insert((*name).to_string(), spec.clone());
+            inserted.push((*name).to_string());
+        }
+        if !inserted.is_empty() {
+            io::save_atomic(&registry)?;
+        }
+        Ok(inserted)
+    })
+}
+
+#[derive(Debug)]
+pub enum AutoResult {
+    Registered {
+        name: String,
+    },
+    AlreadyExists {
+        name: String,
+    },
+    Suffixed {
+        requested: String,
+        final_name: String,
+    },
+    Updated {
+        old_name: String,
+        new_name: String,
+    },
+}
+
+pub fn auto_register(cwd: &Path, name_override: Option<&str>, switch: bool) -> Result<AutoResult> {
     let canon = validate::canonicalize_path(cwd)?;
     validate::ensure_zforge_dir(&canon)?;
 
@@ -45,7 +103,9 @@ pub fn auto_register(
                 AutoResult::Registered { name }
                 | AutoResult::AlreadyExists { name }
                 | AutoResult::Updated { new_name: name, .. }
-                | AutoResult::Suffixed { final_name: name, .. } => name.clone(),
+                | AutoResult::Suffixed {
+                    final_name: name, ..
+                } => name.clone(),
             };
             registry.current_project = Some(final_name);
         }

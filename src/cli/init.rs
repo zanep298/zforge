@@ -359,6 +359,26 @@ pub fn run(
     }
 
     if !no_register {
+        // Seed default AgentSpec rows for the agents the user enabled so the
+        // orchestrator can resolve them without manual registry.yaml edits.
+        let wanted: Vec<&str> = {
+            let mut v = vec!["claude"];
+            if want_codex {
+                v.push("codex");
+            }
+            if want_opencode {
+                v.push("opencode");
+            }
+            v
+        };
+        match crate::registry::auto::ensure_default_agents(&wanted) {
+            Ok(inserted) if !inserted.is_empty() => println!(
+                "registered default agents in registry.yaml: {}",
+                inserted.join(", ")
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!("warning: default-agent seeding failed: {e:#}"),
+        }
         match crate::registry::auto::auto_register(&cwd, name.as_deref(), switch) {
             Ok(crate::registry::auto::AutoResult::Registered { name }) => {
                 println!("registered project {name} in ~/.zforge/registry.yaml");
@@ -428,8 +448,14 @@ fn setup_rtk() {
                     .status();
                 match curl {
                     Ok(s) if s.success() => println!("{} rtk installed via curl", "✓".green()),
-                    Ok(s) => { eprintln!("  {} rtk install exited with {s}", "⚠".yellow()); return; }
-                    Err(e) => { eprintln!("  {} rtk install failed: {e}", "⚠".yellow()); return; }
+                    Ok(s) => {
+                        eprintln!("  {} rtk install exited with {s}", "⚠".yellow());
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("  {} rtk install failed: {e}", "⚠".yellow());
+                        return;
+                    }
                 }
             }
         }
@@ -442,7 +468,9 @@ fn setup_rtk() {
         .args(["init", "-g"])
         .status();
     match init {
-        Ok(s) if s.success() => println!("{} rtk init -g — Claude Code hooks configured", "✓".green()),
+        Ok(s) if s.success() => {
+            println!("{} rtk init -g — Claude Code hooks configured", "✓".green())
+        }
         Ok(s) => eprintln!("  {} rtk init exited with {s}", "⚠".yellow()),
         Err(e) => eprintln!("  {} rtk init failed: {e}", "⚠".yellow()),
     }
@@ -532,17 +560,12 @@ fn register_codegraph_mcp(cwd: &Path) {
         serde_json::json!({})
     };
 
-    let servers = root
-        .as_object_mut()
-        .and_then(|o| {
-            if !o.contains_key("mcpServers") {
-                o.insert(
-                    "mcpServers".to_string(),
-                    serde_json::json!({}),
-                );
-            }
-            o.get_mut("mcpServers")?.as_object_mut()
-        });
+    let servers = root.as_object_mut().and_then(|o| {
+        if !o.contains_key("mcpServers") {
+            o.insert("mcpServers".to_string(), serde_json::json!({}));
+        }
+        o.get_mut("mcpServers")?.as_object_mut()
+    });
 
     if let Some(servers) = servers {
         if servers.contains_key("codegraph") {
@@ -619,6 +642,23 @@ fn scaffold_claude(
         rule_count
     );
 
+    // .claude/commands/ — slash commands (e.g. /zforge <TASK-ID>)
+    let claude_commands_dir = claude_dir.join("commands");
+    std::fs::create_dir_all(&claude_commands_dir)?;
+    let mut cmd_count = 0usize;
+    for (name, content) in command_templates() {
+        let created = write_safe(&claude_commands_dir.join(name), content, force)?;
+        stats.record(created);
+        if created {
+            cmd_count += 1;
+        }
+    }
+    println!(
+        "{} .claude/commands/ — {} slash commands",
+        label(cmd_count > 0),
+        command_templates().len()
+    );
+
     // caveman — terse output mode (saves ~65% output tokens)
     ensure_caveman();
 
@@ -630,7 +670,10 @@ fn ensure_caveman() {
         Some(h) => h,
         None => return,
     };
-    let activate = home.join(".claude").join("hooks").join("caveman-activate.js");
+    let activate = home
+        .join(".claude")
+        .join("hooks")
+        .join("caveman-activate.js");
     if activate.exists() {
         println!("{} caveman already installed", "–".dimmed());
         return;
@@ -667,10 +710,16 @@ fn ensure_caveman() {
             println!("{} caveman installed", "✓".green());
         }
         Ok(s) => {
-            eprintln!("  {} caveman install exited {s}. Run manually: {manual}", "⚠".yellow());
+            eprintln!(
+                "  {} caveman install exited {s}. Run manually: {manual}",
+                "⚠".yellow()
+            );
         }
         Err(e) => {
-            eprintln!("  {} caveman install failed: {e}. Run manually: {manual}", "⚠".yellow());
+            eprintln!(
+                "  {} caveman install failed: {e}. Run manually: {manual}",
+                "⚠".yellow()
+            );
         }
     }
 }
@@ -728,21 +777,23 @@ fn scaffold_codex(
     let codex_agents_source = global_store
         .map(|g| g.join("agents"))
         .unwrap_or_else(|| zforge_dir.join("agents"));
-    if let Err(e) = crate::cli::mcp_register::write_codex_profiles(&codex_agents_source) {
-        eprintln!(
+    match crate::cli::mcp_register::write_codex_profiles(&codex_agents_source) {
+        Err(e) => eprintln!(
             "  {} Codex profile write reported errors: {e}",
             "⚠".yellow()
-        );
-    } else {
-        println!(
-            "{} ~/.codex/config.toml — profiles: {}",
-            "✓".green(),
-            crate::cli::mcp_register::PHASES
+        ),
+        Ok(written) if written.is_empty() => eprintln!(
+            "  {} Codex profile write produced no profiles (no agent templates found).",
+            "⚠".yellow()
+        ),
+        Ok(written) => {
+            let profiles = written
                 .iter()
-                .map(|p| format!("zforge_{p}"))
+                .map(|(phase, model)| format!("zforge_{phase}={model}"))
                 .collect::<Vec<_>>()
-                .join(", ")
-        );
+                .join(", ");
+            println!("{} ~/.codex/config.toml — {}", "✓".green(), profiles);
+        }
     }
 
     Ok(())
@@ -992,7 +1043,7 @@ fn read_ecc_rule(ecc_rules: &Path, name: &str) -> Option<String> {
 }
 
 // Embedded template arrays live in init::registry.
-use registry::{agent_templates, prompt_templates, skill_templates, SKILLS};
+use registry::{agent_templates, command_templates, prompt_templates, skill_templates, SKILLS};
 
 #[cfg(test)]
 mod tests {

@@ -9,7 +9,7 @@ use crate::orchestrator::{
     fallback::CompiledPolicy,
     headless_args::headless_args_for_agent,
     history::{fallback_count, record_fallback},
-    model_args::model_args_for_agent,
+    model_args::{model_args_for_agent, profile_args_for_agent},
     spawn::{spawn_agent, SpawnOutcome},
 };
 use crate::registry;
@@ -68,7 +68,8 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
                 )
             })?;
 
-        let spec = with_model_args(&base_spec, &agent_name, phase, models.as_ref());
+        let spec = with_profile_args(&base_spec, &agent_name, phase);
+        let spec = with_model_args(&spec, &agent_name, phase, models.as_ref());
         let spec = with_headless_args(spec, &agent_name, is_headless());
 
         // Model resolution precedence for telemetry:
@@ -168,6 +169,27 @@ fn with_model_args(
     }
     let mut spec = base.clone();
     spec.args.extend(extra);
+    spec
+}
+
+/// Prepend profile-selection args. Codex's `--profile zforge_<phase>` must
+/// come BEFORE the `exec` subcommand or codex parses it as an arg to exec
+/// and errors. Other agents return an empty profile arg list so this is a
+/// no-op.
+///
+/// Prepending is safe relative to user-registered args: even if the user
+/// hardcoded `--profile something_else`, the orchestrator's value still
+/// lands first; codex's CLI takes the LAST occurrence so user override
+/// continues to win — matching `with_model_args`'s precedence story.
+fn with_profile_args(base: &AgentSpec, agent_name: &str, phase: &str) -> AgentSpec {
+    let extra = profile_args_for_agent(agent_name, phase);
+    if extra.is_empty() {
+        return base.clone();
+    }
+    let mut spec = base.clone();
+    let mut combined = extra;
+    combined.append(&mut spec.args);
+    spec.args = combined;
     spec
 }
 
@@ -404,6 +426,32 @@ mod tests {
         let result = with_model_args(&spec, "codex", "code", Some(&models));
         // Args unchanged; user-set profile arg preserved as-is.
         assert_eq!(result.args, vec!["--profile", "zforge_code"]);
+    }
+
+    #[test]
+    fn codex_profile_args_prepend_before_existing() {
+        let spec = AgentSpec {
+            command: "codex".into(),
+            args: vec!["exec".into()],
+        };
+        let result = with_profile_args(&spec, "codex", "plan");
+        assert_eq!(
+            result.args,
+            vec!["--profile", "zforge_plan", "exec"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn non_codex_agent_profile_args_no_op() {
+        let spec = AgentSpec {
+            command: "claude".into(),
+            args: vec!["-p".into()],
+        };
+        let result = with_profile_args(&spec, "claude", "plan");
+        assert_eq!(result.args, vec!["-p"]);
     }
 
     #[test]
