@@ -2,7 +2,7 @@
 //! `crate::embedded`. Kept so existing `super::registry::{...}` imports in
 //! `cli::init` continue to compile while the data lives in one place.
 
-pub(crate) use crate::embedded::{AGENTS, PROMPT_TEMPLATES, SKILLS};
+pub(crate) use crate::embedded::{AGENTS, COMMANDS, PROMPT_TEMPLATES, SKILLS};
 
 pub(crate) fn prompt_templates() -> &'static [(&'static str, &'static str)] {
     PROMPT_TEMPLATES
@@ -14,6 +14,10 @@ pub(crate) fn agent_templates() -> &'static [(&'static str, &'static str)] {
 
 pub(crate) fn skill_templates() -> &'static [(&'static str, &'static str)] {
     SKILLS
+}
+
+pub(crate) fn command_templates() -> &'static [(&'static str, &'static str)] {
+    COMMANDS
 }
 
 #[cfg(test)]
