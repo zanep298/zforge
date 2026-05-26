@@ -620,13 +620,20 @@ fn scaffold_claude(
     stats.record(created);
     print_file_status(created, ".claude/settings.json");
 
-    // .claude/agents/ — symlinks to the agent store (global or project-local)
+    // .claude/agents/ — per-target rendered copies (model: line resolved from
+    // models.yaml when present, falling back to template frontmatter).
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
-    let (agent_count, target_label) =
-        symlink_agents_into(zforge_dir, &claude_agents_dir, global_store, force)?;
+    let (agent_count, target_label) = materialize_agents_for(
+        "claude",
+        cwd,
+        zforge_dir,
+        &claude_agents_dir,
+        global_store,
+        force,
+    )?;
     println!(
-        "{} .claude/agents/ — {} symlinks → {}",
+        "{} .claude/agents/ — {} files (model resolved per claude) ← {}",
         label(agent_count > 0),
         agent_count,
         target_label
@@ -745,15 +752,22 @@ fn scaffold_codex(
         );
     }
 
-    // .codex/agents/ — symlinks to the agent store (global or project-local)
+    // .codex/agents/ — per-target rendered copies. `model:` is resolved
+    // from models.yaml → frontmatter `codex_model:` → default gpt-5-codex.
     let codex_dir = cwd.join(".codex");
     std::fs::create_dir_all(&codex_dir)?;
     let codex_agents_dir = codex_dir.join("agents");
     std::fs::create_dir_all(&codex_agents_dir)?;
-    let (codex_agent_count, target_label) =
-        symlink_agents_into(zforge_dir, &codex_agents_dir, global_store, force)?;
+    let (codex_agent_count, target_label) = materialize_agents_for(
+        "codex",
+        cwd,
+        zforge_dir,
+        &codex_agents_dir,
+        global_store,
+        force,
+    )?;
     println!(
-        "{} .codex/agents/ — {} symlinks → {}",
+        "{} .codex/agents/ — {} files (model resolved per codex) ← {}",
         label(codex_agent_count > 0),
         codex_agent_count,
         target_label
@@ -819,15 +833,22 @@ fn scaffold_opencode(
         );
     }
 
-    // .opencode/agents/ — symlinks to the agent store (global or project-local)
+    // .opencode/agents/ — per-target rendered copies. `model:` resolved from
+    // models.yaml → frontmatter `opencode_model:` → default claude-sonnet-4-6.
     let opencode_dir = cwd.join(".opencode");
     std::fs::create_dir_all(&opencode_dir)?;
     let opencode_agents_dir = opencode_dir.join("agents");
     std::fs::create_dir_all(&opencode_agents_dir)?;
-    let (opencode_agent_count, target_label) =
-        symlink_agents_into(zforge_dir, &opencode_agents_dir, global_store, force)?;
+    let (opencode_agent_count, target_label) = materialize_agents_for(
+        "opencode",
+        cwd,
+        zforge_dir,
+        &opencode_agents_dir,
+        global_store,
+        force,
+    )?;
     println!(
-        "{} .opencode/agents/ — {} symlinks → {}",
+        "{} .opencode/agents/ — {} files (model resolved per opencode) ← {}",
         label(opencode_agent_count > 0),
         opencode_agent_count,
         target_label
@@ -889,6 +910,7 @@ use detect::detect_project;
 // Per-language skill templates live in init::lang_skills.
 use lang_skills::{build_lang_skills_section, lang_skill_templates};
 
+mod agent_render;
 mod detect;
 mod lang_skills;
 mod registry;
@@ -910,90 +932,25 @@ fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
     apply_vars(template, v.vars).replace("{{lang_skills_section}}", v.lang_skills_section)
 }
 
-const AGENT_NAMES: [&str; 5] = [
-    "spec-agent.md",
-    "testspec-agent.md",
-    "plan-agent.md",
-    "code-agent.md",
-    "review-agent.md",
-];
-
-/// Create symlinks in `link_dir` pointing to `*.md` files in `zforge_agents_dir`.
-/// `.zforge/agents/` is the single source of truth — agent harnesses (Claude Code,
-/// Codex CLI, …) read via symlinks under their own project directory.
+/// Render per-target agent files into `dst_dir` from the appropriate source
+/// agents directory (global store at `~/.zforge/agents/` when present, else
+/// project-local `.zforge/agents/`). Each file gets a single `model:` line
+/// resolved from `models.yaml` → template frontmatter → hard default.
 ///
-/// `link_dir` is expected at depth 2 from the project root (e.g. `.claude/agents/`,
-/// `.codex/agents/`) so the relative target `../../.zforge/agents/` resolves correctly.
-fn symlink_zforge_agents(_zforge_agents_dir: &Path, link_dir: &Path, force: bool) -> Result<usize> {
-    let mut count = 0;
-    for name in AGENT_NAMES {
-        let link = link_dir.join(name);
-        let exists = link.exists() || link.symlink_metadata().is_ok();
-        if exists {
-            if force {
-                std::fs::remove_file(&link)?;
-            } else {
-                continue;
-            }
-        }
-        let target = Path::new("../../.zforge/agents").join(name);
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &link)?;
-        #[cfg(not(unix))]
-        {
-            // Windows: fall back to copy
-            let src = _zforge_agents_dir.join(name);
-            if src.exists() {
-                std::fs::copy(&src, &link)?;
-            }
-        }
-        count += 1;
-    }
-    Ok(count)
-}
-
-/// Create symlinks in `link_dir` pointing at the global agent store
-/// (`~/.zforge/agents/`). Used by `init --shared` so multiple projects share
-/// one set of agent definitions.
-fn symlink_global_agents(global_agents_dir: &Path, link_dir: &Path, force: bool) -> Result<usize> {
-    let mut count = 0;
-    for name in AGENT_NAMES {
-        let link = link_dir.join(name);
-        let exists = link.exists() || link.symlink_metadata().is_ok();
-        if exists {
-            if force {
-                std::fs::remove_file(&link)?;
-            } else {
-                continue;
-            }
-        }
-        let target = global_agents_dir.join(name);
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &link)?;
-        #[cfg(not(unix))]
-        {
-            // Windows: fall back to copy from the absolute target
-            if target.exists() {
-                std::fs::copy(&target, &link)?;
-            }
-        }
-        count += 1;
-    }
-    Ok(count)
-}
-
-/// Dispatch to the project-local or global symlink helper based on whether
-/// the caller passed a `global_store` root. Returns `(count, label)` where
-/// `label` is the human-readable target path printed in progress output.
-fn symlink_agents_into(
+/// Replaces the older symlink-based approach (`symlink_agents_into`) for
+/// agent-CLI directories so each tool reads its own model rather than seeing
+/// all three `model:` / `codex_model:` / `opencode_model:` keys at once.
+fn materialize_agents_for(
+    target_agent: &str,
+    cwd: &Path,
     zforge_dir: &Path,
-    link_dir: &Path,
+    dst_dir: &Path,
     global_store: Option<&Path>,
     force: bool,
 ) -> Result<(usize, String)> {
-    if let Some(global) = global_store {
+    let models = crate::config::load_models_from_root(cwd);
+    let (src_dir, label): (PathBuf, String) = if let Some(global) = global_store {
         let agents = global.join("agents");
-        let count = symlink_global_agents(&agents, link_dir, force)?;
         let label = match dirs::home_dir() {
             Some(home) => match agents.strip_prefix(&home) {
                 Ok(rel) => format!("~/{}", rel.display()),
@@ -1001,11 +958,18 @@ fn symlink_agents_into(
             },
             None => agents.display().to_string(),
         };
-        Ok((count, label))
+        (agents, label)
     } else {
-        let count = symlink_zforge_agents(&zforge_dir.join("agents"), link_dir, force)?;
-        Ok((count, ".zforge/agents/".to_string()))
-    }
+        (zforge_dir.join("agents"), ".zforge/agents/".to_string())
+    };
+    let count = agent_render::materialize_agents_into(
+        target_agent,
+        &src_dir,
+        dst_dir,
+        models.as_ref(),
+        force,
+    )?;
+    Ok((count, label))
 }
 
 fn install_rules_for_claude(rules_dir: &Path, force: bool, stats: &mut InitStats) -> Result<usize> {
@@ -1086,65 +1050,51 @@ mod tests {
     }
 
     #[test]
-    fn symlink_zforge_agents_creates_relative_links_into_codex_dir() {
+    fn materialize_agents_for_writes_codex_only_model_line() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let zforge_agents = root.join(".zforge").join("agents");
+        let zforge_dir = root.join(".zforge");
+        let zforge_agents = zforge_dir.join("agents");
         std::fs::create_dir_all(&zforge_agents).unwrap();
-        for name in [
-            "spec-agent.md",
-            "testspec-agent.md",
-            "plan-agent.md",
-            "code-agent.md",
-            "review-agent.md",
-        ] {
-            std::fs::write(zforge_agents.join(name), "stub\n").unwrap();
-        }
+        std::fs::write(
+            zforge_agents.join("code-agent.md"),
+            "---\nname: code-agent\nmodel: claude-sonnet-4-6\ncodex_model: gpt-5-codex\nopencode_model: claude-sonnet-4-6\n---\nbody\n",
+        ).unwrap();
 
         let codex_agents = root.join(".codex").join("agents");
-        std::fs::create_dir_all(&codex_agents).unwrap();
-
-        let count = symlink_zforge_agents(&zforge_agents, &codex_agents, false).unwrap();
-        assert_eq!(count, 5);
-
-        // Relative target resolves from .codex/agents/ back into .zforge/agents/
-        #[cfg(unix)]
-        {
-            let link = codex_agents.join("spec-agent.md");
-            let target = std::fs::read_link(&link).unwrap();
-            assert_eq!(target, Path::new("../../.zforge/agents/spec-agent.md"));
-            let resolved = std::fs::read_to_string(&link).unwrap();
-            assert_eq!(resolved.trim(), "stub");
-        }
+        let (count, _label) =
+            materialize_agents_for("codex", root, &zforge_dir, &codex_agents, None, false).unwrap();
+        assert_eq!(count, 1);
+        let written = std::fs::read_to_string(codex_agents.join("code-agent.md")).unwrap();
+        assert!(written.contains("model: gpt-5-codex"));
+        assert!(!written.contains("codex_model:"));
+        assert!(!written.contains("opencode_model:"));
     }
 
     #[test]
-    fn symlink_zforge_agents_preserves_existing_link_targets() {
+    fn materialize_agents_for_preserves_existing_without_force() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let zforge_agents = root.join(".zforge").join("agents");
+        let zforge_dir = root.join(".zforge");
+        let zforge_agents = zforge_dir.join("agents");
         std::fs::create_dir_all(&zforge_agents).unwrap();
-        for name in [
-            "spec-agent.md",
-            "testspec-agent.md",
-            "plan-agent.md",
-            "code-agent.md",
-            "review-agent.md",
-        ] {
-            std::fs::write(zforge_agents.join(name), "stub\n").unwrap();
-        }
-
+        std::fs::write(
+            zforge_agents.join("spec-agent.md"),
+            "---\nmodel: claude-haiku-4-5-20251001\ncodex_model: gpt-5-codex\n---\n",
+        )
+        .unwrap();
         let codex_agents = root.join(".codex").join("agents");
         std::fs::create_dir_all(&codex_agents).unwrap();
-        // Pre-existing user-edited file — must be left alone
         std::fs::write(codex_agents.join("spec-agent.md"), "preexisting\n").unwrap();
 
-        let count = symlink_zforge_agents(&zforge_agents, &codex_agents, false).unwrap();
+        let (count, _) =
+            materialize_agents_for("codex", root, &zforge_dir, &codex_agents, None, false).unwrap();
+        assert_eq!(count, 0);
         assert_eq!(
-            count, 4,
-            "should symlink 4 missing agents, skip the existing one"
+            std::fs::read_to_string(codex_agents.join("spec-agent.md"))
+                .unwrap()
+                .trim(),
+            "preexisting"
         );
-        let still_there = std::fs::read_to_string(codex_agents.join("spec-agent.md")).unwrap();
-        assert_eq!(still_there.trim(), "preexisting");
     }
 }
