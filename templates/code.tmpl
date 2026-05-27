@@ -29,6 +29,16 @@ Retry instructions:
 - Do not break any test that was passing before.
 
 {{end}}
+## Code Search
+
+When you need to locate existing code, understand call sites, or find related symbols:
+- `mcp__codegraph__query` — find functions, types, traits, modules by name or pattern
+- `mcp__codegraph__context` — get semantic context for the area you're changing
+- `mcp__codegraph__affected` — discover which tests are affected by your changes
+- `mcp__codegraph__files` — browse file structure
+
+Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
+
 ## Instructions
 1. Read plan.md and testspec.md first.
 2. Write failing tests for the testspec case IDs.
@@ -41,10 +51,36 @@ Retry instructions:
 ## Constraints
 - Language: {{language}}
 - Test command: {{test_command}}
+- Execute steps in the exact order defined in plan.md
+- All tests in testspec.md must pass before marking done
+- Keep changes minimal — do not touch code unrelated to the current task
+- Preserve existing public interfaces unless the spec explicitly changes them
 - Organize by feature/concern, not by abstract layers
 - Keep modules small and focused — split when a file gets too large, not before
 - Prefer simple, flat structures over deep hierarchies
-- Do not open spec.md or task.md unless the approved plan/testspec leaves a gap.
+
+## Completion Checklist
+
+Before reporting done, verify:
+- Every test case in testspec.md exists in the test suite and passes
+- Each plan.md step landed (or deviation is flagged in the summary)
+- No public interface changed outside spec.md authorization
+- No panic-style placeholders in production paths
+- On retry: every previously-failing test now passes and root cause noted
+
+## Do Not Do
+
+- Do not skip writing tests first — write the failing test, then the implementation
+- Do not exceed the scope approved in spec.md without flagging it explicitly
+- Do not silently change function signatures, return types, or error variants
+- Do not delete or rename tests without a documented reason
+- Do not open spec.md or task.md unless the approved plan/testspec leaves a gap
+- Do not refactor unrelated code even if it looks messy
+- Do not leave panic-style placeholders in production paths. Examples by language:
+  - Rust: `unwrap()`, `expect("TODO")`, `todo!()`, `unimplemented!()`, `panic!()`
+  - Python: `raise NotImplementedError`, bare `pass` where logic is required
+  - JS/TS: `throw new Error("TODO")`, `// TODO` in lieu of real code
+  - Go: `panic("TODO")`
 
 ## When Done
 Run: zforge verify {{task_id}}

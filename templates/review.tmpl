@@ -59,8 +59,39 @@ reviewed: false
 - [actionable item for the team or next tasks]
 ```
 
+## Code Search
+
+When you need to understand code under review:
+- `mcp__codegraph__query` — find symbols, types, functions by name
+- `mcp__codegraph__context` — get AI-ready context for a task area
+- `mcp__codegraph__files` — browse file structure
+
+Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
+
 ## Rules
-- Start from the implementation diff, then cross-check against plan.md and testspec.md.
-- Call out any testspec case IDs that are missing coverage.
-- Base every observation on evidence from the artifact files — not assumptions.
-- Keep pattern extraction limited to reusable lessons from this implementation.
+- Language: {{language}}
+- Start from the implementation diff, then cross-check against plan.md and testspec.md
+- Base every observation on evidence from the artifact files and the diff — not assumptions
+- If a concern is minor, note it as minor — do not inflate severity
+- Call out any testspec case IDs that are missing coverage
+- Keep pattern extraction limited to reusable lessons from this implementation
+
+Any extracted pattern or anti-pattern lines MUST use the format `- key: short-description` (one per line).
+The key is the unique dedup token used by `append_unique_lines`. Reusing an existing key is a no-op; pick a new key only for a genuinely new lesson.
+
+## Completion Checklist
+
+Before writing output, verify:
+- Every testspec case has a passing entry in verify.md or missing coverage is flagged
+- Every step in plan.md is reflected in the diff (or deviation is flagged)
+- No new public-interface change beyond what the approved plan/testspec authorized
+- Patterns/anti-patterns extracted use `- key: description` format
+
+## Do Not Do
+
+- Do not implement fixes — only identify and describe issues
+- Do not give a shallow "looks good" review — every section must have content
+- Do not ignore deviations from the plan, even if the result still works
+- Do not skip checking that testspec.md coverage is complete
+- Do not propose new features or scope expansions in the review
+- Do not invent new memory keys that duplicate existing patterns/anti-patterns content

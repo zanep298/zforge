@@ -43,7 +43,38 @@ reviewed: false
 - [AMBIGUOUS: missing expected behavior for ...]
 ```
 
+## Code Search
+
+When you need to understand existing code:
+- `mcp__codegraph__query` — find symbols, types, functions by name
+- `mcp__codegraph__context` — get AI-ready context for a task area
+- `mcp__codegraph__files` — browse file structure
+
+Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
+
 ## Rules
-- Every acceptance criterion in spec.md must map to at least one case ID.
-- Keep cases behavioral; do not classify them as unit or integration tests.
-- Do not invent requirements that are not in the spec.
+- Language: {{language}}
+- Test command: {{test_command}}
+- Derive test cases only from the approved spec — do not invent new requirements
+- Every acceptance criterion in spec.md must map to at least one test case
+- Call out any spec ambiguity that makes a test case impossible to write
+- Focus on behavior and coverage, not test taxonomy such as unit vs integration
+- Use concrete inputs and expected results whenever the spec provides enough detail
+
+## Completion Checklist
+
+Before writing output, verify:
+- Every acceptance criterion in spec.md maps to at least one test case
+- Negative cases included (invalid input, error paths, boundary failures)
+- Each case has concrete input + expected result whenever spec allows
+- No duplicate cases (each covers something distinct)
+- No implementation details leaked into test descriptions
+
+## Do Not Do
+
+- Do not write any implementation code or test code — only test descriptions
+- Do not start coding until a human has reviewed and approved testspec.md
+- Do not skip negative tests (error cases, invalid inputs, rejected requests)
+- Do not duplicate test cases — each case must cover something distinct
+- Do not let implementation details leak into test descriptions (test behavior, not internals)
+- Do not force every case into categories like unit test or integration test

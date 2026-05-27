@@ -98,7 +98,12 @@ impl Engine {
         let sep = "═".repeat(43);
         let thin = "─".repeat(43);
         println!("{}", sep.blue());
-        println!("  {} › {} › {}", "ZFLOW".bold(), template_name, ctx.task_id);
+        println!(
+            "  {} › {} › {}",
+            "ZFORGE".bold(),
+            template_name,
+            ctx.task_id
+        );
         println!("{}", sep.blue());
         println!();
         println!("{}", rendered);
@@ -173,7 +178,7 @@ impl Engine {
         println!("{}", sep.blue());
         println!(
             "  {} › {} › {} {}",
-            "ZFLOW".bold(),
+            "ZFORGE".bold(),
             template_name,
             ctx.task_id,
             "→ claude".dimmed()
@@ -226,7 +231,7 @@ impl Engine {
         println!("{}", sep.blue());
         println!(
             "  {} › {} › {} {}",
-            "ZFLOW".bold(),
+            "ZFORGE".bold(),
             template_name,
             ctx.task_id,
             "→ opencode".dimmed()

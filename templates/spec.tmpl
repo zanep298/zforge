@@ -45,8 +45,36 @@ reviewed: false
 - [anything ambiguous that needs human input before testspec can be written]
 ```
 
+## Code Search
+
+When you need to understand existing code (interfaces, types, call sites) to scope the spec:
+- `mcp__codegraph__query` — find symbols, types, functions by name
+- `mcp__codegraph__context` — get AI-ready context for a task area
+- `mcp__codegraph__files` — browse file structure
+
+Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
+
 ## Rules
 - Language: {{language}}
 - Test command: {{test_command}}
-- Do not expand scope beyond the task.
-- Keep the spec behavioral; avoid implementation code.
+- Derive everything from the task description — do not invent new requirements
+- If a field in task.md is empty, note it as a gap rather than guessing
+- Use concrete, testable language in acceptance criteria
+- Do not expand scope beyond the task
+- Keep the spec behavioral; avoid implementation code
+
+## Completion Checklist
+
+Before writing output, verify:
+- Every acceptance criterion is testable (a concrete pass/fail rule, not "it works")
+- Every empty/missing field in task.md is recorded as an explicit gap
+- Scope matches task.md exactly — nothing added, nothing dropped
+- All non-obvious assumptions surfaced explicitly
+
+## Do Not Do
+
+- Do not write code or pseudocode
+- Do not propose architecture changes not mentioned in the task
+- Do not skip assumptions — surface every non-obvious assumption explicitly
+- Do not write vague acceptance criteria ("it works", "it's fast")
+- Do not expand scope beyond what the task asks for

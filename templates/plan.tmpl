@@ -51,9 +51,37 @@ reviewed: false
 [How to undo this change safely if something goes wrong]
 ````
 
+## Code Search
+
+Before planning, locate affected files and symbols:
+- `mcp__codegraph__query` — find functions, types, modules by name
+- `mcp__codegraph__context` — get semantic context for the task area
+- `mcp__codegraph__affected` — find files/tests affected by a planned change
+- `mcp__codegraph__files` — browse file structure
+
+Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
+
 ## Rules
 - Language: {{language}}
 - Test command: {{test_command}}
-- Plan only the minimal patch needed to satisfy the approved testspec.
-- Keep test-first order aligned with the testspec case IDs.
-- Be specific about file paths — use actual paths from the codebase when known.
+- Plan only the minimal patch needed to satisfy the approved testspec
+- The test-first execution order must align with the test cases in testspec.md
+- Be specific about file paths — use actual paths from the codebase when known
+- Apply any provided project memory/context files when relevant
+
+## Completion Checklist
+
+Before writing output, verify:
+- Every test case in testspec.md has a corresponding step (test-first ordering)
+- Each step names concrete file paths from the codebase
+- No step expands scope beyond spec.md
+- Rollback notes present
+- No step contradicts the approved spec, testspec, or provided context
+
+## Do Not Do
+
+- Do not write production code or test code
+- Do not expand scope beyond the approved spec
+- Do not propose broad refactors unless they are required to make the tests pass
+- Do not leave execution order ambiguous — each step must be unambiguously next
+- Do not skip the rollback notes

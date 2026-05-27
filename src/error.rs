@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[allow(dead_code)]
 #[derive(Error, Debug)]
-pub enum ZflowError {
+pub enum ZforgeError {
     #[error("config not found — run: zf init")]
     ConfigNotFound,
 
