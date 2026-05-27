@@ -1,7 +1,7 @@
-use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
+use crate::cli::{artifact_metadata, dispatch_helper::run_phase_for_task};
 use crate::config;
-use crate::fs::{reader, tokens, writer};
+use crate::fs::{reader, tokens};
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -31,15 +31,9 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
             anyhow::bail!("plan.md not found or empty. Generate content before marking done.");
         }
         let plan_path = tasks_dir.join(task_id).join("plan.md");
+        let plan_content = std::fs::read_to_string(&plan_path).unwrap_or_default();
         let plan_tokens =
-            tokens::estimate(&std::fs::read_to_string(&plan_path).unwrap_or_default());
-        writer::set_frontmatter(
-            &plan_path,
-            "tokens",
-            serde_yaml::Value::Number(plan_tokens.into()),
-        )?;
-        let model = reader::agent_model(&config.agents_dir(), "plan");
-        writer::set_frontmatter(&plan_path, "model", serde_yaml::Value::String(model))?;
+            artifact_metadata::set_llm_metadata(&config, &ts, "plan", &plan_path, &plan_content)?;
 
         ts.advance(State::Planned, "plan generated")?;
         ts.save(&tasks_dir)?;

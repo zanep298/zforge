@@ -1,3 +1,4 @@
+use crate::config::ModelsConfig;
 use anyhow::Result;
 use indexmap::IndexMap;
 use std::path::Path;
@@ -68,60 +69,61 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
 }
 
 pub fn agent_model(agents_dir: &Path, phase: &str) -> String {
-    if let Some(models) = crate::config::load_models() {
-        if let Some(m) = models.for_assistant("claude", phase) {
-            return m.to_string();
-        }
-    }
-    let path = agents_dir.join(format!("{}-agent.md", phase));
-    MarkdownFile::read(&path)
-        .ok()
-        .and_then(|md| md.get_str("model").map(String::from))
+    let models = crate::config::load_models();
+    agent_model_for_phase_with_models(agents_dir, "claude", phase, models.as_ref())
         .unwrap_or_else(|| "unknown".to_string())
 }
 
 pub fn agent_codex_model(agents_dir: &Path, phase: &str) -> Option<String> {
-    if let Some(models) = crate::config::load_models() {
-        if let Some(m) = models.for_assistant("codex", phase) {
-            return Some(m.to_string());
-        }
-    }
-    let path = agents_dir.join(format!("{}-agent.md", phase));
-    MarkdownFile::read(&path)
-        .ok()
-        .and_then(|md| md.get_str("codex_model").map(String::from))
+    let models = crate::config::load_models();
+    agent_model_for_phase_with_models(agents_dir, "codex", phase, models.as_ref())
 }
 
 pub fn agent_opencode_model(agents_dir: &Path, phase: &str) -> Option<String> {
-    if let Some(models) = crate::config::load_models() {
-        if let Some(m) = models.for_assistant("opencode", phase) {
-            return Some(m.to_string());
-        }
-    }
-    let path = agents_dir.join(format!("{}-agent.md", phase));
-    MarkdownFile::read(&path).ok().and_then(|md| {
-        md.get_str("opencode_model")
-            .or_else(|| md.get_str("model"))
-            .map(String::from)
-    })
+    let models = crate::config::load_models();
+    agent_model_for_phase_with_models(agents_dir, "opencode", phase, models.as_ref())
 }
 
 /// Resolve the model to pass as `--model` when dispatching to an assistant.
 /// Routes through the per-assistant reader so all callers share one path.
 pub fn agent_model_for_dispatch(agents_dir: &Path, assistant: &str, phase: &str) -> Option<String> {
-    match assistant {
-        "claude" => {
-            let m = agent_model(agents_dir, phase);
-            if m == "unknown" {
-                None
-            } else {
-                Some(m)
-            }
-        }
-        "codex" => agent_codex_model(agents_dir, phase),
-        "opencode" => agent_opencode_model(agents_dir, phase),
-        _ => None,
+    let models = crate::config::load_models();
+    agent_model_for_phase_with_models(agents_dir, assistant, phase, models.as_ref())
+}
+
+/// Resolve an assistant-specific model for one workflow phase.
+///
+/// Precedence:
+/// 1. `models.yaml` for `(assistant, phase)`.
+/// 2. Agent template frontmatter for that assistant.
+///
+/// Codex/OpenCode rendered agent directories contain a single `model:` key,
+/// while the canonical `.zforge/agents` templates contain `codex_model:` and
+/// `opencode_model:`. Accept both so CLI dispatch, artifact metadata, and
+/// orchestrator telemetry can share one resolver.
+pub fn agent_model_for_phase_with_models(
+    agents_dir: &Path,
+    assistant: &str,
+    phase: &str,
+    models: Option<&ModelsConfig>,
+) -> Option<String> {
+    if let Some(m) = models.and_then(|m| m.for_assistant(assistant, phase)) {
+        return Some(m.to_string());
     }
+
+    let path = agents_dir.join(format!("{}-agent.md", phase));
+    let md = MarkdownFile::read(&path).ok()?;
+    let model = match assistant {
+        "claude" => md.get_str("model"),
+        "codex" => md.get_str("codex_model").or_else(|| md.get_str("model")),
+        "opencode" => md.get_str("opencode_model").or_else(|| md.get_str("model")),
+        "agy" => md.get_str("agy_model"),
+        other => {
+            let key = format!("{other}_model");
+            md.get_str(&key)
+        }
+    };
+    model.map(String::from)
 }
 
 pub fn artifact_exists(tasks_dir: &Path, task_id: &str, artifact: &str) -> bool {
@@ -165,5 +167,43 @@ mod tests {
         std::fs::create_dir_all(&task_dir).unwrap();
         std::fs::write(task_dir.join("spec.md"), "").unwrap();
         assert!(!artifact_exists(tmp.path(), "TASK-1", "spec.md"));
+    }
+
+    #[test]
+    fn agent_model_resolves_assistant_specific_frontmatter() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("plan-agent.md"),
+            "---\nmodel: claude-sonnet\ncodex_model: gpt-5-codex\nopencode_model: qwen\n---\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            agent_model_for_phase_with_models(tmp.path(), "claude", "plan", None).as_deref(),
+            Some("claude-sonnet")
+        );
+        assert_eq!(
+            agent_model_for_phase_with_models(tmp.path(), "codex", "plan", None).as_deref(),
+            Some("gpt-5-codex")
+        );
+        assert_eq!(
+            agent_model_for_phase_with_models(tmp.path(), "opencode", "plan", None).as_deref(),
+            Some("qwen")
+        );
+    }
+
+    #[test]
+    fn unknown_agent_does_not_fall_back_to_claude_model_key() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("plan-agent.md"),
+            "---\nmodel: claude-sonnet\n---\n",
+        )
+        .unwrap();
+
+        assert!(
+            agent_model_for_phase_with_models(tmp.path(), "custom", "plan", None).is_none(),
+            "custom agents need models.yaml or custom_model frontmatter"
+        );
     }
 }

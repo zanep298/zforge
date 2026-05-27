@@ -1,7 +1,7 @@
-use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
+use crate::cli::{artifact_metadata, dispatch_helper::run_phase_for_task};
 use crate::config;
-use crate::fs::{reader, tokens, writer};
+use crate::fs::{reader, tokens};
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -29,15 +29,14 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
             anyhow::bail!("testspec.md not found or empty. Generate content before marking done.");
         }
         let testspec_path = tasks_dir.join(task_id).join("testspec.md");
-        let testspec_tokens =
-            tokens::estimate(&std::fs::read_to_string(&testspec_path).unwrap_or_default());
-        writer::set_frontmatter(
+        let testspec_content = std::fs::read_to_string(&testspec_path).unwrap_or_default();
+        let testspec_tokens = artifact_metadata::set_llm_metadata(
+            &config,
+            &ts,
+            "testspec",
             &testspec_path,
-            "tokens",
-            serde_yaml::Value::Number(testspec_tokens.into()),
+            &testspec_content,
         )?;
-        let model = reader::agent_model(&config.agents_dir(), "testspec");
-        writer::set_frontmatter(&testspec_path, "model", serde_yaml::Value::String(model))?;
 
         ts.advance(State::TestspecDone, "testspec generated")?;
         ts.save(&tasks_dir)?;

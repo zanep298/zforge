@@ -1,4 +1,5 @@
 pub mod approve;
+pub mod artifact_metadata;
 pub mod code;
 pub mod cost;
 pub mod dispatch_helper;

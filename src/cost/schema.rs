@@ -22,10 +22,12 @@ pub struct CostEntry {
     pub timed_out: bool,
 
     // Token accounting. When the agent emits a parseable usage report
-    // (claude `--output-format json`'s `usage` block, codex's
-    // `tokens used N` line), we record real counts here AND mark
-    // `tokens_source = "reported"`. Otherwise we estimate from byte
-    // length and mark `tokens_source = "estimated"`.
+    // (claude `--output-format json`'s `usage` block), we record real
+    // input/output counts here AND mark `tokens_source = "reported"`.
+    // Codex's `tokens used N` line is total-only, so it lands in
+    // `reported_total_tokens` with `tokens_source = "reported-total"`.
+    // Otherwise we estimate from byte length and mark
+    // `tokens_source = "estimated"`.
     pub est_input_tokens: usize,
     pub est_output_tokens: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]

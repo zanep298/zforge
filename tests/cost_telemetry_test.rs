@@ -77,6 +77,18 @@ fn seed_registry(primary_args: &[&str], fallback_args: Option<&[&str]>) {
     io::save_atomic(&r).unwrap();
 }
 
+fn seed_named_registry(agent_name: &str, args: &[&str]) {
+    let mut r = Registry::default();
+    r.agents.insert(
+        agent_name.into(),
+        AgentSpec {
+            command: fake_agent_path().to_string_lossy().into_owned(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        },
+    );
+    io::save_atomic(&r).unwrap();
+}
+
 #[test]
 #[serial]
 fn successful_spawn_writes_one_cost_entry() {
@@ -177,4 +189,31 @@ fn codex_tokens_used_line_parsed_into_reported_total() {
         Some(12345),
         "should parse `tokens used N` from stdout"
     );
+    assert_eq!(entries[0].tokens_source, "reported-total");
+}
+
+#[test]
+#[serial]
+fn codex_frontmatter_model_recorded_without_models_yaml() {
+    ensure_fake_agent_built();
+    let _h = TestHome::new();
+    seed_named_registry("codex", &[]);
+
+    let proj = tempfile::tempdir().unwrap();
+    make_project(proj.path());
+    let agents_dir = proj.path().join(".zforge/agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    std::fs::write(
+        agents_dir.join("plan-agent.md"),
+        "---\ncodex_model: gpt-5.4-mini\n---\n",
+    )
+    .unwrap();
+    make_task(proj.path(), "T1", "codex", None);
+
+    orchestrator::run_phase("T1", "plan", proj.path(), "p").unwrap();
+
+    let entries = load_all(proj.path()).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].agent, "codex");
+    assert_eq!(entries[0].model.as_deref(), Some("gpt-5.4-mini"));
 }

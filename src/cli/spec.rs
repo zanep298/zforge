@@ -1,7 +1,7 @@
-use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
+use crate::cli::{artifact_metadata, dispatch_helper::run_phase_for_task};
 use crate::config;
-use crate::fs::{reader, tokens, writer};
+use crate::fs::{reader, tokens};
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -38,15 +38,9 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
             anyhow::bail!("spec.md not found or empty. Generate content before marking done.");
         }
         let spec_path = tasks_dir.join(task_id).join("spec.md");
+        let spec_content = std::fs::read_to_string(&spec_path).unwrap_or_default();
         let spec_tokens =
-            tokens::estimate(&std::fs::read_to_string(&spec_path).unwrap_or_default());
-        writer::set_frontmatter(
-            &spec_path,
-            "tokens",
-            serde_yaml::Value::Number(spec_tokens.into()),
-        )?;
-        let model = reader::agent_model(&config.agents_dir(), "spec");
-        writer::set_frontmatter(&spec_path, "model", serde_yaml::Value::String(model))?;
+            artifact_metadata::set_llm_metadata(&config, &ts, "spec", &spec_path, &spec_content)?;
 
         ts.advance(State::SpecDone, "spec generated")?;
         ts.save(&tasks_dir)?;

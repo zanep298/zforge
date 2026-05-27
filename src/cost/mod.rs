@@ -10,7 +10,8 @@
 //! - claude `--output-format json` / `stream-json`: `usage` block with
 //!   input / output / cache_read / cache_creation token counts.
 //! - codex non-interactive: `tokens used N` line (total only — recorded
-//!   as `reported_total_tokens` for visibility, not used to split cost).
+//!   as `reported_total_tokens` and surfaced in report total-token columns,
+//!   not used to split input/output cost).
 //!
 //! When no report is parseable we fall back to a byte-length estimate:
 //! 4 bytes ≈ 1 token. Byte-based (not char-based) so non-ASCII prompts

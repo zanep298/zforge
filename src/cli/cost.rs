@@ -15,7 +15,7 @@ pub enum CostCmd {
 
 #[derive(Debug, Args)]
 pub struct ReportArgs {
-    /// Grouping: task | phase | agent | model. Default: task.
+    /// Grouping: task | phase | agent | model | step. Default: task.
     #[arg(long, default_value = "task")]
     pub by: String,
 
@@ -56,7 +56,7 @@ fn report(args: ReportArgs) -> Result<()> {
     }
 
     let by = GroupBy::parse(&args.by)
-        .ok_or_else(|| anyhow!("--by must be one of: task, phase, agent, model"))?;
+        .ok_or_else(|| anyhow!("--by must be one of: task, phase, agent, model, step"))?;
     let rollups = rollup(&entries, by);
 
     if args.json {

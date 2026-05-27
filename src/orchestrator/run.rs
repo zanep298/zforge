@@ -1,10 +1,11 @@
-use crate::config::{load_models_from_root, ModelsConfig};
+use crate::config::load_models_from_root;
 use crate::cost::{
     log as cost_log,
     prices::cost_usd,
     schema::{estimate_tokens, CostEntry},
     usage::{parse_claude_usage, parse_codex_tokens, UsageReport},
 };
+use crate::fs::reader;
 use crate::orchestrator::{
     fallback::CompiledPolicy,
     headless_args::headless_args_for_agent,
@@ -47,6 +48,9 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
     // registered. Loaded once outside the loop because file IO between
     // retry attempts is wasted work.
     let models = load_models_from_root(project_root);
+    let agents_dir = crate::config::load_from(&project_root.join(".zforge").join("config.yaml"))
+        .map(|c| c.agents_dir())
+        .unwrap_or_else(|_| project_root.join(".zforge").join("agents"));
 
     let state_path = project_root
         .join(".zforge/tasks")
@@ -68,20 +72,23 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
                 )
             })?;
 
+        let configured_model = reader::agent_model_for_phase_with_models(
+            &agents_dir,
+            &agent_name,
+            phase,
+            models.as_ref(),
+        );
+
         let spec = with_profile_args(&base_spec, &agent_name, phase);
-        let spec = with_model_args(&spec, &agent_name, phase, models.as_ref());
+        let spec = with_model_args(&spec, &agent_name, configured_model.as_deref());
         let spec = with_headless_args(spec, &agent_name, is_headless());
 
         // Model resolution precedence for telemetry:
-        //   1. models.yaml override for (agent, phase)
-        //   2. `--model X` baked into the (possibly model-args-augmented)
+        //   1. `--model X` baked into the (possibly model-args-augmented)
         //      AgentSpec.args — covers users who hardcode model in registry
+        //   2. configured model from models.yaml or agent frontmatter
         //   3. None — price table lookup will return 0 for unknown agent/model
-        let resolved_model = models
-            .as_ref()
-            .and_then(|m| m.for_assistant(&agent_name, phase))
-            .map(|s| s.to_string())
-            .or_else(|| sniff_model_from_args(&spec.args));
+        let resolved_model = sniff_model_from_args(&spec.args).or(configured_model);
 
         let outcome = spawn_agent(&spec, prompt, spawn_timeout_secs)?;
 
@@ -151,16 +158,8 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
 /// stay earlier in argv (claude/opencode parse left-to-right; later flags
 /// win on duplicates — desirable so models.yaml overrides any model arg the
 /// user accidentally hardcoded into the registry).
-fn with_model_args(
-    base: &AgentSpec,
-    agent_name: &str,
-    phase: &str,
-    models: Option<&ModelsConfig>,
-) -> AgentSpec {
-    let Some(models) = models else {
-        return base.clone();
-    };
-    let Some(model) = models.for_assistant(agent_name, phase) else {
+fn with_model_args(base: &AgentSpec, agent_name: &str, model: Option<&str>) -> AgentSpec {
+    let Some(model) = model else {
         return base.clone();
     };
     let extra = model_args_for_agent(agent_name, model);
@@ -224,9 +223,9 @@ fn with_headless_args(mut spec: AgentSpec, agent_name: &str, headless: bool) -> 
 ///      use those real counts AND attribute cache_read / cache_creation
 ///      separately so prompt-caching discounts flow into cost.
 ///   2. If codex emitted `tokens used N` (total, no input/output split),
-///      record as `reported_total_tokens` for visibility; cost still uses
-///      estimates because we can't split, but codex price is $0/token on
-///      ChatGPT Plus so the inaccuracy is moot.
+///      record as `reported_total_tokens`; reports use it for total-token
+///      columns. Cost still uses estimates because we can't split the total,
+///      but codex price is $0/token on ChatGPT Plus so the inaccuracy is moot.
 ///   3. Otherwise estimate from byte length. stdout only — stderr is
 ///      banner / debug / error output, not LLM tokens. Counting it as
 ///      output charges the user for every verbose error trace.
@@ -254,8 +253,11 @@ fn record_cost(
     };
     let reported_total_tokens = parse_codex_tokens(&outcome.stdout, &outcome.stderr);
 
-    let (est_input_tokens, est_output_tokens, tokens_source, cache_read, cache_create) =
+    let (est_input_tokens, est_output_tokens, mut tokens_source, cache_read, cache_create) =
         derive_token_counts(prompt_bytes, stdout_bytes, claude_usage.as_ref());
+    if claude_usage.is_none() && reported_total_tokens.is_some() {
+        tokens_source = "reported-total";
+    }
 
     let est_cost_usd = cost_usd(
         agent,
@@ -323,19 +325,21 @@ fn derive_token_counts(
     }
 }
 
-/// Scan `--model X` (and `--model=X`) out of an AgentSpec's args. Last
+/// Scan `--model X`, `--model=X`, `-m X`, and `-m=X` out of an AgentSpec's args. Last
 /// occurrence wins to match left-to-right CLI parsing — `with_model_args`
 /// appends models.yaml's value LAST so it overrides any earlier hardcoded
-/// flag. Returns None when no `--model` flag is present.
+/// flag. Returns None when no model flag is present.
 fn sniff_model_from_args(args: &[String]) -> Option<String> {
     let mut found: Option<String> = None;
     let mut iter = args.iter().peekable();
     while let Some(arg) = iter.next() {
-        if arg == "--model" {
+        if arg == "--model" || arg == "-m" {
             if let Some(val) = iter.next() {
                 found = Some(val.clone());
             }
         } else if let Some(rest) = arg.strip_prefix("--model=") {
+            found = Some(rest.to_string());
+        } else if let Some(rest) = arg.strip_prefix("-m=") {
             found = Some(rest.to_string());
         }
     }
@@ -358,7 +362,6 @@ fn save_state_atomic(path: &Path, state: &TaskState) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::PhaseModels;
 
     fn base_spec() -> AgentSpec {
         AgentSpec {
@@ -367,63 +370,32 @@ mod tests {
         }
     }
 
-    fn models_with_claude_plan(model: &str) -> ModelsConfig {
-        let mut m = ModelsConfig::default();
-        m.agents.insert(
-            "claude".into(),
-            PhaseModels {
-                plan: Some(model.to_string()),
-                ..PhaseModels::default()
-            },
-        );
-        m
-    }
-
     #[test]
-    fn no_models_yaml_returns_base_spec_unchanged() {
-        let result = with_model_args(&base_spec(), "claude", "plan", None);
+    fn no_configured_model_returns_base_spec_unchanged() {
+        let result = with_model_args(&base_spec(), "claude", None);
         assert_eq!(result.args, vec!["-p"]);
     }
 
     #[test]
-    fn matching_assistant_and_phase_appends_model_args() {
-        let models = models_with_claude_plan("opus");
-        let result = with_model_args(&base_spec(), "claude", "plan", Some(&models));
+    fn matching_assistant_appends_model_args() {
+        let result = with_model_args(&base_spec(), "claude", Some("opus"));
         assert_eq!(result.args, vec!["-p", "--model", "opus"]);
     }
 
     #[test]
-    fn unmatched_phase_leaves_args_alone() {
-        let models = models_with_claude_plan("opus");
-        // models.yaml only configured `plan`; asking for `code` finds nothing.
-        let result = with_model_args(&base_spec(), "claude", "code", Some(&models));
-        assert_eq!(result.args, vec!["-p"]);
-    }
-
-    #[test]
     fn unmatched_assistant_leaves_args_alone() {
-        let models = models_with_claude_plan("opus");
-        // models.yaml has no `mystery` entry → no injection.
-        let result = with_model_args(&base_spec(), "mystery", "plan", Some(&models));
+        let result = with_model_args(&base_spec(), "mystery", Some("opus"));
         assert_eq!(result.args, vec!["-p"]);
     }
 
     #[test]
     fn codex_phase_match_still_skips_injection() {
         // Codex uses profile-based config — `--model X` would conflict.
-        let mut models = ModelsConfig::default();
-        models.agents.insert(
-            "codex".into(),
-            PhaseModels {
-                code: Some("zforge_code".into()),
-                ..PhaseModels::default()
-            },
-        );
         let spec = AgentSpec {
             command: "codex".into(),
             args: vec!["--profile".into(), "zforge_code".into()],
         };
-        let result = with_model_args(&spec, "codex", "code", Some(&models));
+        let result = with_model_args(&spec, "codex", Some("gpt-5-codex"));
         // Args unchanged; user-set profile arg preserved as-is.
         assert_eq!(result.args, vec!["--profile", "zforge_code"]);
     }
@@ -495,6 +467,18 @@ mod tests {
     }
 
     #[test]
+    fn sniff_model_finds_short_form() {
+        let args = vec!["exec".into(), "-m".into(), "gpt-5-codex".into()];
+        assert_eq!(sniff_model_from_args(&args).as_deref(), Some("gpt-5-codex"));
+    }
+
+    #[test]
+    fn sniff_model_finds_short_equals_form() {
+        let args = vec!["exec".into(), "-m=gpt-5".into()];
+        assert_eq!(sniff_model_from_args(&args).as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
     fn sniff_model_last_occurrence_wins() {
         let args = vec![
             "--model".into(),
@@ -550,12 +534,11 @@ mod tests {
 
     #[test]
     fn model_args_appended_after_user_args() {
-        let models = models_with_claude_plan("opus");
         let spec = AgentSpec {
             command: "claude".into(),
             args: vec!["-p".into(), "--verbose".into()],
         };
-        let result = with_model_args(&spec, "claude", "plan", Some(&models));
+        let result = with_model_args(&spec, "claude", Some("opus"));
         // User flags stay first; model args last so duplicates resolve to
         // models.yaml-supplied value under left-to-right CLI parsing.
         assert_eq!(result.args, vec!["-p", "--verbose", "--model", "opus"]);

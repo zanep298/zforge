@@ -1,7 +1,9 @@
+use crate::cli::artifact_metadata;
+use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
 use crate::config;
-use crate::fs::{reader, tokens, writer};
-use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
+use crate::fs::{reader, writer};
+use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -26,14 +28,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         // Extract patterns from review-summary.md
         let summary_path = tasks_dir.join(task_id).join("review-summary.md");
         let summary = std::fs::read_to_string(&summary_path)?;
-        let review_tokens = tokens::estimate(&summary);
-        writer::set_frontmatter(
-            &summary_path,
-            "tokens",
-            serde_yaml::Value::Number(review_tokens.into()),
-        )?;
-        let model = reader::agent_model(&config.agents_dir(), "review");
-        writer::set_frontmatter(&summary_path, "model", serde_yaml::Value::String(model))?;
+        artifact_metadata::set_llm_metadata(&config, &ts, "review", &summary_path, &summary)?;
         let (patterns_count, anti_count) = extract_and_update_memory(&config, &summary)?;
 
         ts.advance(State::Reviewed, "review complete")?;
@@ -64,8 +59,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     ctx.output_file = format!(".zforge/tasks/{}/review-summary.md", task_id);
     ctx.next_command = format!("zf review {} --done", task_id);
 
-    let engine = Engine::new(&config.agents_dir());
-    engine.dispatch("review", &ctx)?;
+    run_phase_for_task(&config, &ts, "review", &ctx)?;
 
     Ok(())
 }
