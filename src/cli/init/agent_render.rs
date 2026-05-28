@@ -133,7 +133,7 @@ pub fn resolve_model(
 
 /// Render per-target agent files into `dst_dir`. Returns the count of files
 /// written. Source files are read from `src_agents_dir`; missing source
-/// files for a given phase are skipped (this matches symlink behavior).
+/// files for a given phase are skipped.
 pub fn materialize_agents_into(
     target: &str,
     src_agents_dir: &Path,

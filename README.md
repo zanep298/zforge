@@ -219,8 +219,9 @@ Figma MCP → figma_context → task import → figma.md → spec prompt
 | `zforge init --agent opencode` | `.zforge/`, `AGENTS.md`, `.opencode/agents/` | Yes — `~/.config/opencode/opencode.json` |
 | `zforge init --agent all` | All of the above | Yes — codex + opencode |
 
-`.zforge/agents/` is the single source of truth — `.claude/agents/`,
-`.codex/agents/`, and `.opencode/agents/` are symlinks into it.
+`.zforge/agents/` is the shared source of truth. Agent-specific directories such
+as `.codex/agents/` and `.opencode/agents/` are materialized from it with the
+model frontmatter resolved for that tool.
 
 ## Register the MCP server
 

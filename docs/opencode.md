@@ -37,8 +37,9 @@ This creates project-local files and registers MCP in the user OpenCode config:
 │   └── review-agent.md
 ```
 
-`AGENTS.md` is written at the project root, and `.opencode/agents/` symlinks to
-the canonical `.zforge/agents/` files.
+`AGENTS.md` is written at the project root, and `.opencode/agents/` is
+materialized from the canonical `.zforge/agents/` files with OpenCode-specific
+model frontmatter.
 
 `~/.config/opencode/opencode.json` registers `zforge mcp` as a local MCP server
 so OpenCode's AI can call zforge tools directly from the TUI.
@@ -287,7 +288,7 @@ via stdio. No separate server management required.
 
 ## Regenerating .opencode/
 
-To refresh OpenCode symlinks and MCP registration:
+To refresh OpenCode agent files and MCP registration:
 
 ```bash
 zforge init --agent opencode --force

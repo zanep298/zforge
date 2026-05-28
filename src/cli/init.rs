@@ -55,6 +55,7 @@ const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__zforge__get_prompt",
       "mcp__zforge__approve",
       "mcp__zforge__verify",
+      "mcp__zforge__ship",
       "mcp__zforge__status",
       "mcp__codegraph__query",
       "mcp__codegraph__context",
@@ -137,9 +138,9 @@ pub fn run(
     );
 
     // Default is shared mode: templates + agents + skills live in the
-    // global ~/.zforge/ store and are referenced by symlink. `--local`
-    // forks every file into the project. First-time install of the global
-    // store happens automatically when shared.
+    // global ~/.zforge/ store and config points there. `--local` forks every
+    // file into the project. First-time install of the global store happens
+    // automatically when shared.
     let global_store = if !local {
         Some(crate::cli::install::ensure_global_store()?)
     } else {
@@ -211,7 +212,7 @@ pub fn run(
             label(stats.created > 0)
         );
 
-        // Agent definitions (.md — loaded by Claude Code via .claude/agents/ symlinks)
+        // Agent definitions (.md — source material for per-tool agent files)
         for (name, raw) in agent_templates() {
             let rendered = apply_vars(raw, &vars);
             let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
@@ -788,10 +789,7 @@ fn scaffold_codex(
             "⚠".yellow()
         );
     }
-    let codex_agents_source = global_store
-        .map(|g| g.join("agents"))
-        .unwrap_or_else(|| zforge_dir.join("agents"));
-    match crate::cli::mcp_register::write_codex_profiles(&codex_agents_source) {
+    match crate::cli::mcp_register::write_codex_profiles(&codex_agents_dir) {
         Err(e) => eprintln!(
             "  {} Codex profile write reported errors: {e}",
             "⚠".yellow()
@@ -1047,6 +1045,11 @@ mod tests {
         assert!(rendered.contains("`zforge mcp register --agent codex`"));
         assert!(rendered.contains("[mcp_servers.zforge]"));
         assert!(!rendered.contains("{{"));
+    }
+
+    #[test]
+    fn claude_settings_allow_ship_tool_used_by_command_template() {
+        assert!(CLAUDE_SETTINGS_JSON.contains("\"mcp__zforge__ship\""));
     }
 
     #[test]

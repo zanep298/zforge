@@ -69,9 +69,9 @@ try to recover automatically.
 | code      | `code-agent`     |
 | review    | `review-agent`   |
 
-## Steps 1..N — phase loop
+## Steps 1..N — pre-code phase loop
 
-For each phase in the active flow:
+For each active phase before `code` (`spec`, `testspec`, and `plan` when present):
 
 1. `mcp__zforge__get_prompt(phase=<PHASE>, task_id=<TASK_ID>)`
 2. Invoke the matching sub-agent with the returned prompt as its task
@@ -103,10 +103,14 @@ When the phase is `code`:
 1. `mcp__zforge__get_prompt(phase="code", task_id=<TASK_ID>)`
 2. Invoke `code-agent` sub-agent with the returned prompt.
 3. Wait for `code-agent` to finish writing/editing source files.
-4. If `--auto-approve`: `zforge git commit-phase <TASK_ID> code`.
-5. Call `mcp__zforge__ship(task_id=<TASK_ID>)` yourself. This advances to
-   Coded + runs verify.
-6. On test failure:
+4. If the active flow ends at `code` (`spike` / `docs`), run
+   `zforge code <TASK_ID> --done` via Bash. If `--auto-approve`, then run
+   `zforge git commit-phase <TASK_ID> code`. Skip verify/review.
+5. Otherwise, if `--auto-approve`: `zforge git commit-phase <TASK_ID> code`.
+6. For flows with `verify` (`full` / `fixbug`), call
+   `mcp__zforge__ship(task_id=<TASK_ID>)` yourself. This advances to Coded +
+   runs verify.
+7. On test failure:
    - Read `.zforge/tasks/<TASK_ID>/verify.md`.
    - If `--auto-approve`, undo the previous code commit so retry doesn't stack:
      `git reset --soft HEAD~1`.
@@ -121,11 +125,13 @@ When the phase is `code`:
 1. `mcp__zforge__get_prompt(phase="review", task_id=<TASK_ID>)`
 2. Invoke `review-agent` sub-agent with the returned prompt to write
    `review-summary.md`.
-3. If `--auto-approve`: `zforge git commit-phase <TASK_ID> review`, then call
-   `mcp__zforge__approve(task_id=<TASK_ID>, artifact="review")` immediately.
-4. Otherwise, ask the user to confirm review, then call `approve` on confirm.
+3. If `--auto-approve`: run `zforge review <TASK_ID> --done` via Bash, then
+   `zforge git commit-phase <TASK_ID> review`.
+4. Otherwise, ask the user to confirm review, then run
+   `zforge review <TASK_ID> --done` via Bash on confirm.
 
-`approve` triggers memory extraction either way.
+`zforge review --done` triggers memory extraction and advances the task to
+Reviewed.
 
 ## After task completes
 
@@ -164,11 +170,11 @@ When the task reaches its terminal state, print:
 
 ```
 ✓ <TASK_ID> done (flow=<flow>, branch=zforge/<TASK_ID> if auto-approve)
-  spec       .zforge/tasks/<TASK_ID>/spec.md
-  testspec   .zforge/tasks/<TASK_ID>/testspec.md
-  plan       .zforge/tasks/<TASK_ID>/plan.md
-  verify     <N>/<M> tests passing
-  review     .zforge/tasks/<TASK_ID>/review-summary.md
+  spec       .zforge/tasks/<TASK_ID>/spec.md          (omit if skipped)
+  testspec   .zforge/tasks/<TASK_ID>/testspec.md      (omit if skipped)
+  plan       .zforge/tasks/<TASK_ID>/plan.md          (omit if skipped)
+  verify     <N>/<M> tests passing                    (omit if skipped)
+  review     .zforge/tasks/<TASK_ID>/review-summary.md (omit if skipped)
 
 next: ask me "merge <TASK_ID>" or "pr <TASK_ID>" or "diff <TASK_ID>"
 ```

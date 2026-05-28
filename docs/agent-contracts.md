@@ -221,7 +221,7 @@ After filling a column:
 - **Failure channel**: stdout (NOT stderr). Exit code reliable for
   invalid model; unreliable when OAuth cache masks env-var auth failure.
 - **Special**: subagents loaded from `.claude/agents/*.md`; zforge
-  symlinks these in `init`.
+  materializes these from `.zforge/agents/` in `init`.
 
 ### codex (OpenAI Codex CLI)
 
@@ -259,7 +259,7 @@ After filling a column:
 - **Binary**: `opencode`
 - **API key env**: provider-dependent (Anthropic, OpenAI, OpenRouter, ...).
 - **Known flags**: `run "<prompt>"`, `--model X`.
-- **Subagents**: `.opencode/agents/*.md` — zforge symlinks at
+- **Subagents**: `.opencode/agents/*.md` — zforge materializes them at
   `init --agent opencode`.
 
 ### agy

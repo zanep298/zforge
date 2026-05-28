@@ -16,23 +16,16 @@ automatically when the project is opened.
 
 ## Registering with an AI tool
 
-### Claude Code (automatic)
+### Claude Code
 
-`zforge init` writes a project-local `.mcp.json`:
+`zforge init` writes `CLAUDE.md`, `.claude/settings.json`, and agent files. To
+register the zforge MCP server with Claude Code, run:
 
-```json
-{
-  "mcpServers": {
-    "zforge": {
-      "command": "zforge",
-      "args": ["mcp"]
-    }
-  }
-}
+```bash
+zforge mcp register --agent claude
 ```
 
-Claude Code discovers `.mcp.json` automatically when the project is opened.
-No manual registration needed.
+This runs `claude mcp add zforge -- zforge mcp` under the hood.
 
 ### Manual registration
 
@@ -45,9 +38,9 @@ zforge mcp register --agent all          # explicit all (default)
 zforge mcp register --agent claude --force   # re-register if already present
 ```
 
-`register` writes to the agent's config file (e.g. `~/.config/opencode/config.json`
-for OpenCode). For Claude Code, it writes project-local `.mcp.json` — no global
-config change.
+`register` writes to the agent's config or registry (for example
+`~/.config/opencode/opencode.json` for OpenCode and `~/.codex/config.toml` for
+Codex). For Claude Code, it shells out to `claude mcp add`.
 
 ## MCP tools
 

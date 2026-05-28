@@ -341,8 +341,9 @@ fn tool_ship(args: &Value) -> Result<String> {
         if !outcome.passed {
             anyhow::bail!(verify_failure_message(task_id, &outcome));
         }
+        let next = ship_next_hint(&tasks_dir, task_id);
         return Ok(format!(
-            "Ship complete for task {task_id} ({} tests passed). See .zforge/tasks/{task_id}/verify.md for results. Next: get_prompt(phase=\"review\", task_id=\"{task_id}\"). Optionally call approve(task_id=\"{task_id}\", artifact=\"verify\") first to mark verify.md reviewed.",
+            "Ship complete for task {task_id} ({} tests passed). See .zforge/tasks/{task_id}/verify.md for results. {next}",
             outcome.passed_tests
         ));
     }
@@ -351,10 +352,22 @@ fn tool_ship(args: &Value) -> Result<String> {
     // implements the loop with full agent dispatch; delegate to it so MCP and
     // CLI share the same code path.
     crate::cli::ship::run(task_id, command, timeout, max_iterations)?;
+    let next = ship_next_hint(&tasks_dir, task_id);
     Ok(format!(
         "Ship complete for task {task_id} after up to {max_iterations} verifier iteration(s). \
-         See .zforge/tasks/{task_id}/verify.md. Next: get_prompt(phase=\"review\", task_id=\"{task_id}\")."
+         See .zforge/tasks/{task_id}/verify.md. {next}"
     ))
+}
+
+fn ship_next_hint(tasks_dir: &std::path::Path, task_id: &str) -> String {
+    match TaskState::load(tasks_dir, task_id) {
+        Ok(ts) if ts.flow.next_after(&ts.state).is_none() => "Pipeline complete.".to_string(),
+        Ok(ts) if ts.flow.next_after(&ts.state) == Some(&State::Reviewed) => format!(
+            "Next: get_prompt(phase=\"review\", task_id=\"{task_id}\"). Optionally call approve(task_id=\"{task_id}\", artifact=\"verify\") first to mark verify.md reviewed."
+        ),
+        Ok(ts) => format!("Next: {}.", ts.next_hint()),
+        Err(_) => "Next: run status(task_id=...) to inspect the pipeline state.".to_string(),
+    }
 }
 
 fn verify_failure_message(task_id: &str, outcome: &crate::cli::verify::VerifyOutcome) -> String {
@@ -902,6 +915,47 @@ mod tests {
         };
         let msg = verify_failure_message("TASK-1", &outcome);
         assert!(!msg.contains("Failed tests:"));
+    }
+
+    #[test]
+    fn ship_next_hint_points_full_flow_to_review() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut ts = TaskState::new_with_flow("TASK-1", Flow::Full);
+        for state in [
+            State::SpecDone,
+            State::TestspecDone,
+            State::TestspecReviewed,
+            State::Planned,
+            State::PlanReviewed,
+            State::Coded,
+            State::Verified,
+        ] {
+            ts.advance(state, "").unwrap();
+        }
+        ts.save(tmp.path()).unwrap();
+
+        let hint = ship_next_hint(tmp.path(), "TASK-1");
+
+        assert!(hint.contains("get_prompt(phase=\"review\""));
+    }
+
+    #[test]
+    fn ship_next_hint_completes_terminal_verify_flow() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut ts = TaskState::new_with_flow("TASK-1", Flow::Fixbug);
+        for state in [
+            State::SpecDone,
+            State::TestspecDone,
+            State::Coded,
+            State::Verified,
+        ] {
+            ts.advance(state, "").unwrap();
+        }
+        ts.save(tmp.path()).unwrap();
+
+        let hint = ship_next_hint(tmp.path(), "TASK-1");
+
+        assert_eq!(hint, "Pipeline complete.");
     }
 
     #[test]

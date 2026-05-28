@@ -55,13 +55,14 @@ zforge init
 ```
 
 Creates:
-- `.mcp.json` — registers `zforge mcp` as a project-scoped MCP server (auto-discovered)
+- `.mcp.json` — registers codegraph MCP when codegraph setup succeeds
 - `CLAUDE.md` — project instructions loaded automatically
 - `.claude/settings.json` — pre-approves `zforge` commands and MCP tools
-- `.claude/agents/*.md` — symlinks to `.zforge/agents/` (no duplication)
+- `.claude/agents/*.md` — Claude-specific agent files materialized from `.zforge/agents/`
 
-Open the project in Claude Code. MCP tools (`task_import`, `get_prompt`, `approve`,
-`verify`, `status`) are available immediately.
+Run `zforge mcp register --agent claude`, then open the project in Claude Code.
+zforge MCP tools (`task_import`, `get_prompt`, `approve`, `verify`, `ship`,
+`status`) are available after registration.
 
 ### OpenCode
 

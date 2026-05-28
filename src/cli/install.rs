@@ -42,8 +42,8 @@ pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<usize> {
         }
     }
 
-    // Agent definitions (.md) — discovered by Claude Code / OpenCode / Codex
-    // when symlinked into the harness's project-local agents dir.
+    // Agent definitions (.md) — source material for Claude Code / OpenCode /
+    // Codex project-local agent files.
     for (name, body) in embedded::AGENTS {
         if write_safe(&agents_dir.join(name), body, force)? {
             created += 1;

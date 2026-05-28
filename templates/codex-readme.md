@@ -6,7 +6,7 @@ Project-scoped artifacts for the OpenAI Codex CLI.
 
 | File | Purpose |
 |------|---------|
-| `agents/*.md` | Symlinks to `.zforge/agents/` — workflow agent prompts for each pipeline phase |
+| `agents/*.md` | Codex-specific workflow agent prompts materialized from zforge templates |
 
 ## Configuration
 

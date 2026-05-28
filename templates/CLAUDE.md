@@ -99,15 +99,19 @@ Load a skill with `/file .zforge/skills/<name>.md` before starting that phase.
 
 ## MCP Tools
 
-Two MCP servers are registered in `.mcp.json`:
-
 ### zforge
-Exposes the pipeline as tools. Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`, `ship`
+
+zforge exposes the pipeline as tools. Register it with Claude Code by running
+`zforge mcp register --agent claude`, which uses `claude mcp add` under the
+hood. Available tools: `task_import`, `get_prompt`, `approve`, `status`,
+`verify`, `ship`
 
 `ship` combines the `Coded` state advance + `verify` into a single tool call — call it after you've finished writing code from `get_prompt(phase="code")` instead of advancing state and calling `verify` separately.
 
 ### codegraph
-Semantic code search over the pre-built codebase index. Use this instead of grep/find when exploring the codebase.
+Semantic code search over the pre-built codebase index. `zforge init` registers
+codegraph in `.mcp.json` when codegraph setup succeeds. Use it instead of
+grep/find when exploring the codebase.
 
 | Tool | Use when |
 |------|----------|

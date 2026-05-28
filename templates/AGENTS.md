@@ -114,7 +114,8 @@ Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`, `sh
 
 ## Agents
 
-Workflow agent prompts live in `.codex/agents/` (symlinks to `.zforge/agents/`).
+Workflow agent prompts live in `.codex/agents/`. They are materialized from the
+zforge agent templates with a Codex-specific `model:` frontmatter line.
 Reference them when running each pipeline phase:
 
 | Phase | Agent prompt |
@@ -127,8 +128,9 @@ Reference them when running each pipeline phase:
 
 ## Codex Profiles
 
-`zforge init` writes per-phase model profiles to `~/.codex/config.toml`. Use them
-to automatically select the right model for each pipeline phase:
+`zforge init` writes per-phase model profiles to `~/.codex/config.toml` from the
+same resolved models used in `.codex/agents/`. Edit `.zforge/models.yaml` and
+re-run `zforge init --agent codex --force` to change them:
 
 | Profile | Phase | Default model |
 |---------|-------|---------------|
@@ -142,9 +144,9 @@ to automatically select the right model for each pipeline phase:
 codex --profile zforge_code "implement the approved plan for TASK-123"
 ```
 
-Override a model by editing the `[profiles.zforge_<phase>]` block in
-`~/.codex/config.toml`, or re-run `zforge init --force` to regenerate from
-updated agent frontmatter.
+Override a model by editing `.zforge/models.yaml`, or by editing the
+`[profiles.zforge_<phase>]` block in `~/.codex/config.toml` for a one-off local
+change.
 
 ---
 

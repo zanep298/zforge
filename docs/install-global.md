@@ -47,13 +47,13 @@ zforge install --force   # overwrite existing files (including local edits)
 zforge init
 ```
 
-Default mode. The project's `.zforge/agents/` symlinks to `~/.zforge/agents/`. All
-projects on the machine share the same agent definitions — update once, all projects
-get it.
+Default mode points `.zforge/config.yaml` at `~/.zforge/agents` and
+`~/.zforge/skills`. All projects on the machine share the same agent
+definitions — update once, all projects get it.
 
 ```
-project/.zforge/agents/  →  symlinks  →  ~/.zforge/agents/
-project/.zforge/skills/  →  symlinks  →  ~/.zforge/skills/
+project/.zforge/config.yaml paths.agents  →  ~/.zforge/agents/
+project/.zforge/config.yaml paths.skills  →  ~/.zforge/skills/
 ```
 
 `.zforge/config.yaml`, `memory/`, and `tasks/` are always local to the project.
@@ -64,8 +64,8 @@ project/.zforge/skills/  →  symlinks  →  ~/.zforge/skills/
 zforge init --local
 ```
 
-Copies every template, agent definition, and skill bundle into the project instead
-of symlinking. Use this when:
+Copies every template, agent definition, and skill bundle into the project
+instead of pointing at the global store. Use this when:
 
 - The project is a fork of zforge itself
 - You need per-project customization of agent prompts
@@ -87,7 +87,8 @@ cargo install --path . --force   # install new binary
 zforge install                   # refresh ~/.zforge/ with updated templates/agents
 ```
 
-Projects in shared mode pick up the updates immediately (they symlink to `~/.zforge/`).
+Projects in shared mode pick up the updates immediately because their config
+points at `~/.zforge/`.
 Projects in local mode need a manual refresh:
 
 ```bash

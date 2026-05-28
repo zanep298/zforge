@@ -280,6 +280,18 @@ mod tests {
     }
 
     #[test]
+    fn slash_command_finishes_review_with_review_done_not_approve_review() {
+        let command = COMMANDS
+            .iter()
+            .find(|(name, _)| *name == "zforge.md")
+            .map(|(_, body)| *body)
+            .unwrap();
+
+        assert!(command.contains("zforge review <TASK_ID> --done"));
+        assert!(!command.contains("artifact=\"review\""));
+    }
+
+    #[test]
     fn all_lang_skills_includes_every_language() {
         let langs: Vec<String> = all_lang_skills().into_iter().map(|(n, _)| n).collect();
         assert!(langs.iter().any(|n| n.starts_with("rust-")));
