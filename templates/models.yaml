@@ -3,11 +3,11 @@
 # Values here take precedence over agent frontmatter defaults.
 
 claude:
-  spec: claude-haiku-4-5-20251001
-  testspec: claude-haiku-4-5-20251001
-  plan: claude-sonnet-4-6
-  code: claude-sonnet-4-6
-  review: claude-sonnet-4-6
+  spec: claude-sonnet-5
+  testspec: claude-sonnet-5
+  plan: claude-opus-4-8
+  code: claude-sonnet-5
+  review: claude-opus-4-8
 
 # Codex models
 #  1. gpt-5.5 (default)  Frontier model for complex coding, research, and real-world work.
@@ -16,11 +16,11 @@ claude:
 #  4. gpt-5.3-codex      Coding-optimized model.
 #  5. gpt-5.2            Optimized for professional work and long-running agents.
 codex:
-  spec: gpt-5.4-mini
-  testspec: gpt-5.4-mini
-  plan: gpt-5.4
+  spec: gpt-5.4
+  testspec: gpt-5.4
+  plan: gpt-5.5
   code: gpt-5.3-codex
-  review: gpt-5.4
+  review: gpt-5.5
 
 opencode:
   spec: opencode-go/qwen3.5-plus
