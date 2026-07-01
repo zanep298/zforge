@@ -160,6 +160,7 @@ fn fake_primary_429_falls_back_to_real_claude() {
         "code",
         proj.path(),
         "Respond with exactly the single word: SWAPPED\n",
+        None,
     );
     std::env::remove_var("ZFORGE_HEADLESS");
 

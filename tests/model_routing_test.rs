@@ -100,7 +100,7 @@ fn claude_phase_plan_gets_model_opus_injected() {
     let dump_path = dump_dir.path().join("argv.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
 
-    let result = orchestrator::run_phase("T1", "plan", proj.path(), "prompt body");
+    let result = orchestrator::run_phase("T1", "plan", proj.path(), "prompt body", None);
 
     std::env::remove_var("FAKE_ARGV_DUMP");
     assert!(result.is_ok(), "run_phase failed: {result:?}");
@@ -134,7 +134,7 @@ fn claude_phase_code_gets_model_sonnet_injected() {
     let dump_path = dump_dir.path().join("argv.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
 
-    let _ = orchestrator::run_phase("T1", "code", proj.path(), "prompt body");
+    let _ = orchestrator::run_phase("T1", "code", proj.path(), "prompt body", None);
     std::env::remove_var("FAKE_ARGV_DUMP");
 
     let argv = read_argv_dump(&dump_path);
@@ -164,7 +164,7 @@ fn no_models_yaml_means_no_injection() {
     let dump_path = dump_dir.path().join("argv.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
 
-    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt", None);
     std::env::remove_var("FAKE_ARGV_DUMP");
 
     let argv = read_argv_dump(&dump_path);
@@ -203,7 +203,7 @@ fn global_models_yaml_used_when_local_missing() {
     let dump_path = dump_dir.path().join("argv.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
 
-    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt", None);
     std::env::remove_var("FAKE_ARGV_DUMP");
 
     let argv = read_argv_dump(&dump_path);
@@ -242,7 +242,7 @@ fn local_models_yaml_overrides_global_per_field() {
     let dump_dir = tempfile::tempdir().unwrap();
     let dump_path = dump_dir.path().join("argv.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
-    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt", None);
     std::env::remove_var("FAKE_ARGV_DUMP");
     let argv = read_argv_dump(&dump_path);
     let pos = argv.iter().position(|a| a == "--model").unwrap();
@@ -251,7 +251,7 @@ fn local_models_yaml_overrides_global_per_field() {
     // Re-run for `code` phase — inherits global since local didn't override.
     let dump2 = dump_dir.path().join("argv2.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump2);
-    let _ = orchestrator::run_phase("T1", "code", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None);
     std::env::remove_var("FAKE_ARGV_DUMP");
     let argv2 = read_argv_dump(&dump2);
     let pos2 = argv2.iter().position(|a| a == "--model").unwrap();
@@ -288,7 +288,7 @@ fn headless_mode_injects_claude_skip_permissions() {
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
     std::env::set_var("ZFORGE_HEADLESS", "1");
 
-    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt", None);
 
     std::env::remove_var("ZFORGE_HEADLESS");
     std::env::remove_var("FAKE_ARGV_DUMP");
@@ -323,7 +323,7 @@ fn foreground_mode_does_not_inject_bypass_flags() {
     // Ensure env var is NOT set.
     std::env::remove_var("ZFORGE_HEADLESS");
 
-    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt", None);
 
     std::env::remove_var("FAKE_ARGV_DUMP");
 
@@ -354,7 +354,7 @@ fn unknown_agent_skips_injection_even_with_models_yaml() {
     let dump_path = dump_dir.path().join("argv.txt");
     std::env::set_var("FAKE_ARGV_DUMP", &dump_path);
 
-    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "plan", proj.path(), "prompt", None);
     std::env::remove_var("FAKE_ARGV_DUMP");
 
     let argv = read_argv_dump(&dump_path);

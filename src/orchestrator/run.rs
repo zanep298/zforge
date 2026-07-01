@@ -37,10 +37,23 @@ fn is_headless() -> bool {
 /// fallback per `CompiledPolicy`, persists `active_agent` + history between
 /// attempts. `assigned_agent` is never mutated.
 ///
+/// `default_agent` is the runner used when the task has no
+/// `effective_agent()` — i.e. it was imported without `--agent`. Callers pass
+/// `Some("claude")` to route otherwise-agentless tasks through the
+/// orchestrator (so cost telemetry is captured) instead of the legacy
+/// dispatch path. It is a transient fallback only: `assigned_agent` on disk
+/// stays `None`, preserving the "never mutate assigned_agent" invariant.
+///
 /// Returns `Ok(())` on the first successful spawn (exit 0). Non-retryable
 /// failures propagate immediately. Retryable failures consume the policy's
 /// retry budget; exhaustion is a terminal `Err`.
-pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) -> Result<()> {
+pub fn run_phase(
+    task_id: &str,
+    phase: &str,
+    project_root: &Path,
+    prompt: &str,
+    default_agent: Option<&str>,
+) -> Result<()> {
     let registry = registry::io::load()?;
     let policy = CompiledPolicy::compile(&registry.fallback_policy)?;
     let spawn_timeout_secs = registry.fallback_policy.spawn_timeout_secs;
@@ -61,6 +74,7 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
     loop {
         let agent_name = state
             .effective_agent()
+            .or(default_agent)
             .ok_or_else(|| anyhow!("task {task_id} has no agent assigned"))?
             .to_string();
 
