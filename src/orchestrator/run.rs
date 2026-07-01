@@ -259,14 +259,21 @@ fn record_cost(
         tokens_source = "reported-total";
     }
 
-    let est_cost_usd = cost_usd(
-        agent,
-        model,
-        est_input_tokens,
-        est_output_tokens,
-        cache_read.unwrap_or(0),
-        cache_create.unwrap_or(0),
-    );
+    // Prefer the agent's own computed cost when it reports one (claude's
+    // `total_cost_usd`). It reflects vendor pricing directly, so it stays
+    // correct even when the static price table drifts from list price. Fall
+    // back to the table calc for agents that only report token counts.
+    let reported_cost = claude_usage.as_ref().and_then(|u| u.reported_cost_usd);
+    let est_cost_usd = reported_cost.unwrap_or_else(|| {
+        cost_usd(
+            agent,
+            model,
+            est_input_tokens,
+            est_output_tokens,
+            cache_read.unwrap_or(0),
+            cache_create.unwrap_or(0),
+        )
+    });
 
     let entry = CostEntry {
         timestamp: Utc::now(),
@@ -503,6 +510,7 @@ mod tests {
             cache_read_input_tokens: Some(50),
             cache_creation_input_tokens: Some(10),
             total_tokens: None,
+            reported_cost_usd: None,
         };
         let (i, o, src, cr, cc) = derive_token_counts(4_000, 8_000, Some(&report));
         assert_eq!(i, 100);

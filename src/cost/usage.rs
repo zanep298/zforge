@@ -18,6 +18,11 @@ pub struct UsageReport {
     pub cache_read_input_tokens: Option<u64>,
     pub cache_creation_input_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
+    /// Agent-computed USD cost (claude's `--output-format json` emits a
+    /// top-level `total_cost_usd`). When present it is authoritative — it
+    /// reflects the vendor's own pricing, so callers should prefer it over
+    /// the static price table which can drift from list price.
+    pub reported_cost_usd: Option<f64>,
 }
 
 impl UsageReport {
@@ -27,6 +32,7 @@ impl UsageReport {
             && self.cache_read_input_tokens.is_none()
             && self.cache_creation_input_tokens.is_none()
             && self.total_tokens.is_none()
+            && self.reported_cost_usd.is_none()
     }
 }
 
@@ -56,6 +62,9 @@ pub fn parse_claude_usage(stdout: &str) -> Option<UsageReport> {
 
 fn extract_usage(value: &Value) -> Option<UsageReport> {
     let usage = value.get("usage")?;
+    // `total_cost_usd` is a sibling of `usage` on claude's result envelope,
+    // not nested inside it — read it from the parent object.
+    let reported_cost_usd = value.get("total_cost_usd").and_then(Value::as_f64);
     let report = UsageReport {
         input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
         output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
@@ -64,6 +73,7 @@ fn extract_usage(value: &Value) -> Option<UsageReport> {
             .get("cache_creation_input_tokens")
             .and_then(Value::as_u64),
         total_tokens: None,
+        reported_cost_usd,
     };
     if report.is_empty() {
         None
@@ -100,6 +110,18 @@ mod tests {
         assert_eq!(report.output_tokens, Some(456));
         assert_eq!(report.cache_read_input_tokens, Some(1000));
         assert_eq!(report.cache_creation_input_tokens, Some(50));
+    }
+
+    #[test]
+    fn captures_claude_total_cost_usd_sibling_of_usage() {
+        // Real `claude -p --output-format json` envelope: total_cost_usd is a
+        // sibling of usage, and most input lands in cache_read (system prompt
+        // + context are cached), not fresh input_tokens.
+        let stdout = r#"{"type":"result","subtype":"success","total_cost_usd":0.0234,"usage":{"input_tokens":4,"output_tokens":268,"cache_read_input_tokens":14791,"cache_creation_input_tokens":0}}"#;
+        let report = parse_claude_usage(stdout).expect("usage block");
+        assert_eq!(report.input_tokens, Some(4));
+        assert_eq!(report.cache_read_input_tokens, Some(14791));
+        assert_eq!(report.reported_cost_usd, Some(0.0234));
     }
 
     #[test]
