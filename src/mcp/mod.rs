@@ -238,7 +238,14 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
     };
 
     // Load flow so the "next" hint matches this task's pipeline preset.
-    let ts = TaskState::load(&config.tasks_dir(), task_id)?;
+    // Reconcile FSM state with artifacts already on disk: the MCP driver
+    // writes each phase's artifact without an explicit `--done`, so advancing
+    // here (up to the next review gate) keeps the FSM honest across the
+    // stateless get_prompt calls.
+    let mut ts = TaskState::load(&config.tasks_dir(), task_id)?;
+    if crate::cli::state_sync::sync_from_artifacts(&mut ts, &config.tasks_dir(), task_id)? {
+        ts.save(&config.tasks_dir())?;
+    }
 
     let mut ctx = build_context_for_phase(&config, task_id, prompt_phase)?;
     ctx.output_file = match phase {

@@ -15,6 +15,7 @@ pub mod retry;
 pub mod review;
 pub mod ship;
 pub mod spec;
+pub mod state_sync;
 pub mod status;
 pub mod task;
 pub mod testspec;

@@ -46,6 +46,15 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
+    // Reconcile the FSM with generate-phase artifacts on disk before checking
+    // preconditions. In the MCP flow the driving LLM writes artifacts without
+    // an explicit `--done`, so the state may lag behind what's actually
+    // produced — this catches it up (stopping before the review gate) so the
+    // approve precondition below sees the real progress.
+    if crate::cli::state_sync::sync_from_artifacts(&mut ts, &tasks_dir, task_id)? {
+        ts.save(&tasks_dir)?;
+    }
+
     let transition = artifact_transition(artifact, task_id).expect("validated above");
     let prev_state = transition.prev_state;
     let next_state = transition.next_state;
