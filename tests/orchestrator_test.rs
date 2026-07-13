@@ -513,3 +513,45 @@ fn fallback_persists_state_between_attempts() {
         "assigned_agent must not move during persistence"
     );
 }
+
+#[test]
+#[serial]
+fn default_agent_retryable_without_fallback_bails_with_context() {
+    // Route 2 (agentless MCP / async / CI): run_phase is given a transient
+    // `default_agent` but the task has no assigned/fallback agent. A retryable
+    // failure must bail with the real exit code + output, NOT bury it behind a
+    // bare "record fallback" context from record_fallback's own precondition.
+    ensure_fake_agent_built();
+    let _h = TestHome::new();
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let primary_cfg = write_fake_config(
+        cfg_dir.path(),
+        "primary",
+        &json!({"exit_code": 124, "stderr": "boom-detail"}),
+    );
+    seed_registry(&[primary_cfg.to_str().unwrap()], None, fast_policy(2));
+
+    let proj = tempfile::tempdir().unwrap();
+    make_project(proj.path());
+    // Agentless task — no assigned_agent, no fallback_agent.
+    std::fs::create_dir_all(proj.path().join(".zforge/tasks/T1")).unwrap();
+    TaskState::new("T1")
+        .save(&proj.path().join(".zforge/tasks"))
+        .unwrap();
+
+    let err =
+        orchestrator::run_phase("T1", "code", proj.path(), "prompt", Some("primary")).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no fallback agent configured"),
+        "should explain the missing fallback, got: {msg}"
+    );
+    assert!(
+        msg.contains("exit=124"),
+        "should surface the real exit code, got: {msg}"
+    );
+    assert!(
+        !msg.contains("record fallback"),
+        "must not bury the error behind record-fallback context, got: {msg}"
+    );
+}

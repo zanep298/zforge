@@ -147,6 +147,25 @@ pub fn run_phase(
             }
         };
 
+        // A retryable failure needs somewhere to fall back TO. Tasks routed
+        // through the orchestrator with a transient `default_agent` (Route 2:
+        // agentless MCP / async / CI runs) — or any task imported without
+        // `--fallback` — have no fallback agent. `record_fallback` would then
+        // fail on its own precondition and bury the real error behind a bare
+        // "record fallback" context. Bail here instead with the full failure
+        // detail so the MCP/async caller sees the actual exit code + output.
+        if state.fallback_agent.is_none() {
+            anyhow::bail!(
+                "agent {agent_name} hit a retryable failure in phase {phase} \
+                 (exit={code}) but task {task_id} has no fallback agent configured.\n\
+                 reason: {reason}\nstderr:\n{stderr}\nstdout:\n{stdout}",
+                code = outcome.exit_code,
+                reason = reason.as_log_str(),
+                stderr = outcome.stderr.trim_end(),
+                stdout = outcome.stdout.trim_end(),
+            );
+        }
+
         if fallback_count(&state) as u32 >= policy.max_retries {
             anyhow::bail!(
                 "fallback budget exhausted ({} retries) for task {task_id} in phase {phase}; last error: {}",

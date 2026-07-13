@@ -64,7 +64,7 @@ pub fn run_phase_for_task(
     // Route 2: agentless + non-interactive + default runner registered →
     // orchestrator with the default runner for full cost telemetry.
     let interactive = std::io::stdout().is_terminal();
-    if !interactive && default_runner_available() {
+    if !interactive && default_runner_available(&config.project_root()) {
         let rendered = engine.render(template_name, ctx)?;
         return crate::orchestrator::run_phase(
             &ts.task_id,
@@ -98,13 +98,15 @@ pub fn run_phase_for_task(
     result
 }
 
-/// True when `DEFAULT_RUNNER` is present in the global registry's `agents{}`.
-/// When absent (e.g. a project that registered only codex), we can't safely
-/// default to claude, so the caller falls back to the legacy dispatch path
-/// rather than hard-erroring on an unresolvable agent.
-fn default_runner_available() -> bool {
+/// True when `DEFAULT_RUNNER` resolves for this project — i.e. the orchestrator
+/// could actually spawn it. Uses the same `resolved_agent` path as `run_phase`
+/// (project `agent_overrides` first, then global `agents{}`), so a project that
+/// defines claude only via an override still routes through Route 2. When it
+/// can't resolve (e.g. a project that registered only codex), the caller falls
+/// back to legacy dispatch rather than hard-erroring on an unresolvable agent.
+fn default_runner_available(project_root: &std::path::Path) -> bool {
     registry::io::load()
-        .map(|r| r.agents.contains_key(DEFAULT_RUNNER))
+        .map(|r| r.resolved_agent(DEFAULT_RUNNER, project_root).is_some())
         .unwrap_or(false)
 }
 
