@@ -97,7 +97,7 @@ fn success_first_attempt() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", None);
 
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
 
     let ts = load_state(proj.path(), "T1");
     assert!(ts.fallback_history.is_empty());
@@ -122,7 +122,7 @@ fn fallback_on_retryable_exit_124() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
 
     let ts = load_state(proj.path(), "T1");
     assert_eq!(ts.fallback_history.len(), 1);
@@ -160,7 +160,7 @@ fn fallback_on_stderr_rate_limit() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
 
     let ts = load_state(proj.path(), "T1");
     assert_eq!(ts.fallback_history.len(), 1);
@@ -198,7 +198,7 @@ fn fallback_on_codex_stdout_429_with_exit_zero() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
 
     let ts = load_state(proj.path(), "T1");
     assert_eq!(
@@ -241,7 +241,7 @@ fn no_fallback_on_claude_invalid_model_stdout() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap_err();
+    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap_err();
     assert!(
         err.to_string().contains("exit=1"),
         "expected non-retryable bail; got: {err}"
@@ -272,7 +272,7 @@ fn no_fallback_on_test_failure_exit_1() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap_err();
+    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("exit=1"), "expected exit=1 in error: {msg}");
 
@@ -301,7 +301,7 @@ fn max_retries_terminal_failure() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap_err();
+    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap_err();
     assert!(
         err.to_string().contains("budget exhausted"),
         "expected budget exhausted: {err}"
@@ -336,7 +336,7 @@ fn cooldown_respected() {
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
     let started = std::time::Instant::now();
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
     let elapsed = started.elapsed();
 
     assert!(
@@ -364,7 +364,7 @@ fn flow_preserved_after_fallback() {
     make_task(proj.path(), "T1", "primary", Some("fallback"));
     let flow_before = load_state(proj.path(), "T1").flow.as_str().to_string();
 
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
 
     let flow_after = load_state(proj.path(), "T1").flow.as_str().to_string();
     assert_eq!(flow_before, flow_after);
@@ -391,7 +391,7 @@ fn non_existent_binary_clean_error() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "ghost", None);
 
-    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap_err();
+    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("spawn"), "expected spawn error: {msg}");
 }
@@ -443,7 +443,7 @@ fn per_project_agent_override() {
 
     // If the override worked, exit_code is 0 (override). If not, exit_code is 1
     // (global) and it would propagate as a non-retryable error.
-    orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap();
 }
 
 #[test]
@@ -462,7 +462,7 @@ fn legacy_task_without_assigned_agent_errors_in_orchestrator() {
     let ts = TaskState::new("T1");
     ts.save(&proj.path().join(".zforge/tasks")).unwrap();
 
-    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt").unwrap_err();
+    let err = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None).unwrap_err();
     assert!(err.to_string().contains("no agent assigned"));
 }
 
@@ -475,7 +475,8 @@ fn missing_state_file_clean_error() {
     let proj = tempfile::tempdir().unwrap();
     make_project(proj.path());
 
-    let err = orchestrator::run_phase("T-MISSING", "code", proj.path(), "prompt").unwrap_err();
+    let err =
+        orchestrator::run_phase("T-MISSING", "code", proj.path(), "prompt", None).unwrap_err();
     assert!(err.to_string().contains("read"));
 }
 
@@ -499,7 +500,7 @@ fn fallback_persists_state_between_attempts() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    let _ = orchestrator::run_phase("T1", "code", proj.path(), "prompt");
+    let _ = orchestrator::run_phase("T1", "code", proj.path(), "prompt", None);
 
     // State file should reflect the swap even though run_phase failed at the
     // end. This is the persistence guarantee documented in PR3-05.
@@ -510,5 +511,47 @@ fn fallback_persists_state_between_attempts() {
         reloaded.assigned_agent.as_deref(),
         Some("primary"),
         "assigned_agent must not move during persistence"
+    );
+}
+
+#[test]
+#[serial]
+fn default_agent_retryable_without_fallback_bails_with_context() {
+    // Route 2 (agentless MCP / async / CI): run_phase is given a transient
+    // `default_agent` but the task has no assigned/fallback agent. A retryable
+    // failure must bail with the real exit code + output, NOT bury it behind a
+    // bare "record fallback" context from record_fallback's own precondition.
+    ensure_fake_agent_built();
+    let _h = TestHome::new();
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let primary_cfg = write_fake_config(
+        cfg_dir.path(),
+        "primary",
+        &json!({"exit_code": 124, "stderr": "boom-detail"}),
+    );
+    seed_registry(&[primary_cfg.to_str().unwrap()], None, fast_policy(2));
+
+    let proj = tempfile::tempdir().unwrap();
+    make_project(proj.path());
+    // Agentless task — no assigned_agent, no fallback_agent.
+    std::fs::create_dir_all(proj.path().join(".zforge/tasks/T1")).unwrap();
+    TaskState::new("T1")
+        .save(&proj.path().join(".zforge/tasks"))
+        .unwrap();
+
+    let err =
+        orchestrator::run_phase("T1", "code", proj.path(), "prompt", Some("primary")).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no fallback agent configured"),
+        "should explain the missing fallback, got: {msg}"
+    );
+    assert!(
+        msg.contains("exit=124"),
+        "should surface the real exit code, got: {msg}"
+    );
+    assert!(
+        !msg.contains("record fallback"),
+        "must not bury the error behind record-fallback context, got: {msg}"
     );
 }

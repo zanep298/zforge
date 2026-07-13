@@ -15,48 +15,145 @@ use std::path::Path;
 ///
 /// Codex args: `exec` is the non-interactive subcommand. The orchestrator
 /// auto-appends `--profile zforge_<phase>` at spawn time per phase.
+///
+/// Claude args: `-p --output-format json` runs print mode with a structured
+/// JSON envelope on stdout. The final `result` object carries a top-level
+/// `usage` block (`input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+/// `cache_creation_input_tokens`) that `cost::usage::parse_claude_usage`
+/// reads for REAL token accounting. Without `--output-format json`, claude
+/// prints plain text, no usage block is emitted, and every CostEntry falls
+/// back to a byte-length estimate that ignores claude's system prompt,
+/// `/file` context, tool schemas, and multi-turn tool output — badly
+/// under-reporting spend. Keep this flag or cost reports become fiction.
 fn default_agent_specs() -> &'static [(&'static str, &'static str, &'static [&'static str])] {
     &[
-        ("claude", "claude", &["-p"]),
+        ("claude", "claude", &["-p", "--output-format", "json"]),
         ("codex", "codex", &["exec"]),
         ("opencode", "opencode", &["run"]),
     ]
 }
 
-/// Insert default AgentSpec rows for the listed agent names when absent.
-/// Existing entries are left untouched so user customization survives.
+/// The exact pre-cost-fix claude default (`claude -p`, plain text, no usage
+/// block). Installs carrying this spec are migrated up to the current
+/// JSON-reporting default so cost telemetry becomes accurate. Any other
+/// claude args are treated as user customization and left untouched.
+const STALE_CLAUDE_ARGS: &[&str] = &["-p"];
+
+fn default_specs_map() -> std::collections::BTreeMap<&'static str, AgentSpec> {
+    default_agent_specs()
+        .iter()
+        .map(|(name, cmd, args)| {
+            (
+                *name,
+                AgentSpec {
+                    command: (*cmd).into(),
+                    args: args.iter().map(|s| (*s).to_string()).collect(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Pure merge: seed missing defaults and migrate the stale claude spec.
+/// Mutates `registry` in place; returns `(inserted_names, migrated)` so the
+/// caller decides whether to persist. No IO / env — unit-testable directly.
+fn apply_defaults(
+    registry: &mut Registry,
+    agent_names: &[&str],
+    defaults: &std::collections::BTreeMap<&str, AgentSpec>,
+) -> (Vec<String>, bool) {
+    let mut inserted = Vec::new();
+    let mut migrated = false;
+    for name in agent_names {
+        if let Some(existing) = registry.agents.get(*name) {
+            if *name == "claude"
+                && existing.command == "claude"
+                && existing.args == STALE_CLAUDE_ARGS
+            {
+                if let Some(spec) = defaults.get("claude") {
+                    registry.agents.insert("claude".to_string(), spec.clone());
+                    migrated = true;
+                }
+            }
+            continue;
+        }
+        let Some(spec) = defaults.get(*name) else {
+            continue;
+        };
+        registry.agents.insert((*name).to_string(), spec.clone());
+        inserted.push((*name).to_string());
+    }
+    (inserted, migrated)
+}
+
+/// Insert default AgentSpec rows for the listed agent names when absent, and
+/// migrate the stale claude default. Existing user customization survives.
 /// Returns the names actually inserted.
 pub fn ensure_default_agents(agent_names: &[&str]) -> Result<Vec<String>> {
     lock::with_lock(|| {
         let mut registry = io::load()?;
-        let defaults: std::collections::BTreeMap<&str, AgentSpec> = default_agent_specs()
-            .iter()
-            .map(|(name, cmd, args)| {
-                (
-                    *name,
-                    AgentSpec {
-                        command: (*cmd).into(),
-                        args: args.iter().map(|s| (*s).to_string()).collect(),
-                    },
-                )
-            })
-            .collect();
-        let mut inserted = Vec::new();
-        for name in agent_names {
-            if registry.agents.contains_key(*name) {
-                continue;
-            }
-            let Some(spec) = defaults.get(*name) else {
-                continue;
-            };
-            registry.agents.insert((*name).to_string(), spec.clone());
-            inserted.push((*name).to_string());
-        }
-        if !inserted.is_empty() {
+        let defaults = default_specs_map();
+        let (inserted, migrated) = apply_defaults(&mut registry, agent_names, &defaults);
+        if !inserted.is_empty() || migrated {
             io::save_atomic(&registry)?;
         }
         Ok(inserted)
     })
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    fn spec(command: &str, args: &[&str]) -> AgentSpec {
+        AgentSpec {
+            command: command.into(),
+            args: args.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn upgrades_stale_claude_default_to_json_output() {
+        let mut reg = Registry::default();
+        reg.agents
+            .insert("claude".to_string(), spec("claude", &["-p"]));
+
+        let (inserted, migrated) = apply_defaults(&mut reg, &["claude"], &default_specs_map());
+
+        assert!(inserted.is_empty(), "existing key not re-inserted");
+        assert!(migrated, "stale spec should migrate");
+        assert_eq!(
+            reg.agents["claude"].args,
+            vec!["-p", "--output-format", "json"],
+        );
+    }
+
+    #[test]
+    fn preserves_user_customized_claude_spec() {
+        let mut reg = Registry::default();
+        reg.agents.insert(
+            "claude".to_string(),
+            spec("claude", &["-p", "--model", "opus"]),
+        );
+
+        let (_, migrated) = apply_defaults(&mut reg, &["claude"], &default_specs_map());
+
+        assert!(!migrated, "customized spec must not migrate");
+        assert_eq!(reg.agents["claude"].args, vec!["-p", "--model", "opus"]);
+    }
+
+    #[test]
+    fn seeds_missing_agents_with_json_claude_default() {
+        let mut reg = Registry::default();
+
+        let (inserted, _) = apply_defaults(&mut reg, &["claude", "codex"], &default_specs_map());
+
+        assert_eq!(inserted, vec!["claude", "codex"]);
+        assert_eq!(
+            reg.agents["claude"].args,
+            vec!["-p", "--output-format", "json"],
+        );
+    }
 }
 
 #[derive(Debug)]

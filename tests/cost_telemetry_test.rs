@@ -102,7 +102,7 @@ fn successful_spawn_writes_one_cost_entry() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", None);
 
-    orchestrator::run_phase("T1", "plan", proj.path(), "test prompt").unwrap();
+    orchestrator::run_phase("T1", "plan", proj.path(), "test prompt", None).unwrap();
 
     let entries = load_all(proj.path()).unwrap();
     assert_eq!(
@@ -137,7 +137,7 @@ fn fallback_records_two_entries_one_per_attempt() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", Some("fallback"));
 
-    orchestrator::run_phase("T1", "code", proj.path(), "p").unwrap();
+    orchestrator::run_phase("T1", "code", proj.path(), "p", None).unwrap();
 
     let entries = load_all(proj.path()).unwrap();
     assert_eq!(
@@ -180,7 +180,7 @@ fn codex_tokens_used_line_parsed_into_reported_total() {
     make_project(proj.path());
     make_task(proj.path(), "T1", "primary", None);
 
-    orchestrator::run_phase("T1", "plan", proj.path(), "p").unwrap();
+    orchestrator::run_phase("T1", "plan", proj.path(), "p", None).unwrap();
 
     let entries = load_all(proj.path()).unwrap();
     assert_eq!(entries.len(), 1);
@@ -210,7 +210,7 @@ fn codex_frontmatter_model_recorded_without_models_yaml() {
     .unwrap();
     make_task(proj.path(), "T1", "codex", None);
 
-    orchestrator::run_phase("T1", "plan", proj.path(), "p").unwrap();
+    orchestrator::run_phase("T1", "plan", proj.path(), "p", None).unwrap();
 
     let entries = load_all(proj.path()).unwrap();
     assert_eq!(entries.len(), 1);

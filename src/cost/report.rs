@@ -17,11 +17,24 @@ pub struct CostRollup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub spawns: usize,
+    /// Subset of `spawns` whose cost/output could not be measured — legacy
+    /// `Engine::dispatch` entries (`tokens_source == "input-only"`) that
+    /// stream to the TTY without capturing stdout, so output tokens and USD
+    /// cost are structurally 0. Surfaced so a $0.0000 row reads as "not
+    /// measured", not "was free". Codex's genuine $0 (flat subscription) is
+    /// NOT counted here.
+    pub unmeasured_spawns: usize,
     pub input_tokens: usize,
     pub output_tokens: usize,
     pub total_tokens: usize,
     pub total_cost_usd: f64,
     pub total_duration_ms: u128,
+}
+
+/// True when an entry carries no measurable cost/output — the legacy
+/// dispatch path flags itself with this `tokens_source`.
+fn is_unmeasured(entry: &CostEntry) -> bool {
+    entry.tokens_source == "input-only"
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +96,9 @@ pub fn rollup(entries: &[CostEntry], by: GroupBy) -> Vec<CostRollup> {
             ..CostRollup::default()
         });
         bucket.spawns += 1;
+        if is_unmeasured(e) {
+            bucket.unmeasured_spawns += 1;
+        }
         bucket.input_tokens += e.est_input_tokens;
         bucket.output_tokens += e.est_output_tokens;
         bucket.total_tokens += e
@@ -175,6 +191,7 @@ pub fn format_table(rollups: &[CostRollup], by: GroupBy) -> String {
             (r.total_duration_ms as f64) / 1000.0
         );
         total.spawns += r.spawns;
+        total.unmeasured_spawns += r.unmeasured_spawns;
         total.input_tokens += r.input_tokens;
         total.output_tokens += r.output_tokens;
         total.total_tokens += r.total_tokens;
@@ -193,7 +210,24 @@ pub fn format_table(rollups: &[CostRollup], by: GroupBy) -> String {
         total.total_cost_usd,
         (total.total_duration_ms as f64) / 1000.0
     );
+    append_unmeasured_note(&mut out, total.unmeasured_spawns, total.spawns);
     out
+}
+
+/// Warn when some spawns couldn't be measured so a $0.0000 total doesn't
+/// read as "this was free". Legacy dispatch tasks (imported without
+/// `--agent`) stream to the TTY and never capture output — reimport with
+/// `--agent <name>` to route through the orchestrator for real accounting.
+fn append_unmeasured_note(out: &mut String, unmeasured: usize, total: usize) {
+    if unmeasured == 0 {
+        return;
+    }
+    use std::fmt::Write as _;
+    let _ = writeln!(
+        out,
+        "note: {unmeasured}/{total} spawns unmeasured (legacy dispatch — cost/output not \
+         captured). Reimport with `zforge task import --agent <name>` for real cost."
+    );
 }
 
 fn format_step_table(rollups: &[CostRollup]) -> String {
@@ -234,6 +268,7 @@ fn format_step_table(rollups: &[CostRollup]) -> String {
             (r.total_duration_ms as f64) / 1000.0
         );
         total.spawns += r.spawns;
+        total.unmeasured_spawns += r.unmeasured_spawns;
         total.input_tokens += r.input_tokens;
         total.output_tokens += r.output_tokens;
         total.total_tokens += r.total_tokens;
@@ -255,6 +290,7 @@ fn format_step_table(rollups: &[CostRollup]) -> String {
         total.total_cost_usd,
         (total.total_duration_ms as f64) / 1000.0
     );
+    append_unmeasured_note(&mut out, total.unmeasured_spawns, total.spawns);
     out
 }
 
@@ -369,6 +405,41 @@ mod tests {
         assert!(out.contains("T1"));
         assert!(out.contains("(total)"));
         assert!(out.contains("0.1230"));
+    }
+
+    fn legacy_entry(task: &str, phase: &str, in_tok: usize) -> CostEntry {
+        let mut e = entry(task, phase, 0.0, in_tok, 0);
+        e.agent = "(legacy-dispatch)".into();
+        e.model = None;
+        e.tokens_source = "input-only".into();
+        e
+    }
+
+    #[test]
+    fn rollup_counts_unmeasured_legacy_spawns() {
+        let entries = vec![
+            entry("T1", "code", 0.10, 300, 400),
+            legacy_entry("T1", "spec", 100),
+            legacy_entry("T1", "plan", 80),
+        ];
+        let r = rollup(&entries, GroupBy::Task);
+        assert_eq!(r[0].spawns, 3);
+        assert_eq!(r[0].unmeasured_spawns, 2, "two legacy entries flagged");
+    }
+
+    #[test]
+    fn table_footer_warns_on_unmeasured_spawns() {
+        let rollups = rollup(&[legacy_entry("T1", "spec", 100)], GroupBy::Task);
+        let out = format_table(&rollups, GroupBy::Task);
+        assert!(out.contains("unmeasured"), "footer note present");
+        assert!(out.contains("--agent"), "footer suggests fix");
+    }
+
+    #[test]
+    fn table_has_no_note_when_all_measured() {
+        let rollups = rollup(&[entry("T1", "code", 0.10, 300, 400)], GroupBy::Task);
+        let out = format_table(&rollups, GroupBy::Task);
+        assert!(!out.contains("unmeasured"), "no note when fully measured");
     }
 
     #[test]

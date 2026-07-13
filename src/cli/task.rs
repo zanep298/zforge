@@ -46,6 +46,33 @@ pub fn validate_agent_args(agent: Option<&str>, fallback: Option<&str>) -> Resul
     Ok(())
 }
 
+/// Infer a pipeline flow from the task's title + description when the user
+/// didn't pass `--flow`. Conservative: only picks a leaner preset on a clear
+/// keyword signal; anything ambiguous stays on the safe `Full` default. The
+/// choice is printed at import and always overridable with `--flow`.
+///
+/// Checked most-conservative-first: a task mentioning both a bug and docs
+/// lands on `Fixbug` (skips fewer phases) rather than `Docs`.
+fn infer_flow(title: Option<&str>, description: Option<&str>) -> Flow {
+    let hay = format!(
+        "{} {}",
+        title.unwrap_or_default(),
+        description.unwrap_or_default()
+    )
+    .to_lowercase();
+
+    let matches = |pat: &str| Regex::new(pat).unwrap().is_match(&hay);
+    if matches(r"\b(bug|bugfix|hotfix|regression|crash|defect)\b") {
+        Flow::Fixbug
+    } else if matches(r"\b(spike|poc|prototype|experiment|investigate|explore)\b") {
+        Flow::Spike
+    } else if matches(r"\b(docs?|documentation|readme|changelog)\b") {
+        Flow::Docs
+    } else {
+        Flow::default()
+    }
+}
+
 fn next_task_id(tasks_dir: &Path) -> Result<String> {
     let re = Regex::new(r"^([A-Z]+)-([0-9]+)$").unwrap();
     let mut max_num: u32 = 0;
@@ -79,10 +106,10 @@ pub fn run_import(
     fallback: Option<String>,
 ) -> Result<String> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
-    let flow = match flow {
-        Some(s) => Flow::parse(s)?,
-        None => Flow::default(),
-    };
+    // Parse an explicit `--flow` early so a typo fails before any scaffold.
+    // When absent, the flow is inferred from the task text once `data` is
+    // resolved (below) — the Jira path fills title/description from the ticket.
+    let explicit_flow = flow.map(Flow::parse).transpose()?;
 
     // Validate agent flags before touching the filesystem — a typo on
     // `--agent` must not leave a half-scaffolded task behind.
@@ -128,6 +155,13 @@ pub fn run_import(
         (resolved_id, import_data)
     };
 
+    // Infer the flow from the task text when the user didn't pin one. Explicit
+    // `--flow` always wins; inference only ever picks a leaner preset on a
+    // clear keyword signal, defaulting to Full otherwise.
+    let flow = explicit_flow
+        .unwrap_or_else(|| infer_flow(data.title.as_deref(), data.description.as_deref()));
+    let auto_picked = explicit_flow.is_none() && flow != Flow::default();
+
     if scaffold::task_exists(&tasks_dir, &id) {
         anyhow::bail!("Task {} already exists. Use: zf status {}", id, id);
     }
@@ -161,6 +195,13 @@ pub fn run_import(
         tokens::fmt(task_tokens)
     );
     println!("{} State: Imported  ({} flow)", "✓".green(), flow.as_str());
+    if auto_picked {
+        println!(
+            "{} Auto-picked '{}' flow from task text — override with --flow full",
+            "ℹ".blue(),
+            flow.as_str()
+        );
+    }
     println!();
     println!("{}", "─".repeat(40));
 
@@ -202,6 +243,51 @@ mod tests {
         assert!(!validate_task_id("TASK-"));
         assert!(!validate_task_id("-001"));
         assert!(!validate_task_id(""));
+    }
+
+    #[test]
+    fn infer_flow_defaults_to_full_when_ambiguous() {
+        assert_eq!(infer_flow(Some("Add user profile page"), None), Flow::Full);
+        assert_eq!(infer_flow(None, None), Flow::Full);
+    }
+
+    #[test]
+    fn infer_flow_detects_fixbug() {
+        assert_eq!(
+            infer_flow(Some("Fix login crash on submit"), None),
+            Flow::Fixbug
+        );
+        assert_eq!(
+            infer_flow(Some("Payment"), Some("regression in totals")),
+            Flow::Fixbug
+        );
+    }
+
+    #[test]
+    fn infer_flow_detects_spike_and_docs() {
+        assert_eq!(
+            infer_flow(Some("Spike: evaluate OAuth libs"), None),
+            Flow::Spike
+        );
+        assert_eq!(
+            infer_flow(Some("Update README setup steps"), None),
+            Flow::Docs
+        );
+    }
+
+    #[test]
+    fn infer_flow_bug_beats_docs_on_ambiguity() {
+        // Both signals present → the safer (less-skipping) Fixbug wins.
+        assert_eq!(
+            infer_flow(Some("Fix docs bug in changelog"), None),
+            Flow::Fixbug
+        );
+    }
+
+    #[test]
+    fn infer_flow_word_boundary_avoids_false_hits() {
+        // "prefix" must not trigger Fixbug via a bare "fix" substring.
+        assert_eq!(infer_flow(Some("Add prefix to slugs"), None), Flow::Full);
     }
 
     #[test]

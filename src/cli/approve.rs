@@ -43,26 +43,17 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         );
     }
 
-    if !yes {
-        print!("? Approve tasks/{}/{}? [y/N] ", task_id, filename);
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Aborted.");
-            return Ok(());
-        }
-    }
-
-    let now = Local::now().to_rfc3339();
-    writer::set_frontmatter(&filepath, "reviewed", serde_yaml::Value::Bool(true))?;
-    writer::set_frontmatter(&filepath, "reviewed_at", serde_yaml::Value::String(now))?;
-    if let Some(n) = note {
-        writer::set_frontmatter(&filepath, "reviewed_note", serde_yaml::Value::String(n))?;
-    }
-
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
+
+    // Reconcile the FSM with generate-phase artifacts on disk before checking
+    // preconditions. In the MCP flow the driving LLM writes artifacts without
+    // an explicit `--done`, so the state may lag behind what's actually
+    // produced — this catches it up (stopping before the review gate) so the
+    // approve precondition below sees the real progress.
+    if crate::cli::state_sync::sync_from_artifacts(&mut ts, &tasks_dir, task_id)? {
+        ts.save(&tasks_dir)?;
+    }
 
     let transition = artifact_transition(artifact, task_id).expect("validated above");
     let prev_state = transition.prev_state;
@@ -81,6 +72,39 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         }
     }
 
+    // Precondition: the predecessor phase must be complete before its artifact
+    // can be approved. Checked BEFORE any stamping so an out-of-order approve
+    // fails loudly instead of silently. Without this, a task still at an early
+    // state (e.g. the MCP flow never advances generate-states) would get its
+    // artifact stamped "reviewed" and report success while the FSM never
+    // moved — the swallowed `advance` error left the skipped step invisible.
+    if next_state.is_some() && ts.state < prev_state {
+        anyhow::bail!(
+            "cannot approve '{artifact}' for task {task_id}: task is at '{}', \
+             but '{}' must be reached first.\nRun: zf {artifact} {task_id} --done",
+            ts.state.as_str(),
+            prev_state.as_str(),
+        );
+    }
+
+    if !yes {
+        print!("? Approve tasks/{}/{}? [y/N] ", task_id, filename);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let now = Local::now().to_rfc3339();
+    writer::set_frontmatter(&filepath, "reviewed", serde_yaml::Value::Bool(true))?;
+    writer::set_frontmatter(&filepath, "reviewed_at", serde_yaml::Value::String(now))?;
+    if let Some(n) = note {
+        writer::set_frontmatter(&filepath, "reviewed_note", serde_yaml::Value::String(n))?;
+    }
+
     println!(
         "{} tasks/{}/{}.md marked as reviewed",
         "✓".green(),
@@ -89,12 +113,27 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
     );
 
     if let Some(next) = next_state {
-        let from_str = prev_state.as_str().to_string();
-        let to_str = next.as_str().to_string();
-        if ts.state >= prev_state {
-            let _ = ts.advance(next, "approved");
+        if ts.state == prev_state {
+            // Propagate advance errors instead of swallowing them — a failed
+            // transition must not report success.
+            let next_label = next.as_str();
+            ts.advance(next.clone(), "approved")?;
             ts.save(&tasks_dir)?;
-            println!("{} State advanced: {} → {}", "✓".green(), from_str, to_str);
+            println!(
+                "{} State advanced: {} → {}",
+                "✓".green(),
+                prev_state.as_str(),
+                next_label
+            );
+        } else {
+            // ts.state > prev_state: already past this gate. Idempotent
+            // re-approval refreshes the reviewed stamp but leaves the FSM as-is.
+            println!(
+                "{} Already past {}; state unchanged ({})",
+                "ℹ".blue(),
+                next.as_str(),
+                ts.state.as_str()
+            );
         }
     }
 

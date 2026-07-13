@@ -49,6 +49,8 @@ Human approval gates: `testspec` (TestspecDone → TestspecReviewed) and `plan` 
 
 `Flow` (in `state/flow.rs`) selects an ordered subset of `State`. Picked at import time with `--flow`; recorded in `.state.yaml` as `flow: Full|Fixbug|Spike|Docs` (`#[serde(default)]` = `Full`, so pre-flow state files keep working).
 
+When `--flow` is omitted, `cli::task::infer_flow` picks one from the task title + description via word-boundary keyword match (bug/hotfix/regression → Fixbug, spike/poc/prototype → Spike, docs/readme/changelog → Docs), most-conservative-first so an ambiguous or feature task stays on the safe `Full` default. An auto-picked lean flow is printed at import with the override hint. Explicit `--flow` always wins.
+
 | Flow | States |
 |------|--------|
 | `Full` (default) | Imported → SpecDone → TestspecDone → TestspecReviewed → Planned → PlanReviewed → Coded → Verified → Reviewed |
@@ -91,6 +93,8 @@ Templates are embedded via `embedded.rs`. Init writes `.zforge/`, `CLAUDE.md`, `
 
 `zforge mcp` runs as a stdio JSON-RPC server. It delegates directly to the same `cli::*` functions the CLI uses — no separate code paths. Registered via project-local `.mcp.json` so Claude Code picks it up automatically. `zforge mcp register` writes the registration into the agent's config (supports Claude Code, Codex, OpenCode).
 
+**Artifact-derived FSM sync.** The CLI advances the FSM with explicit `--done` commands; the MCP flow has no such signal — `get_prompt` hands a prompt to the driving LLM, which writes the artifact itself, but nothing marks the generate-phase complete. `cli::state_sync::sync_from_artifacts` reconciles the two: it walks the task's flow and advances the FSM to match the generate-phase artifacts present on disk (`spec.md`→SpecDone, `testspec.md`→TestspecDone, `plan.md`→Planned), stopping before any review gate (still crossed by `approve`) and before code/verify/review (driven by `ship`/`verify`/`review`). It's called at the top of `mcp::tool_get_prompt` and `cli::approve::run` so state stays honest across stateless `get_prompt` calls. State is a function of artifacts-on-disk plus explicit approvals — the same end state whether driven by CLI or MCP. Pairs with `approve`'s strict predecessor precondition: sync catches the FSM up, then approve rejects only genuinely-out-of-order calls.
+
 ### Global project registry
 
 `~/.zforge/registry.yaml` lists every zforge project on the machine. Schema: `current_project`, `projects[]` (`name`, `path`, `registered_at`, `registered_by: init|manual`, `agent_overrides`), `agents{}` (validated by PR2 task imports), `fallback_policy` (consumed by PR3 orchestrator). Mutations go through `registry::lock::with_lock` (advisory `flock` on `~/.zforge/registry.lock`) + `registry::io::save_atomic` (tmp + fsync + rename). `paths.rs` honors `ZFORGE_HOME` so integration tests can redirect to a tempdir — combine with `#[serial_test::serial]` because the env var is process-global.
@@ -120,7 +124,13 @@ Templates are embedded via `embedded.rs`. Init writes `.zforge/`, `CLAUDE.md`, `
 
 `FallbackReason::OutputMatch(pattern)` replaced PR3's `StderrMatch`. Log strings change from `stderr_match:` to `output_match:`. `fallback_history` entries written after PR9 use the new prefix.
 
-CLI phase commands (`spec`, `testspec`, `plan`, `code`, the code half of `ship`) route through `cli::dispatch_helper::run_phase_for_task`: tasks with `effective_agent()` go to the orchestrator; legacy/pre-PR2 tasks stay on `Engine::dispatch()` (auto-detect `claude`/`opencode` on `$PATH`). `verify` never touches the orchestrator — it shells out to the test runner directly. Integration tests use the `examples/fake_agent.rs` stub driven by a JSON config path passed as the agent's args (`{exit_code, stderr, stdout, sleep_ms}`).
+CLI phase commands (`spec`, `testspec`, `plan`, `code`, the code half of `ship`) route through `cli::dispatch_helper::run_phase_for_task`, which picks one of three routes so cost telemetry is captured wherever a human isn't watching:
+
+1. **Explicit agent** (`effective_agent()` is `Some`, i.e. imported with `--agent`) → orchestrator always, so the chosen runner + fallback + model routing are honored (the legacy path auto-detects `claude`/`opencode` on `$PATH` and would silently ignore the selection).
+2. **Agentless + non-interactive** (`!stdout().is_terminal()` — async worker, MCP stdio, CI, piped) → orchestrator with `DEFAULT_RUNNER` (`"claude"`) passed as `run_phase`'s `default_agent` arg, so agentless autonomous runs are measured. Also keeps claude's stdout piped (captured, not printed) so it can't corrupt the MCP JSON-RPC channel.
+3. **Agentless + interactive TTY** (human at a terminal) → legacy `Engine::dispatch()` streaming (auto-detect `claude`/`opencode` on `$PATH`). Output streams live but can't be captured, so the cost entry is flagged `tokens_source = "input-only"` and reported as unmeasured.
+
+`orchestrator::run_phase(task_id, phase, project_root, prompt, default_agent)` takes `default_agent` as a transient fallback used only when the task's `effective_agent()` is `None` — `assigned_agent` on disk stays `None`, preserving the never-mutate invariant. Route 2 falls back to route 3 when `DEFAULT_RUNNER` isn't in `registry.agents{}`. `verify` never touches the orchestrator — it shells out to the test runner directly. Integration tests use the `examples/fake_agent.rs` stub driven by a JSON config path passed as the agent's args (`{exit_code, stderr, stdout, sleep_ms}`).
 
 ### Verifier-driven loop (PR4 / SWE-bench pattern)
 

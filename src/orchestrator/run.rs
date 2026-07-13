@@ -37,10 +37,23 @@ fn is_headless() -> bool {
 /// fallback per `CompiledPolicy`, persists `active_agent` + history between
 /// attempts. `assigned_agent` is never mutated.
 ///
+/// `default_agent` is the runner used when the task has no
+/// `effective_agent()` — i.e. it was imported without `--agent`. Callers pass
+/// `Some("claude")` to route otherwise-agentless tasks through the
+/// orchestrator (so cost telemetry is captured) instead of the legacy
+/// dispatch path. It is a transient fallback only: `assigned_agent` on disk
+/// stays `None`, preserving the "never mutate assigned_agent" invariant.
+///
 /// Returns `Ok(())` on the first successful spawn (exit 0). Non-retryable
 /// failures propagate immediately. Retryable failures consume the policy's
 /// retry budget; exhaustion is a terminal `Err`.
-pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) -> Result<()> {
+pub fn run_phase(
+    task_id: &str,
+    phase: &str,
+    project_root: &Path,
+    prompt: &str,
+    default_agent: Option<&str>,
+) -> Result<()> {
     let registry = registry::io::load()?;
     let policy = CompiledPolicy::compile(&registry.fallback_policy)?;
     let spawn_timeout_secs = registry.fallback_policy.spawn_timeout_secs;
@@ -61,6 +74,7 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
     loop {
         let agent_name = state
             .effective_agent()
+            .or(default_agent)
             .ok_or_else(|| anyhow!("task {task_id} has no agent assigned"))?
             .to_string();
 
@@ -132,6 +146,25 @@ pub fn run_phase(task_id: &str, phase: &str, project_root: &Path, prompt: &str) 
                 );
             }
         };
+
+        // A retryable failure needs somewhere to fall back TO. Tasks routed
+        // through the orchestrator with a transient `default_agent` (Route 2:
+        // agentless MCP / async / CI runs) — or any task imported without
+        // `--fallback` — have no fallback agent. `record_fallback` would then
+        // fail on its own precondition and bury the real error behind a bare
+        // "record fallback" context. Bail here instead with the full failure
+        // detail so the MCP/async caller sees the actual exit code + output.
+        if state.fallback_agent.is_none() {
+            anyhow::bail!(
+                "agent {agent_name} hit a retryable failure in phase {phase} \
+                 (exit={code}) but task {task_id} has no fallback agent configured.\n\
+                 reason: {reason}\nstderr:\n{stderr}\nstdout:\n{stdout}",
+                code = outcome.exit_code,
+                reason = reason.as_log_str(),
+                stderr = outcome.stderr.trim_end(),
+                stdout = outcome.stdout.trim_end(),
+            );
+        }
 
         if fallback_count(&state) as u32 >= policy.max_retries {
             anyhow::bail!(
@@ -259,14 +292,21 @@ fn record_cost(
         tokens_source = "reported-total";
     }
 
-    let est_cost_usd = cost_usd(
-        agent,
-        model,
-        est_input_tokens,
-        est_output_tokens,
-        cache_read.unwrap_or(0),
-        cache_create.unwrap_or(0),
-    );
+    // Prefer the agent's own computed cost when it reports one (claude's
+    // `total_cost_usd`). It reflects vendor pricing directly, so it stays
+    // correct even when the static price table drifts from list price. Fall
+    // back to the table calc for agents that only report token counts.
+    let reported_cost = claude_usage.as_ref().and_then(|u| u.reported_cost_usd);
+    let est_cost_usd = reported_cost.unwrap_or_else(|| {
+        cost_usd(
+            agent,
+            model,
+            est_input_tokens,
+            est_output_tokens,
+            cache_read.unwrap_or(0),
+            cache_create.unwrap_or(0),
+        )
+    });
 
     let entry = CostEntry {
         timestamp: Utc::now(),
@@ -503,6 +543,7 @@ mod tests {
             cache_read_input_tokens: Some(50),
             cache_creation_input_tokens: Some(10),
             total_tokens: None,
+            reported_cost_usd: None,
         };
         let (i, o, src, cr, cc) = derive_token_counts(4_000, 8_000, Some(&report));
         assert_eq!(i, 100);
