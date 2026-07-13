@@ -49,6 +49,8 @@ Human approval gates: `testspec` (TestspecDone → TestspecReviewed) and `plan` 
 
 `Flow` (in `state/flow.rs`) selects an ordered subset of `State`. Picked at import time with `--flow`; recorded in `.state.yaml` as `flow: Full|Fixbug|Spike|Docs` (`#[serde(default)]` = `Full`, so pre-flow state files keep working).
 
+When `--flow` is omitted, `cli::task::infer_flow` picks one from the task title + description via word-boundary keyword match (bug/hotfix/regression → Fixbug, spike/poc/prototype → Spike, docs/readme/changelog → Docs), most-conservative-first so an ambiguous or feature task stays on the safe `Full` default. An auto-picked lean flow is printed at import with the override hint. Explicit `--flow` always wins.
+
 | Flow | States |
 |------|--------|
 | `Full` (default) | Imported → SpecDone → TestspecDone → TestspecReviewed → Planned → PlanReviewed → Coded → Verified → Reviewed |
