@@ -1,6 +1,8 @@
 use crate::cli::flow_guard;
+use crate::cli::outcome::OperationOutcome;
 use crate::config;
 use crate::fs::{tokens, writer};
+use crate::note;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::runner;
 use crate::state::{State, TaskState};
@@ -21,13 +23,43 @@ pub struct VerifyOutcome {
     pub failed_names: Vec<String>,
 }
 
-pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<()> {
-    run_with_outcome(task_id, command, timeout).map(|_| ())
+impl VerifyOutcome {
+    /// One-line summary used by every transport so the CLI, MCP and job log
+    /// all describe the same failure the same way.
+    pub fn failure_summary(&self, task_id: &str) -> String {
+        let names = if self.failed_names.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", self.failed_names.join(", "))
+        };
+        format!(
+            "tests failed for {task_id} ({}/{} failed){names}",
+            self.failed_tests, self.total_tests
+        )
+    }
+
+    pub fn to_operation_outcome(&self, task_id: &str) -> OperationOutcome {
+        if self.passed {
+            OperationOutcome::Success
+        } else {
+            OperationOutcome::failed(self.failure_summary(task_id))
+        }
+    }
 }
 
-/// Same as [`run`] but returns the test outcome so callers can branch on
-/// pass/fail (for example, the MCP `verify` tool sets `isError: true` on
-/// failure). The CLI entry point discards the outcome.
+/// CLI entry point. A red test suite is a *failed operation*, not an error:
+/// zforge did exactly what was asked and the answer is "no". It therefore
+/// returns `Ok(OperationOutcome::Failed)`, which `main` maps to a nonzero
+/// exit code. Returning `Ok(())` here — as this did before FIX-001 — made
+/// `zforge verify` exit 0 while writing `passed: false` into `verify.md`.
+pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<OperationOutcome> {
+    let outcome = run_with_outcome(task_id, command, timeout)?;
+    Ok(outcome.to_operation_outcome(task_id))
+}
+
+/// Same as [`run`] but returns the full test outcome so callers can inspect
+/// the failing test names (the verifier loop feeds them into the next code
+/// prompt; the MCP tool renders them into its error message).
 pub fn run_with_outcome(
     task_id: &str,
     command: Option<String>,
@@ -51,14 +83,14 @@ pub fn run_with_outcome(
     };
     let work_dir = env::current_dir()?;
 
-    println!("{} Running: {}", "🧪".bold(), cmd);
+    note!("{} Running: {}", "🧪".bold(), cmd);
 
     let result = runner::run_with_language(&cmd, &work_dir, timeout, &config.project.language)?;
 
     let duration_secs = result.duration.as_secs_f64();
 
     if result.passed {
-        println!(
+        note!(
             "{} All tests passed ({}/{}) — {:.2}s",
             "✓".green(),
             result.passed_tests,
@@ -66,16 +98,16 @@ pub fn run_with_outcome(
             duration_secs
         );
     } else {
-        println!(
+        note!(
             "{} Tests failed: {}/{} failed",
             "✗".red(),
             result.failed_tests,
             result.total_tests
         );
-        println!();
-        println!("Failed tests:");
+        note!();
+        note!("Failed tests:");
         for name in &result.failed_names {
-            println!("  • {}", name);
+            note!("  • {}", name);
         }
     }
 
@@ -146,33 +178,30 @@ command: "{}"
         "model",
         serde_yaml::Value::String("runner".to_string()),
     )?;
-    println!();
-    println!(
+    note!();
+    note!(
         "Verify report: tasks/{}/verify.md  ({} tokens)",
         task_id,
         tokens::fmt(verify_tokens)
     );
 
     if result.passed {
-        ts.advance(State::Verified, "tests passed")?;
-        ts.save(&tasks_dir)?;
-        println!();
-        println!("{} State advanced: Coded → Verified", "✓".green());
-        println!("Next: {}", ts.next_hint());
+        apply_pass(&mut ts, &tasks_dir)?;
     } else {
+        apply_failure(&mut ts, &tasks_dir)?;
         // Generate analysis prompt
         let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::VerifyAnalysis)?;
         ctx.failed_tests = result.failed_names.join("\n");
         ctx.verify_file = verify_content;
 
         let engine = Engine::new(&config.agents_dir());
-        println!();
-        println!("{}", "─".repeat(40));
-        println!("{} AI Analysis Prompt (paste into Claude):", "🔍".bold());
+        note!();
+        note!("{}", "─".repeat(40));
+        note!("{} AI Analysis Prompt (paste into Claude):", "🔍".bold());
         if let Ok(rendered) = engine.render("verify-analysis", &ctx) {
-            println!("{}", rendered);
+            note!("{}", rendered);
         }
-        println!("{}", "─".repeat(40));
+        note!("{}", "─".repeat(40));
     }
 
     Ok(VerifyOutcome {
@@ -182,6 +211,56 @@ command: "{}"
         failed_tests: result.failed_tests,
         failed_names: result.failed_names,
     })
+}
+
+/// A passing run either advances `Coded → Verified` for the first time, or
+/// re-confirms a state the task already holds.
+///
+/// Re-running a green suite used to be an error (`InvalidTransition:
+/// Verified → Verified`) because `advance` only accepts the single next state
+/// in the flow. Verification is not a pipeline step you take once — it is a
+/// question you may ask repeatedly — so a repeat pass is recorded and
+/// accepted. A task already at `Reviewed` stays there: a fresh pass gives no
+/// reason to withdraw the review.
+fn apply_pass(ts: &mut TaskState, tasks_dir: &std::path::Path) -> Result<()> {
+    if ts.state >= State::Verified {
+        let held = ts.state.as_str().to_string();
+        ts.record_reverify("tests passed (re-verified)");
+        ts.save(tasks_dir)?;
+        note!();
+        note!("{} Tests passed — state stays {}", "✓".green(), held);
+        note!("Next: {}", ts.next_hint());
+        return Ok(());
+    }
+
+    ts.advance(State::Verified, "tests passed")?;
+    ts.save(tasks_dir)?;
+    note!();
+    note!("{} State advanced: Coded → Verified", "✓".green());
+    note!("Next: {}", ts.next_hint());
+    Ok(())
+}
+
+/// A failing run withdraws any pass this task was still relying on.
+///
+/// Without this, a task that passed once kept `Verified` forever: a later red
+/// run wrote `passed: false` into `verify.md` and changed nothing else, so
+/// `review --done` still saw `Verified` and happily advanced to `Reviewed` on
+/// top of a suite that no longer passes. The state name has to follow the
+/// evidence, so a failure drops the task back to `Coded` — reaching through
+/// `Reviewed`, because a review of an invalidated pass is invalid too.
+fn apply_failure(ts: &mut TaskState, tasks_dir: &std::path::Path) -> Result<()> {
+    let withdrawn = ts.state.as_str().to_string();
+    if ts.invalidate_to(State::Coded, "tests failed — prior pass invalidated") {
+        ts.save(tasks_dir)?;
+        note!();
+        note!(
+            "{} Prior evidence withdrawn: {} → Coded (tests now failing)",
+            "⚠".yellow(),
+            withdrawn
+        );
+    }
+    Ok(())
 }
 
 /// Reject MCP/CLI command overrides whose argv[0] differs from the configured test command's

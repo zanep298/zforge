@@ -1,5 +1,6 @@
 use crate::config;
 use crate::fs::reader;
+use crate::note;
 use crate::state::TaskState;
 use anyhow::Result;
 use chrono::{DateTime, Local};
@@ -34,7 +35,7 @@ pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&rows)?);
+        note!("{}", serde_json::to_string_pretty(&rows)?);
     } else {
         print_global_table(&rows);
     }
@@ -126,12 +127,16 @@ fn scan_project_tasks(project_path: &Path) -> Result<Vec<TaskSummary>> {
 
 fn print_global_table(rows: &[GlobalRow]) {
     let header = ("PROJECT", "TASK", "STATE", "FLOW", "AGENT");
-    println!(
+    note!(
         "{:<24} {:<16} {:<18} {:<8} {}",
-        header.0, header.1, header.2, header.3, header.4
+        header.0,
+        header.1,
+        header.2,
+        header.3,
+        header.4
     );
     for r in rows {
-        println!(
+        note!(
             "{:<24} {:<16} {:<18} {:<8} {}",
             r.project,
             r.task_id,

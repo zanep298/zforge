@@ -6,6 +6,7 @@ use crate::job::{
     schema::{Job, JobStatus},
     store::{job_log_path, list_jobs, load_job},
 };
+use crate::note;
 use anyhow::{anyhow, Result};
 use clap::{Args, Subcommand};
 use colored::Colorize;
@@ -80,20 +81,23 @@ fn list(a: ListArgs) -> Result<()> {
     let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
     let jobs = list_jobs(&config)?;
     if a.json {
-        println!("{}", serde_json::to_string_pretty(&jobs)?);
+        note!("{}", serde_json::to_string_pretty(&jobs)?);
         return Ok(());
     }
     if jobs.is_empty() {
-        println!("No jobs.");
+        note!("No jobs.");
         return Ok(());
     }
-    println!(
+    note!(
         "{:<28} {:<10} {:<10} {:<10} CREATED",
-        "JOB", "TASK", "KIND", "STATUS"
+        "JOB",
+        "TASK",
+        "KIND",
+        "STATUS"
     );
     for j in jobs {
         let status_col = colorize_status(&j.status);
-        println!(
+        note!(
             "{:<28} {:<10} {:<10} {:<10} {}",
             j.job_id,
             j.task_id,
@@ -120,10 +124,10 @@ fn status(a: StatusArgs) -> Result<()> {
     reconcile_dead_worker(&config, &a.job_id)?;
     let job = load_job(&config, &a.job_id)?;
     if a.json {
-        println!("{}", serde_json::to_string_pretty(&job)?);
+        note!("{}", serde_json::to_string_pretty(&job)?);
         return Ok(());
     }
-    println!("{}", render_status_block(&job));
+    note!("{}", render_status_block(&job));
     Ok(())
 }
 
@@ -173,7 +177,7 @@ fn log(a: LogArgs) -> Result<()> {
         let lines: Vec<&str> = content.lines().collect();
         let start = lines.len().saturating_sub(n);
         for line in &lines[start..] {
-            println!("{line}");
+            note!("{line}");
         }
         if !a.follow {
             return Ok(());
@@ -216,7 +220,7 @@ fn wait(a: WaitArgs) -> Result<()> {
         reconcile_dead_worker(&config, &a.job_id)?;
         let job = load_job(&config, &a.job_id)?;
         if job.status.is_terminal() {
-            println!("{}", job.status.as_str());
+            note!("{}", job.status.as_str());
             if matches!(job.status, JobStatus::Success) {
                 return Ok(());
             }
@@ -247,13 +251,13 @@ fn cancel(a: CancelArgs) -> Result<()> {
     let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
     let job = load_job(&config, &a.job_id)?;
     if job.status.is_terminal() {
-        println!("job {} already {}", a.job_id, job.status.as_str());
+        note!("job {} already {}", a.job_id, job.status.as_str());
         return Ok(());
     }
     let Some(pid) = job.worker_pid else {
         // Worker hadn't recorded its PID — mark cancelled and move on.
         mark_cancelled(&config, &a.job_id)?;
-        println!("cancelled {} (no worker PID recorded)", a.job_id);
+        note!("cancelled {} (no worker PID recorded)", a.job_id);
         return Ok(());
     };
 
@@ -261,7 +265,7 @@ fn cancel(a: CancelArgs) -> Result<()> {
         terminate_worker_gracefully(pid);
     }
     mark_cancelled(&config, &a.job_id)?;
-    println!("cancelled {}", a.job_id);
+    note!("cancelled {}", a.job_id);
     Ok(())
 }
 

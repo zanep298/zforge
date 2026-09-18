@@ -9,6 +9,8 @@ pub mod init;
 pub mod install;
 pub mod job;
 pub mod mcp_register;
+pub mod outcome;
+pub mod output;
 pub mod plan;
 pub mod project;
 pub mod retry;

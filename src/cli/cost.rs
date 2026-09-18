@@ -3,6 +3,7 @@ use crate::cost::{
     log::load_all,
     report::{filter_since, filter_task, format_table, rollup, GroupBy},
 };
+use crate::note;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Subcommand};
@@ -60,9 +61,9 @@ fn report(args: ReportArgs) -> Result<()> {
     let rollups = rollup(&entries, by);
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&rollups)?);
+        note!("{}", serde_json::to_string_pretty(&rollups)?);
     } else if rollups.is_empty() {
-        println!("No cost entries.");
+        note!("No cost entries.");
     } else {
         print!("{}", format_table(&rollups, by));
     }

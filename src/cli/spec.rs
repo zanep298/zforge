@@ -2,6 +2,7 @@ use crate::cli::flow_guard;
 use crate::cli::{artifact_metadata, dispatch_helper::run_phase_for_task};
 use crate::config;
 use crate::fs::{reader, tokens};
+use crate::note;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -44,14 +45,14 @@ pub fn run(task_id: &str, done: bool, copy: bool) -> Result<()> {
 
         ts.advance(State::SpecDone, "spec generated")?;
         ts.save(&tasks_dir)?;
-        println!(
+        note!(
             "{} spec.md validated  ({} tokens)",
             "✓".green(),
             tokens::fmt(spec_tokens)
         );
-        println!("{} State advanced: Imported → SpecDone", "✓".green());
-        println!();
-        println!("Next: {}", ts.next_hint());
+        note!("{} State advanced: Imported → SpecDone", "✓".green());
+        note!();
+        note!("Next: {}", ts.next_hint());
         return Ok(());
     }
 

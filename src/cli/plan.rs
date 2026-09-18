@@ -2,6 +2,7 @@ use crate::cli::flow_guard;
 use crate::cli::{artifact_metadata, dispatch_helper::run_phase_for_task};
 use crate::config;
 use crate::fs::{reader, tokens};
+use crate::note;
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -37,14 +38,14 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
 
         ts.advance(State::Planned, "plan generated")?;
         ts.save(&tasks_dir)?;
-        println!(
+        note!(
             "{} plan.md validated  ({} tokens)",
             "✓".green(),
             tokens::fmt(plan_tokens)
         );
-        println!("{} State advanced: TestspecReviewed → Planned", "✓".green());
-        println!();
-        println!("Next: {}", ts.next_hint());
+        note!("{} State advanced: TestspecReviewed → Planned", "✓".green());
+        note!();
+        note!("Next: {}", ts.next_hint());
         return Ok(());
     }
 

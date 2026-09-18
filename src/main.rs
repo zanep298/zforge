@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::process::ExitCode;
+use zforge::cli::outcome::OperationOutcome;
 use zforge::{cli, mcp};
 
 #[derive(Parser)]
@@ -210,10 +212,69 @@ enum TaskAction {
     },
 }
 
-fn main() -> Result<()> {
+/// Exit-code contract:
+///
+/// | code | meaning                                                     |
+/// |------|-------------------------------------------------------------|
+/// | 0    | the operation ran and succeeded                              |
+/// | 1    | the operation ran and produced a negative result, OR zforge could not run it |
+/// | 2    | a precondition gate refused the request; nothing ran         |
+/// | 124  | the operation exceeded its time budget                       |
+/// | 130  | the operation was cancelled                                  |
+///
+/// Commands that can only succeed or error return `()`, which converts to
+/// [`OperationOutcome::Success`]. Commands with a real verdict — `verify`,
+/// `ship`, `worker` — return the verdict so it survives to the exit code
+/// instead of being flattened into 0.
+fn main() -> ExitCode {
+    match dispatch() {
+        Ok(outcome) => {
+            if let Some(reason) = outcome.reason() {
+                eprintln!("{}: {reason}", outcome.label());
+            }
+            outcome.exit_code()
+        }
+        Err(e) => {
+            eprintln!("Error: {e:#}");
+            ExitCode::from(zforge::cli::outcome::EXIT_FAILED)
+        }
+    }
+}
+
+fn dispatch() -> Result<OperationOutcome> {
     let cli = Cli::parse();
 
+    // Commands whose result is a verdict, not just success-or-error, are
+    // handled here. Everything else can only succeed or fail to run, so it
+    // goes through `dispatch_unit` and maps to `Success`.
     match cli.command {
+        Commands::Verify {
+            task_id,
+            command,
+            timeout,
+        } => cli::verify::run(&task_id, command, timeout),
+        Commands::Ship {
+            task_id,
+            command,
+            timeout,
+            max_iterations,
+            r#async,
+        } => {
+            if r#async {
+                // The controller only schedules the job; the verdict belongs
+                // to the worker and is read back via `zforge job status`.
+                cli::ship::run_async(&task_id, command, timeout, max_iterations).map(Into::into)
+            } else {
+                cli::ship::run(&task_id, command, timeout, max_iterations)
+            }
+        }
+        Commands::Worker { job_id } => zforge::job::worker::run(&job_id),
+        other => dispatch_unit(other).map(Into::into),
+    }
+}
+
+fn dispatch_unit(command: Commands) -> Result<()> {
+    match command {
         Commands::Init {
             agent,
             force,
@@ -263,24 +324,6 @@ fn main() -> Result<()> {
         Commands::Testspec { task_id, done } => cli::testspec::run(&task_id, done),
         Commands::Plan { task_id, done } => cli::plan::run(&task_id, done),
         Commands::Code { task_id, done } => cli::code::run(&task_id, done),
-        Commands::Verify {
-            task_id,
-            command,
-            timeout,
-        } => cli::verify::run(&task_id, command, timeout),
-        Commands::Ship {
-            task_id,
-            command,
-            timeout,
-            max_iterations,
-            r#async,
-        } => {
-            if r#async {
-                cli::ship::run_async(&task_id, command, timeout, max_iterations)
-            } else {
-                cli::ship::run(&task_id, command, timeout, max_iterations)
-            }
-        }
         Commands::Review { task_id, done } => cli::review::run(&task_id, done),
         Commands::Approve {
             task_id,
@@ -313,6 +356,9 @@ fn main() -> Result<()> {
         Commands::Job { cmd } => cli::job::run(cmd),
         Commands::Cost { cmd } => cli::cost::run(cmd),
         Commands::Git { cmd } => cli::git::run(cmd),
-        Commands::Worker { job_id } => zforge::job::worker::run(&job_id),
+        // Handled by `dispatch` because they carry a verdict.
+        Commands::Verify { .. } | Commands::Ship { .. } | Commands::Worker { .. } => {
+            unreachable!("outcome-bearing commands are dispatched before dispatch_unit")
+        }
     }
 }

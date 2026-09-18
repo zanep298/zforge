@@ -226,6 +226,46 @@ impl TaskState {
         Ok(())
     }
 
+    /// Appends a history entry for a verification run that confirmed the
+    /// state the task already holds. The state itself does not move — this
+    /// only keeps the audit trail honest about how many times the suite was
+    /// asked, and when.
+    pub fn record_reverify(&mut self, note: &str) {
+        let now = Local::now();
+        self.updated_at = now;
+        self.history.push(StateEntry {
+            state: self.state.clone(),
+            at: now,
+            note: note.to_string(),
+        });
+    }
+
+    /// Moves the FSM *backwards* to `target` because evidence that justified
+    /// the current state has been invalidated — a re-run of the test suite
+    /// failed after an earlier pass, so `Verified` (and any `Reviewed` built
+    /// on top of it) no longer describes reality.
+    ///
+    /// Unlike [`reset_to`](Self::reset_to), history is append-only here:
+    /// nothing is pruned, so the record still shows that the task once
+    /// reached `Verified` and when that claim was withdrawn. `retry` prunes
+    /// because it also deletes the artifacts; invalidation keeps them.
+    ///
+    /// No-ops when the task is already at or below `target`.
+    pub fn invalidate_to(&mut self, target: State, note: &str) -> bool {
+        if self.state <= target {
+            return false;
+        }
+        let now = Local::now();
+        self.state = target.clone();
+        self.updated_at = now;
+        self.history.push(StateEntry {
+            state: target,
+            at: now,
+            note: note.to_string(),
+        });
+        true
+    }
+
     #[allow(dead_code)]
     pub fn is(&self, s: &State) -> bool {
         &self.state == s
@@ -405,5 +445,68 @@ history:
         let loaded = TaskState::load(tmp.path(), "TASK-42").unwrap();
         assert_eq!(loaded.state, State::SpecDone);
         assert_eq!(loaded.history.len(), 3);
+    }
+
+    fn walk_to(ts: &mut TaskState, target: State) {
+        while ts.state < target {
+            let next = ts.flow.next_after(&ts.state).cloned().unwrap();
+            ts.advance(next, "walk").unwrap();
+        }
+    }
+
+    #[test]
+    fn invalidate_moves_backwards_and_keeps_history() {
+        let mut ts = TaskState::new("TASK-1");
+        walk_to(&mut ts, State::Verified);
+        let before = ts.history.len();
+
+        assert!(ts.invalidate_to(State::Coded, "reverify failed"));
+        assert_eq!(ts.state, State::Coded);
+        assert_eq!(
+            ts.history.len(),
+            before + 1,
+            "invalidation appends; it must not prune the Verified entry"
+        );
+        assert!(
+            ts.history.iter().any(|e| e.state == State::Verified),
+            "audit trail must still show the withdrawn pass"
+        );
+        assert_eq!(ts.history.last().unwrap().note, "reverify failed");
+    }
+
+    // A review built on a pass that no longer holds is itself invalid, so
+    // invalidation has to reach through `Reviewed` — not stop at it.
+    #[test]
+    fn invalidate_from_reviewed_reaches_coded() {
+        let mut ts = TaskState::new("TASK-1");
+        walk_to(&mut ts, State::Reviewed);
+
+        assert!(ts.invalidate_to(State::Coded, "reverify failed"));
+        assert_eq!(ts.state, State::Coded);
+        assert!(ts.history.iter().any(|e| e.state == State::Reviewed));
+    }
+
+    #[test]
+    fn invalidate_is_noop_at_or_below_target() {
+        let mut ts = TaskState::new("TASK-1");
+        walk_to(&mut ts, State::Coded);
+        let before = ts.history.len();
+
+        assert!(!ts.invalidate_to(State::Coded, "no-op"));
+        assert_eq!(ts.state, State::Coded);
+        assert_eq!(ts.history.len(), before);
+    }
+
+    #[test]
+    fn invalidate_persists_across_load() {
+        let tmp = TempDir::new().unwrap();
+        let mut ts = TaskState::new("TASK-7");
+        walk_to(&mut ts, State::Verified);
+        ts.invalidate_to(State::Coded, "reverify failed");
+        ts.save(tmp.path()).unwrap();
+
+        let loaded = TaskState::load(tmp.path(), "TASK-7").unwrap();
+        assert_eq!(loaded.state, State::Coded);
+        assert!(loaded.history.iter().any(|e| e.state == State::Verified));
     }
 }

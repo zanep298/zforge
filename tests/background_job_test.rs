@@ -220,9 +220,9 @@ fn async_ship_marks_failed_when_tests_fail() {
     let proj = tempfile::tempdir().unwrap();
     make_project(proj.path());
     write_min_agents_dir(proj.path());
-    // single-shot ship returns Ok even on verify fail (state stays at Coded)
-    // so use max_iterations=2 to force the verifier loop, which DOES bail
-    // when budget exhausts.
+    // max_iterations=2 exercises the verifier loop's budget-exhaustion path,
+    // which surfaces as an `Err`. The single-shot path is covered separately
+    // by `async_single_shot_ship_marks_failed_when_tests_fail`.
     write_config(proj.path(), "sh -c 'false'");
 
     let cfg_dir = tempfile::tempdir().unwrap();
@@ -250,6 +250,55 @@ fn async_ship_marks_failed_when_tests_fail() {
         "error: {:?}",
         job.error
     );
+}
+
+/// Single-shot `ship --async` over a red suite. The worker used to record
+/// `success` here: `ship::run` returned `Ok(())` regardless of the verify
+/// result, and the worker read `Ok` as a successful job. An orchestrator
+/// polling `job status` was told the work landed.
+#[test]
+#[serial]
+fn async_single_shot_ship_marks_failed_when_tests_fail() {
+    ensure_fake_agent_built();
+    set_worker_binary();
+    let _h = TestHome::new();
+
+    let proj = tempfile::tempdir().unwrap();
+    make_project(proj.path());
+    write_min_agents_dir(proj.path());
+    write_config(proj.path(), "sh -c 'false'");
+
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let agent_cfg = write_fake_config(cfg_dir.path(), "primary", &json!({"exit_code": 0}));
+    seed_registry_with_fake_agent(&[agent_cfg.to_str().unwrap()]);
+
+    let _g = CwdGuard::enter(proj.path());
+    make_task_ready_to_ship(proj.path(), "T1");
+
+    zforge::cli::ship::run_async("T1", None, 60, 1).unwrap();
+
+    let config = zforge::config::load_from(&proj.path().join(".zforge/config.yaml")).unwrap();
+    let job_id = zforge::job::store::list_jobs(&config).unwrap()[0]
+        .job_id
+        .clone();
+
+    let final_status = wait_terminal(proj.path(), &job_id, Duration::from_secs(30));
+    assert_eq!(
+        final_status,
+        JobStatus::Failed,
+        "a job whose test suite failed must not be recorded as successful"
+    );
+
+    let job = load_job(&config, &job_id).unwrap();
+    let err = job.error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("failed"),
+        "job error should name the failure, got: {err:?}"
+    );
+
+    // And the FSM must not claim the work is verified.
+    let ts = TaskState::load(&proj.path().join(".zforge/tasks"), "T1").unwrap();
+    assert_eq!(ts.state, State::Coded);
 }
 
 #[test]

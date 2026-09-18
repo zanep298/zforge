@@ -1,4 +1,5 @@
 use crate::config;
+use crate::note;
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use chrono::Local;
@@ -24,21 +25,21 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     let (reset_state, artifacts_to_clear) = phase_to_reset(from);
 
     if !yes {
-        println!("? Retry {} from [{}] phase?", task_id, from);
-        println!("  Will backup and reset:");
+        note!("? Retry {} from [{}] phase?", task_id, from);
+        note!("  Will backup and reset:");
         for a in &artifacts_to_clear {
-            println!("  • {}", a);
+            note!("  • {}", a);
         }
         let backup_ts = Local::now().to_rfc3339();
-        println!("  Backup to: tasks/{}/.history/{}/", task_id, backup_ts);
-        println!("  State reset to: {}", reset_state.as_str());
-        println!();
+        note!("  Backup to: tasks/{}/.history/{}/", task_id, backup_ts);
+        note!("  State reset to: {}", reset_state.as_str());
+        note!();
         print!("  Continue? [y/N] ");
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Aborted.");
+            note!("Aborted.");
             return Ok(());
         }
     }
@@ -68,18 +69,18 @@ pub fn run(task_id: &str, from: &str, yes: bool) -> Result<()> {
     ts.reset_to(reset_state.clone(), &format!("retry from {} phase", from))?;
     ts.save(&tasks_dir)?;
 
-    println!("{} Backed up {} artifacts", "✓".green(), backed_up);
-    println!(
+    note!("{} Backed up {} artifacts", "✓".green(), backed_up);
+    note!(
         "{} Reset state: {} → {}",
         "✓".green(),
         prev_state,
         reset_state.as_str()
     );
     if !artifacts_to_clear.is_empty() {
-        println!("{} Cleared: {}", "✓".green(), artifacts_to_clear.join(", "));
+        note!("{} Cleared: {}", "✓".green(), artifacts_to_clear.join(", "));
     }
-    println!();
-    println!("Next: zf {} {}", from, task_id);
+    note!();
+    note!("Next: zf {} {}", from, task_id);
 
     Ok(())
 }

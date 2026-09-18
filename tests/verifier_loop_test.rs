@@ -13,6 +13,7 @@ use common::{make_project, TestHome};
 use serde_json::json;
 use serial_test::serial;
 use std::path::{Path, PathBuf};
+use zforge::cli::outcome::OperationOutcome;
 use zforge::registry::{
     io,
     schema::{AgentSpec, FallbackPolicy, Registry},
@@ -311,13 +312,24 @@ fn single_shot_ship_propagates_verify_failure() {
     let _g = CwdGuard::enter(proj.path());
     make_task_ready_to_ship(proj.path(), "T1");
 
-    // max_iterations = 1 → single shot, no loop. verify::run returns Ok
-    // (it doesn't error on test failure; it writes verify.md and reports).
-    // Behavior here matches pre-PR4 ship.
-    let result = zforge::cli::ship::run("T1", None, 60, 1);
+    // max_iterations = 1 → single shot, no loop. A red suite is a Failed
+    // operation: zforge ran fine, the answer is "no". It must NOT come back
+    // as success. (Before FIX-001 this returned `Ok(())` and the CLI exited
+    // 0 over a failing test suite — the assertion here froze that bug in
+    // place by asserting `result.is_ok()` and stopping there.)
+    let outcome = zforge::cli::ship::run("T1", None, 60, 1).expect("ship should run, not error");
     assert!(
-        result.is_ok(),
-        "single-shot ship returns Ok even on verify fail (legacy contract)"
+        !outcome.is_success(),
+        "single-shot ship must not report success on verify failure, got {outcome:?}"
+    );
+    assert!(
+        matches!(outcome, OperationOutcome::Failed { .. }),
+        "a red suite is Failed, not Blocked/Timeout; got {outcome:?}"
+    );
+    assert_ne!(
+        format!("{:?}", outcome.exit_code()),
+        format!("{:?}", std::process::ExitCode::SUCCESS),
+        "failed ship must map to a nonzero exit code"
     );
 
     let ts = TaskState::load(&proj.path().join(".zforge/tasks"), "T1").unwrap();
@@ -325,5 +337,46 @@ fn single_shot_ship_propagates_verify_failure() {
         ts.state,
         State::Coded,
         "state stays at Coded when verify fails"
+    );
+}
+
+/// The gate refusing `ship` is a Blocked outcome. It used to print the reason
+/// and return `Ok(())`, so a scripted ship that never ran any code exited 0.
+#[test]
+#[serial]
+fn ship_reports_blocked_when_gate_refuses() {
+    ensure_fake_agent_built();
+    let _h = TestHome::new();
+
+    let proj = tempfile::tempdir().unwrap();
+    make_project(proj.path());
+    write_min_agents_dir(proj.path());
+    write_config(proj.path(), "sh -c 'true'");
+
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let agent_cfg = write_fake_config(cfg_dir.path(), "primary", &json!({"exit_code": 0}));
+    seed_registry_with_fake_agent(&[agent_cfg.to_str().unwrap()]);
+
+    let _g = CwdGuard::enter(proj.path());
+
+    // Full flow task left at Imported — far short of the PlanReviewed gate.
+    let tasks_dir = proj.path().join(".zforge/tasks");
+    std::fs::create_dir_all(tasks_dir.join("T1")).unwrap();
+    std::fs::write(tasks_dir.join("T1").join("task.md"), "# task\nstub\n").unwrap();
+    let mut ts = TaskState::new_with_flow("T1", Flow::Full);
+    ts.assigned_agent = Some("primary".into());
+    ts.save(&tasks_dir).unwrap();
+
+    let outcome = zforge::cli::ship::run("T1", None, 60, 1).expect("ship should run, not error");
+    assert!(
+        matches!(outcome, OperationOutcome::Blocked { .. }),
+        "gate refusal must surface as Blocked, got {outcome:?}"
+    );
+
+    let after = TaskState::load(&tasks_dir, "T1").unwrap();
+    assert_eq!(
+        after.state,
+        State::Imported,
+        "a blocked ship must not move the FSM"
     );
 }

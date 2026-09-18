@@ -3,6 +3,7 @@ use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
 use crate::config;
 use crate::fs::{reader, writer};
+use crate::note;
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{State, TaskState};
 use anyhow::Result;
@@ -19,6 +20,8 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     ts.require(State::Verified)?;
 
     if done {
+        ensure_verify_evidence_passes(&tasks_dir, task_id)?;
+
         if !reader::artifact_exists(&tasks_dir, task_id, "review-summary.md") {
             anyhow::bail!(
                 "review-summary.md not found or empty. Generate content before marking done."
@@ -34,24 +37,24 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         ts.advance(State::Reviewed, "review complete")?;
         ts.save(&tasks_dir)?;
 
-        println!("{} review-summary.md approved", "✓".green());
+        note!("{} review-summary.md approved", "✓".green());
         if patterns_count > 0 {
-            println!(
+            note!(
                 "{} Extracted {} patterns → .zforge/memory/patterns.md",
                 "✓".green(),
                 patterns_count
             );
         }
         if anti_count > 0 {
-            println!(
+            note!(
                 "{} Extracted {} anti-pattern(s) → .zforge/memory/anti-patterns.md",
                 "✓".green(),
                 anti_count
             );
         }
-        println!("{} State: Verified → Reviewed", "✓".green());
-        println!();
-        println!("{} {} complete!", "🎉".bold(), task_id);
+        note!("{} State: Verified → Reviewed", "✓".green());
+        note!();
+        note!("{} {} complete!", "🎉".bold(), task_id);
         return Ok(());
     }
 
@@ -61,6 +64,36 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
 
     run_phase_for_task(&config, &ts, "review", &ctx)?;
 
+    Ok(())
+}
+
+/// Refuse to sign off a review whose supporting verification is not green.
+///
+/// `ts.require(State::Verified)` only asks what the state file is *called*.
+/// `verify` now withdraws `Verified` when a re-run fails, so the two agree in
+/// the normal case — but this re-reads the artifact the reviewer is actually
+/// vouching for, so a `verify.md` that says `passed: false` blocks sign-off
+/// even if the state file were edited by hand or left stale by an older
+/// zforge.
+///
+/// Limitation: this checks the *content* of `verify.md`, not that it was
+/// produced from the tree under review. Binding evidence to a specific
+/// candidate is IMP-002 and is not implemented here — a review can still be
+/// signed off against a green report from an earlier revision of the code.
+fn ensure_verify_evidence_passes(tasks_dir: &std::path::Path, task_id: &str) -> Result<()> {
+    let verify_path = tasks_dir.join(task_id).join("verify.md");
+    let Ok(verify_md) = reader::MarkdownFile::read(&verify_path) else {
+        anyhow::bail!(
+            "verify.md not found or unreadable for {task_id}. Run: zf verify {task_id} before review --done."
+        );
+    };
+
+    if !verify_md.get_bool("passed") {
+        anyhow::bail!(
+            "verify.md for {task_id} records passed: false — review cannot be completed over a \
+             failing test suite. Fix the failures and re-run: zf verify {task_id}"
+        );
+    }
     Ok(())
 }
 

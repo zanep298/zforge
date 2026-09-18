@@ -1,3 +1,4 @@
+use crate::note;
 use crate::registry::{
     io, lock,
     schema::{ProjectEntry, RegisteredBy, Registry},
@@ -86,7 +87,7 @@ pub fn add_entry(name: &str, path: &std::path::Path) -> Result<PathBuf> {
 
 fn add(a: AddArgs) -> Result<()> {
     let canon = add_entry(&a.name, &a.path)?;
-    println!("registered {} -> {}", a.name, canon.display());
+    note!("registered {} -> {}", a.name, canon.display());
     Ok(())
 }
 
@@ -117,7 +118,7 @@ fn list(a: ListArgs) -> Result<()> {
     let r = list_data()?;
     if a.json {
         let json = serde_json::to_string_pretty(&r).context("serialize registry to JSON")?;
-        println!("{json}");
+        note!("{json}");
         return Ok(());
     }
     print!("{}", render_list(&r));
@@ -184,13 +185,13 @@ fn remove(a: RemoveArgs) -> Result<()> {
     if a.purge {
         let zf = target_path.join(".zforge");
         if purge_zforge_dir(&target_path)? {
-            println!("purged {}", zf.display());
+            note!("purged {}", zf.display());
         } else {
             eprintln!("note: {} did not exist", zf.display());
         }
     }
 
-    println!("removed {}", a.name);
+    note!("removed {}", a.name);
     Ok(())
 }
 
@@ -208,14 +209,14 @@ pub fn switch_to(name: &str) -> Result<()> {
 
 fn switch(a: SwitchArgs) -> Result<()> {
     switch_to(&a.name)?;
-    println!("current_project: {}", a.name);
+    note!("current_project: {}", a.name);
     Ok(())
 }
 
 fn current() -> Result<()> {
     let r = io::load()?;
     match r.current_project {
-        Some(n) => println!("{n}"),
+        Some(n) => note!("{n}"),
         None => {
             eprintln!("no current project");
             std::process::exit(1);

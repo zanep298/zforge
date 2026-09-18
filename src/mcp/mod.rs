@@ -22,6 +22,12 @@ pub fn run() -> Result<()> {
     // and pollute the text content rendered to the AI caller.
     colored::control::set_override(false);
 
+    // The `cli::*` functions behind these tools also drive the CLI, where
+    // progress text belongs on stdout. Here stdout is the JSON-RPC transport:
+    // a single progress line ahead of a response frame makes the client fail
+    // to parse it. Send all of it to stderr for the rest of the process.
+    crate::cli::output::divert_to_stderr();
+
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -358,7 +364,17 @@ fn tool_ship(args: &Value) -> Result<String> {
     // Verifier loop: server drives code+verify iterations. CLI `ship` already
     // implements the loop with full agent dispatch; delegate to it so MCP and
     // CLI share the same code path.
-    crate::cli::ship::run(task_id, command, timeout, max_iterations)?;
+    let outcome = crate::cli::ship::run(task_id, command, timeout, max_iterations)?;
+    if !outcome.is_success() {
+        // Same verdict the CLI turns into a nonzero exit code and the worker
+        // records as a failed job — surfaced here as a tool-call error so the
+        // orchestrating LLM cannot read it as a completed ship.
+        anyhow::bail!(
+            "Ship {} for task {task_id}: {}",
+            outcome.label(),
+            outcome.reason().unwrap_or("no reason recorded")
+        );
+    }
     let next = ship_next_hint(&tasks_dir, task_id);
     Ok(format!(
         "Ship complete for task {task_id} after up to {max_iterations} verifier iteration(s). \

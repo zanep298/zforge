@@ -7,13 +7,14 @@
 //! controller exits as soon as `spawn_worker` returns; the kernel reaps
 //! the worker normally on exit.
 
+use crate::cli::outcome::OperationOutcome;
 use crate::config;
 use crate::job::lifecycle::{mark_failed, mark_running, mark_success};
 use crate::job::schema::JobKind;
 use crate::job::store::load_job;
 use anyhow::{Context, Result};
 
-pub fn run(job_id: &str) -> Result<()> {
+pub fn run(job_id: &str) -> Result<OperationOutcome> {
     // Signal to the orchestrator that no human is present. `run_phase`
     // appends each agent's bypass flags (e.g. `--dangerously-skip-permissions`
     // for claude) so the spawned LLM doesn't block on interactive prompts.
@@ -31,9 +32,9 @@ pub fn run(job_id: &str) -> Result<()> {
 
     mark_running(&config, job_id, std::process::id())?;
 
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&job)));
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&job)));
 
-    let result: Result<()> = match outcome {
+    let result: Result<OperationOutcome> = match caught {
         Ok(r) => r,
         Err(panic) => {
             let msg = panic_message(panic);
@@ -41,14 +42,25 @@ pub fn run(job_id: &str) -> Result<()> {
         }
     };
 
+    // A job is successful only when the operation it ran was successful.
+    // `Failed` (red tests, exhausted verifier budget) and `Blocked` (a gate
+    // refused the request) are terminal non-success results, and recording
+    // them as success is what let `ship --async` report a green job over a
+    // red suite. An `Err` here means the operation could not run at all.
     match &result {
-        Ok(()) => mark_success(&config, job_id)?,
+        Ok(outcome) if outcome.is_success() => mark_success(&config, job_id)?,
+        Ok(outcome) => mark_failed(
+            &config,
+            job_id,
+            &format!("{}: {}", outcome.label(), outcome.reason().unwrap_or("")),
+        )?,
         Err(e) => mark_failed(&config, job_id, &format!("{e:#}"))?,
     }
+
     result
 }
 
-fn dispatch(job: &crate::job::schema::Job) -> Result<()> {
+fn dispatch(job: &crate::job::schema::Job) -> Result<OperationOutcome> {
     match job.kind {
         JobKind::Ship => crate::cli::ship::run(
             &job.task_id,

@@ -17,6 +17,7 @@
 
 use crate::config;
 use crate::fs::reader::MarkdownFile;
+use crate::note;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use std::path::{Path, PathBuf};
@@ -91,7 +92,7 @@ fn check_clean(project_root: &Path) -> Result<()> {
     ensure_git_repo(project_root)?;
     let status = working_tree_status(project_root)?;
     if status.is_empty() {
-        println!("clean");
+        note!("clean");
         return Ok(());
     }
     eprintln!("working tree not clean:\n{status}");
@@ -129,16 +130,16 @@ fn init_branch(project_root: &Path, task_id: &str) -> Result<()> {
     let branch = branch_name(task_id);
     let current = current_branch(project_root)?;
     if current == branch {
-        println!("already on {branch}");
+        note!("already on {branch}");
         return Ok(());
     }
 
     if branch_exists(project_root, &branch) {
         git_ok(project_root, &["checkout", &branch])?;
-        println!("switched to existing {branch}");
+        note!("switched to existing {branch}");
     } else {
         git_ok(project_root, &["checkout", "-b", &branch])?;
-        println!("created and switched to {branch}");
+        note!("created and switched to {branch}");
     }
     Ok(())
 }
@@ -189,13 +190,13 @@ fn commit_phase(project_root: &Path, task_id: &str, phase: &str) -> Result<()> {
     // the caller (slash command) treats success as "phase committed".
     let staged = git_ok(project_root, &["diff", "--cached", "--name-only"])?;
     if staged.is_empty() {
-        println!("nothing to commit for {phase} (working tree unchanged)");
+        note!("nothing to commit for {phase} (working tree unchanged)");
         return Ok(());
     }
 
     let msg = format!("zforge({phase}): {task_id} {title}");
     git_ok(project_root, &["commit", "-m", &msg])?;
-    println!("committed: {msg}");
+    note!("committed: {msg}");
     Ok(())
 }
 

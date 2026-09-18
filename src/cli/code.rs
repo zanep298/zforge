@@ -1,6 +1,7 @@
 use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
 use crate::config;
+use crate::note;
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{dispatch_command, State, TaskState};
 use anyhow::Result;
@@ -32,9 +33,9 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
         let from = ts.state.as_str().to_string();
         ts.advance(State::Coded, "coding complete")?;
         ts.save(&tasks_dir)?;
-        println!("{} State advanced: {} → Coded", "✓".green(), from);
-        println!();
-        println!("Next: {}", ts.next_hint());
+        note!("{} State advanced: {} → Coded", "✓".green(), from);
+        note!();
+        note!("Next: {}", ts.next_hint());
         return Ok(());
     }
 

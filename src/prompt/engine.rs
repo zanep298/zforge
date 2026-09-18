@@ -1,6 +1,7 @@
 use super::context::PromptContext;
 use crate::embedded;
 use crate::fs::{reader, tokens};
+use crate::note;
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
@@ -86,7 +87,7 @@ impl Engine {
         self.print_render_header(template_name, ctx, &rendered);
         match arboard::Clipboard::new() {
             Ok(mut cb) => match cb.set_text(rendered) {
-                Ok(_) => println!("{}", "✓ Prompt copied to clipboard".green()),
+                Ok(_) => note!("{}", "✓ Prompt copied to clipboard".green()),
                 Err(e) => eprintln!("⚠ Could not copy to clipboard: {}", e),
             },
             Err(e) => eprintln!("⚠ Could not access clipboard: {}", e),
@@ -97,39 +98,39 @@ impl Engine {
     fn print_render_header(&self, template_name: &str, ctx: &PromptContext, rendered: &str) {
         let sep = "═".repeat(43);
         let thin = "─".repeat(43);
-        println!("{}", sep.blue());
-        println!(
+        note!("{}", sep.blue());
+        note!(
             "  {} › {} › {}",
             "ZFORGE".bold(),
             template_name,
             ctx.task_id
         );
-        println!("{}", sep.blue());
-        println!();
-        println!("{}", rendered);
-        println!();
-        println!("{}", thin.dimmed());
+        note!("{}", sep.blue());
+        note!();
+        note!("{}", rendered);
+        note!();
+        note!("{}", thin.dimmed());
 
         if !ctx.context_files.is_empty() {
-            println!("{} Context files (load in your agent):", "📂".bold());
+            note!("{} Context files (load in your agent):", "📂".bold());
             for f in &ctx.context_files {
-                println!("   {}", f);
+                note!("   {}", f);
             }
-            println!();
+            note!();
         }
 
         if !ctx.output_file.is_empty() {
-            println!("{} Output to: {}", "📄".bold(), ctx.output_file);
+            note!("{} Output to: {}", "📄".bold(), ctx.output_file);
         }
-        println!(
+        note!(
             "  {} prompt:  {} tokens",
             "📊".bold(),
             tokens::fmt(tokens::estimate(rendered))
         );
         if !ctx.next_command.is_empty() {
-            println!("{}  Next: {}", "⏭".bold(), ctx.next_command);
+            note!("{}  Next: {}", "⏭".bold(), ctx.next_command);
         }
-        println!("{}", sep.blue());
+        note!("{}", sep.blue());
     }
 
     /// Auto-detect executor. Try Claude Code first (default), then OpenCode as
@@ -175,24 +176,24 @@ impl Engine {
         let rendered = self.render(template_name, ctx)?;
         let sep = "═".repeat(43);
 
-        println!("{}", sep.blue());
-        println!(
+        note!("{}", sep.blue());
+        note!(
             "  {} › {} › {} {}",
             "ZFORGE".bold(),
             template_name,
             ctx.task_id,
             "→ claude".dimmed()
         );
-        println!("{}", sep.blue());
-        println!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
-        println!("  {} output: {}", "📄".bold(), ctx.output_file);
-        println!(
+        note!("{}", sep.blue());
+        note!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
+        note!("  {} output: {}", "📄".bold(), ctx.output_file);
+        note!(
             "  {} prompt:  {} tokens",
             "📊".bold(),
             tokens::fmt(tokens::estimate(&rendered))
         );
-        println!("{}", sep.blue());
-        println!();
+        note!("{}", sep.blue());
+        note!();
 
         let mut cmd = std::process::Command::new(claude_bin);
         cmd.arg("-p").arg(&rendered);
@@ -205,11 +206,11 @@ impl Engine {
             .status()
             .with_context(|| format!("failed to launch claude at {}", claude_bin.display()))?;
 
-        println!();
+        note!();
         if status.success() {
-            println!("{} Claude finished.", "✓".green().bold());
+            note!("{} Claude finished.", "✓".green().bold());
             if !ctx.next_command.is_empty() {
-                println!("{}  Next: {}", "⏭".bold(), ctx.next_command);
+                note!("{}  Next: {}", "⏭".bold(), ctx.next_command);
             }
         } else {
             anyhow::bail!("claude exited with status {}", status.code().unwrap_or(-1));
@@ -228,24 +229,24 @@ impl Engine {
         let rendered = self.render(template_name, ctx)?;
         let sep = "═".repeat(43);
 
-        println!("{}", sep.blue());
-        println!(
+        note!("{}", sep.blue());
+        note!(
             "  {} › {} › {} {}",
             "ZFORGE".bold(),
             template_name,
             ctx.task_id,
             "→ opencode".dimmed()
         );
-        println!("{}", sep.blue());
-        println!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
-        println!("  {} output: {}", "📄".bold(), ctx.output_file);
-        println!(
+        note!("{}", sep.blue());
+        note!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
+        note!("  {} output: {}", "📄".bold(), ctx.output_file);
+        note!(
             "  {} prompt:  {} tokens",
             "📊".bold(),
             tokens::fmt(tokens::estimate(&rendered))
         );
-        println!("{}", sep.blue());
-        println!();
+        note!("{}", sep.blue());
+        note!();
 
         let mut cmd = std::process::Command::new(opencode_bin);
         cmd.arg("run").arg(&rendered).arg("--agent").arg(agent_name);
@@ -258,11 +259,11 @@ impl Engine {
             .status()
             .with_context(|| format!("failed to launch opencode at {}", opencode_bin.display()))?;
 
-        println!();
+        note!();
         if status.success() {
-            println!("{} OpenCode finished.", "✓".green().bold());
+            note!("{} OpenCode finished.", "✓".green().bold());
             if !ctx.next_command.is_empty() {
-                println!("{}  Next: {}", "⏭".bold(), ctx.next_command);
+                note!("{}  Next: {}", "⏭".bold(), ctx.next_command);
             }
         } else {
             anyhow::bail!(

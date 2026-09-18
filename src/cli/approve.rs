@@ -1,5 +1,6 @@
 use crate::config;
 use crate::fs::{reader, writer};
+use crate::note;
 use crate::state::{State, TaskState};
 use anyhow::Result;
 use chrono::Local;
@@ -93,7 +94,7 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Aborted.");
+            note!("Aborted.");
             return Ok(());
         }
     }
@@ -105,7 +106,7 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         writer::set_frontmatter(&filepath, "reviewed_note", serde_yaml::Value::String(n))?;
     }
 
-    println!(
+    note!(
         "{} tasks/{}/{}.md marked as reviewed",
         "✓".green(),
         task_id,
@@ -119,7 +120,7 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
             let next_label = next.as_str();
             ts.advance(next.clone(), "approved")?;
             ts.save(&tasks_dir)?;
-            println!(
+            note!(
                 "{} State advanced: {} → {}",
                 "✓".green(),
                 prev_state.as_str(),
@@ -128,7 +129,7 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         } else {
             // ts.state > prev_state: already past this gate. Idempotent
             // re-approval refreshes the reviewed stamp but leaves the FSM as-is.
-            println!(
+            note!(
                 "{} Already past {}; state unchanged ({})",
                 "ℹ".blue(),
                 next.as_str(),
@@ -137,8 +138,8 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         }
     }
 
-    println!();
-    println!("Next: {}", ts.next_hint());
+    note!();
+    note!("Next: {}", ts.next_hint());
 
     Ok(())
 }

@@ -1,7 +1,9 @@
 use crate::cli;
 use crate::cli::dispatch_helper::run_phase_for_task;
 use crate::cli::flow_guard;
+use crate::cli::outcome::OperationOutcome;
 use crate::config;
+use crate::note;
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{dispatch_command, Flow, State, TaskState};
 use anyhow::Result;
@@ -60,7 +62,7 @@ pub fn run(
     command: Option<String>,
     timeout: u64,
     max_iterations: u32,
-) -> Result<()> {
+) -> Result<OperationOutcome> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
 
@@ -84,14 +86,17 @@ pub fn run(
 
     flow_guard::ensure_phase_in_flow(&ts, State::Coded, "code")?;
 
+    // A refused gate is a Blocked outcome, not a success. Before FIX-001 this
+    // printed the reason and returned `Ok(())`, so a scripted `ship` that
+    // never ran a line of code still exited 0.
     if let Err(e) = check_ship_gate(&ts.flow, &ts.state, task_id) {
         eprintln!("{} {}", "⛔".red(), e);
-        return Ok(());
+        return Ok(OperationOutcome::blocked(e.to_string()));
     }
 
     if ts.state >= State::Coded {
         // Code already done in a prior session — just verify (idempotent path).
-        println!(
+        note!(
             "{} State already {}, skipping code phase",
             "ℹ".blue(),
             ts.state.as_str()
@@ -101,12 +106,13 @@ pub fn run(
 
     let max_iter = max_iterations.max(1);
     if max_iter == 1 {
-        // Legacy single-shot ship: code → verify. Verify failure propagates.
+        // Single-shot ship: code → verify, no self-fix loop. The verify
+        // outcome is the ship outcome — a red suite means ship failed.
         run_code_phase(&config, &ts, task_id, None, 1, 1)?;
         let prev = ts.state.as_str().to_string();
         if ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")? {
-            println!("{} State advanced: {} → Coded", "✓".green(), prev);
-            println!();
+            note!("{} State advanced: {} → Coded", "✓".green(), prev);
+            note!();
         }
         return cli::verify::run(task_id, command, timeout);
     }
@@ -123,17 +129,17 @@ pub fn run(
         || crate::cli::verify::run_with_outcome(task_id, command.clone(), timeout),
     )?;
 
-    println!();
+    note!();
     if outcome.iterations == 1 {
-        println!("{} Verifier passed on first attempt", "✓".green().bold());
+        note!("{} Verifier passed on first attempt", "✓".green().bold());
     } else {
-        println!(
+        note!(
             "{} Verifier passed after {} iterations",
             "✓".green().bold(),
             outcome.iterations
         );
     }
-    Ok(())
+    Ok(OperationOutcome::Success)
 }
 
 /// Detached variant: validate ship gate, scaffold a job record, spawn a
@@ -178,10 +184,10 @@ pub fn run_async(
         max_iterations,
     )?;
     let pid = crate::job::spawn::spawn_worker(&config, &job.job_id)?;
-    println!("{} job {} spawned (pid {})", "▶".cyan(), job.job_id, pid);
-    println!("  poll with: zforge job status {}", job.job_id);
-    println!("  follow:    zforge job log {} --follow", job.job_id);
-    println!("  wait:      zforge job wait {}", job.job_id);
+    note!("{} job {} spawned (pid {})", "▶".cyan(), job.job_id, pid);
+    note!("  poll with: zforge job status {}", job.job_id);
+    note!("  follow:    zforge job log {} --follow", job.job_id);
+    note!("  wait:      zforge job wait {}", job.job_id);
     Ok(())
 }
 
@@ -211,8 +217,8 @@ fn run_code_phase(
         }
         ctx.next_command = format!("(retry {}/{}) zf verify {}", attempt, max_iter, task_id);
 
-        println!();
-        println!(
+        note!();
+        note!(
             "{} Verifier retry {}/{} — {} test(s) still failing",
             "🔁".yellow(),
             attempt,

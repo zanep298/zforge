@@ -1,6 +1,7 @@
 use crate::config;
 use crate::fs::scaffold::{self, TaskImportData};
 use crate::fs::{tokens, writer};
+use crate::note;
 use crate::state::{Flow, TaskState};
 use anyhow::Result;
 use colored::Colorize;
@@ -187,38 +188,38 @@ pub fn run_import(
     state.active_agent = agent.clone();
     state.save(&tasks_dir)?;
 
-    println!("{} Created tasks/{}/", "✓".green(), id);
-    println!(
+    note!("{} Created tasks/{}/", "✓".green(), id);
+    note!(
         "{} Created tasks/{}/task.md  ({} tokens)",
         "✓".green(),
         id,
         tokens::fmt(task_tokens)
     );
-    println!("{} State: Imported  ({} flow)", "✓".green(), flow.as_str());
+    note!("{} State: Imported  ({} flow)", "✓".green(), flow.as_str());
     if auto_picked {
-        println!(
+        note!(
             "{} Auto-picked '{}' flow from task text — override with --flow full",
             "ℹ".blue(),
             flow.as_str()
         );
     }
-    println!();
-    println!("{}", "─".repeat(40));
+    note!();
+    note!("{}", "─".repeat(40));
 
     if jira_url.is_some() {
-        println!(
+        note!(
             "{} Imported from Jira. Review tasks/{}/task.md",
             "📥".bold(),
             id
         );
     } else {
-        println!("{} Fill in task details:", "📝".bold());
-        println!("   tasks/{}/task.md", id);
+        note!("{} Fill in task details:", "📝".bold());
+        note!("   tasks/{}/task.md", id);
     }
 
-    println!();
-    println!("When done, run: {}", state.next_hint());
-    println!("{}", "─".repeat(40));
+    note!();
+    note!("When done, run: {}", state.next_hint());
+    note!("{}", "─".repeat(40));
 
     Ok(id)
 }
