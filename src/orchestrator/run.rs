@@ -15,7 +15,7 @@ use crate::orchestrator::{
 };
 use crate::registry;
 use crate::registry::schema::AgentSpec;
-use crate::state::TaskState;
+use crate::state::{with_task_lock, TaskLockGuard, TaskState};
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use std::path::Path;
@@ -54,6 +54,25 @@ pub fn run_phase(
     prompt: &str,
     default_agent: Option<&str>,
 ) -> Result<()> {
+    run_phase_with_lock(task_id, phase, project_root, prompt, default_agent, None)
+}
+
+/// [`run_phase`] for a caller that may already own the task lock.
+///
+/// `held = Some(guard)` when the caller (e.g. `ship`) owns the task for its
+/// whole run; fallback swaps are then written under that lock. `held = None`
+/// takes the lock only around each fallback write. Either way the write
+/// reloads `.state.yaml` under the lock and applies the swap to that fresh
+/// copy, so it cannot clobber a change another command made while the agent
+/// was running.
+pub fn run_phase_with_lock(
+    task_id: &str,
+    phase: &str,
+    project_root: &Path,
+    prompt: &str,
+    default_agent: Option<&str>,
+    held: Option<&TaskLockGuard>,
+) -> Result<()> {
     let registry = registry::io::load()?;
     let policy = CompiledPolicy::compile(&registry.fallback_policy)?;
     let spawn_timeout_secs = registry.fallback_policy.spawn_timeout_secs;
@@ -61,15 +80,19 @@ pub fn run_phase(
     // registered. Loaded once outside the loop because file IO between
     // retry attempts is wasted work.
     let models = load_models_from_root(project_root);
-    let agents_dir = crate::config::load_from(&project_root.join(".zforge").join("config.yaml"))
+    let config = crate::config::load_from(&project_root.join(".zforge").join("config.yaml")).ok();
+    let agents_dir = config
+        .as_ref()
         .map(|c| c.agents_dir())
-        .unwrap_or_else(|_| project_root.join(".zforge").join("agents"));
+        .unwrap_or_else(|| project_root.join(".zforge").join("agents"));
+    // Same tasks dir the CLI uses (honours a customised `paths.tasks`), so
+    // the lock taken here is the one `ship`/`verify`/`retry` contend on.
+    let tasks_dir = config
+        .as_ref()
+        .map(|c| c.tasks_dir())
+        .unwrap_or_else(|| project_root.join(".zforge").join("tasks"));
 
-    let state_path = project_root
-        .join(".zforge/tasks")
-        .join(task_id)
-        .join(".state.yaml");
-    let mut state = load_state(&state_path)?;
+    let mut state = TaskState::load(&tasks_dir, task_id)?;
 
     loop {
         let agent_name = state
@@ -174,8 +197,12 @@ pub fn run_phase(
             );
         }
 
-        record_fallback(&mut state, &reason, phase).context("record fallback")?;
-        save_state_atomic(&state_path, &state)?;
+        state = with_task_lock(&tasks_dir, task_id, held, |_| {
+            let mut fresh = TaskState::load(&tasks_dir, task_id)?;
+            record_fallback(&mut fresh, &reason, phase).context("record fallback")?;
+            fresh.save(&tasks_dir)?;
+            Ok(fresh)
+        })?;
 
         if policy.cooldown_ms > 0 {
             sleep(Duration::from_millis(policy.cooldown_ms));
@@ -384,19 +411,6 @@ fn sniff_model_from_args(args: &[String]) -> Option<String> {
         }
     }
     found
-}
-
-fn load_state(path: &Path) -> Result<TaskState> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("read {path:?}"))?;
-    serde_yaml::from_str(&raw).with_context(|| format!("parse {path:?}"))
-}
-
-fn save_state_atomic(path: &Path, state: &TaskState) -> Result<()> {
-    let tmp = path.with_extension("yaml.tmp");
-    let yaml = serde_yaml::to_string(state)?;
-    std::fs::write(&tmp, yaml)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 #[cfg(test)]

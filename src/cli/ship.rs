@@ -1,11 +1,11 @@
 use crate::cli;
-use crate::cli::dispatch_helper::run_phase_for_task;
+use crate::cli::dispatch_helper::run_phase_for_task_locked;
 use crate::cli::flow_guard;
 use crate::cli::outcome::OperationOutcome;
 use crate::config;
 use crate::note;
 use crate::prompt::{build_context_for_phase, PromptPhase};
-use crate::state::{dispatch_command, Flow, State, TaskState};
+use crate::state::{dispatch_command, with_task_lock, Flow, State, TaskLockGuard, TaskState};
 use anyhow::Result;
 use colored::Colorize;
 
@@ -57,6 +57,9 @@ pub(crate) fn ensure_coded_state(
 /// failure the loop feeds the failed test names + `verify.md` back into the
 /// next code attempt as context, repeating up to `max_iterations` times. This
 /// is the SWE-bench-winning pattern — let the test suite be ground truth.
+///
+/// Takes the task lock for the whole run and returns `Busy` if another
+/// process holds it. Use [`run_locked`] when the caller already owns it.
 pub fn run(
     task_id: &str,
     command: Option<String>,
@@ -64,24 +67,30 @@ pub fn run(
     max_iterations: u32,
 ) -> Result<OperationOutcome> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
+    let guard = crate::state::lock_task(&config.tasks_dir(), task_id)?;
+    run_locked(&guard, task_id, command, timeout, max_iterations)
+}
+
+/// [`run`] with the task lock already owned by the caller — the background
+/// worker holds it for its whole lifetime and passes it in here. The guard
+/// is the proof of ownership: it is threaded into verify and the
+/// orchestrator so nested operations never try to re-acquire (which would
+/// deadlock against ourselves). Before FIX-004 the worker/foreground split
+/// was signalled by `ZFORGE_HEADLESS`, an unrelated env var, and every other
+/// mutation (`retry`, `verify`, `review`) ignored the lock entirely.
+pub fn run_locked(
+    guard: &TaskLockGuard,
+    task_id: &str,
+    command: Option<String>,
+    timeout: u64,
+    max_iterations: u32,
+) -> Result<OperationOutcome> {
+    let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
+    // Validates the guard belongs to this task before anything runs.
+    with_task_lock(&tasks_dir, task_id, Some(guard), |_| Ok(()))?;
 
-    // Acquire per-task lock for the foreground ship lifetime — UNLESS the
-    // worker has already acquired the outer lock and re-entered via
-    // `ship::run`. `ZFORGE_HEADLESS=1` is the signal: only the worker sets
-    // it (see `job::worker::run`), and the worker holds the lock for its
-    // whole lifecycle. Without this skip, the inner re-acquire here would
-    // deadlock the worker against itself.
-    let _task_lock = if std::env::var("ZFORGE_HEADLESS").is_ok() {
-        None
-    } else {
-        Some(
-            crate::state::try_acquire_task_lock(&tasks_dir, task_id)
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
-        )
-    };
-
-    let mut ts = TaskState::load(&tasks_dir, task_id)
+    let ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 
     flow_guard::ensure_phase_in_flow(&ts, State::Coded, "code")?;
@@ -101,20 +110,16 @@ pub fn run(
             "ℹ".blue(),
             ts.state.as_str()
         );
-        return cli::verify::run(task_id, command, timeout);
+        return cli::verify::run_locked(task_id, command, timeout, Some(guard));
     }
 
     let max_iter = max_iterations.max(1);
     if max_iter == 1 {
         // Single-shot ship: code → verify, no self-fix loop. The verify
         // outcome is the ship outcome — a red suite means ship failed.
-        run_code_phase(&config, &ts, task_id, None, 1, 1)?;
-        let prev = ts.state.as_str().to_string();
-        if ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")? {
-            note!("{} State advanced: {} → Coded", "✓".green(), prev);
-            note!();
-        }
-        return cli::verify::run(task_id, command, timeout);
+        run_code_phase(&config, &ts, task_id, None, 1, 1, guard)?;
+        advance_to_coded_after_dispatch(&tasks_dir, task_id)?;
+        return cli::verify::run_locked(task_id, command, timeout, Some(guard));
     }
 
     // Verifier-driven loop. Hand control to the orchestrator-level iterate()
@@ -122,11 +127,29 @@ pub fn run(
     let outcome = crate::orchestrator::iterate(
         max_iter,
         |attempt, prev_failure| {
-            run_code_phase(&config, &ts, task_id, prev_failure, attempt, max_iter)?;
-            ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")?;
+            // Reload each attempt: the previous attempt's dispatch may have
+            // swapped `active_agent`, and the prompt should use it.
+            let current = TaskState::load(&tasks_dir, task_id)?;
+            run_code_phase(
+                &config,
+                &current,
+                task_id,
+                prev_failure,
+                attempt,
+                max_iter,
+                guard,
+            )?;
+            advance_to_coded_after_dispatch(&tasks_dir, task_id)?;
             Ok(())
         },
-        || crate::cli::verify::run_with_outcome(task_id, command.clone(), timeout),
+        || {
+            crate::cli::verify::run_with_outcome_locked(
+                task_id,
+                command.clone(),
+                timeout,
+                Some(guard),
+            )
+        },
     )?;
 
     note!();
@@ -140,6 +163,24 @@ pub fn run(
         );
     }
     Ok(OperationOutcome::Success)
+}
+
+/// Advance to `Coded` once the code agent has returned.
+///
+/// Reloads `.state.yaml` rather than advancing a copy loaded before the
+/// dispatch. The orchestrator persists fallback swaps (`active_agent`,
+/// `fallback_history`) *during* the dispatch; advancing the pre-dispatch
+/// snapshot and saving it overwrote those records, so after a primary →
+/// fallback swap the state claimed the primary agent had done the work
+/// (FIX-007). The caller holds the task lock, so the reload cannot race.
+fn advance_to_coded_after_dispatch(tasks_dir: &std::path::Path, task_id: &str) -> Result<()> {
+    let mut fresh = TaskState::load(tasks_dir, task_id)?;
+    let prev = fresh.state.as_str().to_string();
+    if ensure_coded_state(&mut fresh, tasks_dir, "code phase complete (ship)")? {
+        note!("{} State advanced: {} → Coded", "✓".green(), prev);
+        note!();
+    }
+    Ok(())
 }
 
 /// Detached variant: validate ship gate, scaffold a job record, spawn a
@@ -201,6 +242,7 @@ fn run_code_phase(
     prev_failure: Option<&crate::cli::verify::VerifyOutcome>,
     attempt: u32,
     max_iter: u32,
+    guard: &TaskLockGuard,
 ) -> Result<()> {
     let mut ctx = build_context_for_phase(config, task_id, PromptPhase::Code)?;
 
@@ -229,7 +271,7 @@ fn run_code_phase(
         ctx.next_command = format!("(auto) zf verify {}", task_id);
     }
 
-    run_phase_for_task(config, ts, "code", &ctx)
+    run_phase_for_task_locked(config, ts, "code", &ctx, Some(guard))
 }
 
 #[cfg(test)]

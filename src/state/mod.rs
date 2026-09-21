@@ -1,7 +1,9 @@
 pub mod flow;
 pub mod task_lock;
 pub use flow::{dispatch_command, Flow};
-pub use task_lock::{try_acquire as try_acquire_task_lock, TaskLockError, TaskLockGuard};
+pub use task_lock::{
+    lock_task, try_acquire as try_acquire_task_lock, with_task_lock, TaskLockError, TaskLockGuard,
+};
 
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
@@ -161,13 +163,18 @@ impl TaskState {
         Ok(state)
     }
 
+    /// Persist to `<tasks_dir>/<task_id>/.state.yaml` atomically.
+    ///
+    /// Written to a sibling temp file, fsynced, then renamed over the target,
+    /// so a crash or kill mid-write leaves either the old state or the new
+    /// one — never a truncated file that fails to parse and strands the task.
+    /// This covers one file only; it is not a transaction across state and
+    /// artifacts.
     pub fn save(&self, tasks_dir: &Path) -> Result<()> {
         let dir = tasks_dir.join(&self.task_id);
         std::fs::create_dir_all(&dir)?;
-        let path = dir.join(".state.yaml");
         let content = serde_yaml::to_string(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
+        write_atomic(&dir.join(".state.yaml"), content.as_bytes())
     }
 
     pub fn advance(&mut self, next: State, note: &str) -> Result<()> {
@@ -212,7 +219,28 @@ impl TaskState {
     /// every entry at or below `target` is preserved so the audit trail is not
     /// wiped (regression: prior implementation in `retry::run` replaced history
     /// with a single synthetic entry).
+    ///
+    /// Rejects a `target` outside this task's flow (e.g. `PlanReviewed` on a
+    /// fixbug task) or ahead of the current state — a rewind must never
+    /// manufacture progress the task has not made. Nothing is modified when
+    /// it errors.
     pub fn reset_to(&mut self, target: State, note: &str) -> Result<()> {
+        if !self.flow.contains(&target) {
+            anyhow::bail!(
+                "cannot reset task {} to {}: not a state in the {} flow",
+                self.task_id,
+                target.as_str(),
+                self.flow.as_str()
+            );
+        }
+        if target > self.state {
+            anyhow::bail!(
+                "cannot reset task {} forward from {} to {}: a rewind cannot create progress",
+                self.task_id,
+                self.state.as_str(),
+                target.as_str()
+            );
+        }
         let now = Local::now();
         // Keep every history entry whose state is at or below the reset target.
         self.history.retain(|entry| entry.state <= target);
@@ -270,6 +298,28 @@ impl TaskState {
     pub fn is(&self, s: &State) -> bool {
         &self.state == s
     }
+}
+
+/// Replace `path` with `bytes` atomically: temp file in the same directory
+/// (so the rename cannot cross filesystems), fsync, rename.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    use anyhow::Context;
+    use std::io::Write;
+
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("write_atomic: {path:?} has no file name"))?
+        .to_string_lossy();
+    // Per-process suffix so two writers never share a temp file.
+    let tmp = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
+    {
+        let mut f = std::fs::File::create(&tmp).with_context(|| format!("create {tmp:?}"))?;
+        f.write_all(bytes)
+            .with_context(|| format!("write {tmp:?}"))?;
+        f.sync_all().with_context(|| format!("fsync {tmp:?}"))?;
+    }
+    std::fs::rename(&tmp, path).with_context(|| format!("rename {tmp:?} -> {path:?}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -495,6 +545,82 @@ history:
         assert!(!ts.invalidate_to(State::Coded, "no-op"));
         assert_eq!(ts.state, State::Coded);
         assert_eq!(ts.history.len(), before);
+    }
+
+    #[test]
+    fn save_leaves_no_temp_file_behind() {
+        let tmp = TempDir::new().unwrap();
+        let ts = TaskState::new("TASK-9");
+        ts.save(tmp.path()).unwrap();
+        ts.save(tmp.path()).unwrap();
+
+        let names: Vec<String> = std::fs::read_dir(tmp.path().join("TASK-9"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![".state.yaml".to_string()], "got {names:?}");
+    }
+
+    // A reader must never observe a partially written file. Before IMP-002
+    // `save` truncated and rewrote the file in place, and a concurrent `load`
+    // could read it empty or cut off ("missing field `task_id`"). Racing a
+    // reader against a writer only catches that some of the time, so this
+    // checks the property that rules it out deterministically: `save`
+    // replaces the file with a new one instead of rewriting the old one. A
+    // handle opened before the save must still read the previous, complete
+    // document — with an in-place rewrite it reads the new bytes (or none).
+    #[test]
+    fn save_replaces_the_file_instead_of_rewriting_it_in_place() {
+        use std::io::Read;
+
+        let tmp = TempDir::new().unwrap();
+        let mut ts = TaskState::new("TASK-R");
+        ts.save(tmp.path()).unwrap();
+        let path = tmp.path().join("TASK-R").join(".state.yaml");
+        let original = std::fs::read_to_string(&path).unwrap();
+
+        let mut reader = std::fs::File::open(&path).unwrap();
+
+        ts.record_reverify("changed after the reader opened the file");
+        ts.save(tmp.path()).unwrap();
+
+        let mut seen = String::new();
+        reader.read_to_string(&mut seen).unwrap();
+        assert_eq!(
+            seen, original,
+            "an open reader must keep seeing the complete previous state"
+        );
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("changed after the reader opened the file"));
+    }
+
+    #[test]
+    fn reset_to_rejects_state_outside_the_flow() {
+        let mut ts = TaskState::new_with_flow("TASK-F", Flow::Fixbug);
+        walk_to(&mut ts, State::Coded);
+        let before = ts.clone();
+
+        let err = ts.reset_to(State::PlanReviewed, "retry").unwrap_err();
+        assert!(err.to_string().contains("fixbug"), "{err}");
+        assert_eq!(ts.state, before.state, "state untouched on error");
+        assert_eq!(ts.history.len(), before.history.len());
+    }
+
+    #[test]
+    fn reset_to_rejects_moving_forward() {
+        let mut ts = TaskState::new("TASK-F");
+        let err = ts.reset_to(State::Verified, "retry").unwrap_err();
+        assert!(err.to_string().contains("forward"), "{err}");
+        assert_eq!(ts.state, State::Imported);
+    }
+
+    #[test]
+    fn reset_to_current_state_is_allowed() {
+        let mut ts = TaskState::new("TASK-F");
+        walk_to(&mut ts, State::SpecDone);
+        ts.reset_to(State::SpecDone, "retry").unwrap();
+        assert_eq!(ts.state, State::SpecDone);
     }
 
     #[test]

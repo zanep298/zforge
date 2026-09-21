@@ -477,7 +477,11 @@ fn missing_state_file_clean_error() {
 
     let err =
         orchestrator::run_phase("T-MISSING", "code", proj.path(), "prompt", None).unwrap_err();
-    assert!(err.to_string().contains("read"));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("T-MISSING") && msg.contains("not found"),
+        "error should name the missing task, got: {msg}"
+    );
 }
 
 #[test]

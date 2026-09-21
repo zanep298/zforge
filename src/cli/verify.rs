@@ -5,7 +5,7 @@ use crate::fs::{tokens, writer};
 use crate::note;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::runner;
-use crate::state::{State, TaskState};
+use crate::state::{with_task_lock, State, TaskLockGuard, TaskState};
 use anyhow::Result;
 use chrono::Local;
 use colored::Colorize;
@@ -53,19 +53,54 @@ impl VerifyOutcome {
 /// exit code. Returning `Ok(())` here — as this did before FIX-001 — made
 /// `zforge verify` exit 0 while writing `passed: false` into `verify.md`.
 pub fn run(task_id: &str, command: Option<String>, timeout: u64) -> Result<OperationOutcome> {
-    let outcome = run_with_outcome(task_id, command, timeout)?;
+    run_locked(task_id, command, timeout, None)
+}
+
+/// [`run`] for a caller that may already own the task lock (`ship`).
+pub fn run_locked(
+    task_id: &str,
+    command: Option<String>,
+    timeout: u64,
+    held: Option<&TaskLockGuard>,
+) -> Result<OperationOutcome> {
+    let outcome = run_with_outcome_locked(task_id, command, timeout, held)?;
     Ok(outcome.to_operation_outcome(task_id))
 }
 
 /// Same as [`run`] but returns the full test outcome so callers can inspect
-/// the failing test names (the verifier loop feeds them into the next code
-/// prompt; the MCP tool renders them into its error message).
+/// the failing test names (the MCP tool renders them into its error message).
 pub fn run_with_outcome(
     task_id: &str,
     command: Option<String>,
     timeout: u64,
 ) -> Result<VerifyOutcome> {
+    run_with_outcome_locked(task_id, command, timeout, None)
+}
+
+/// Verification owns the task for its whole run: the state is loaded, the
+/// suite runs, and the verdict is written back without another command able
+/// to change `.state.yaml` in between. `held` is the caller's guard when it
+/// already owns the task (`ship` calling into verify); otherwise the lock is
+/// taken here and `Busy` is returned before anything runs.
+pub fn run_with_outcome_locked(
+    task_id: &str,
+    command: Option<String>,
+    timeout: u64,
+    held: Option<&TaskLockGuard>,
+) -> Result<VerifyOutcome> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
+    let tasks_dir = config.tasks_dir();
+    with_task_lock(&tasks_dir, task_id, held, |_| {
+        verify_under_lock(&config, task_id, command, timeout)
+    })
+}
+
+fn verify_under_lock(
+    config: &config::Config,
+    task_id: &str,
+    command: Option<String>,
+    timeout: u64,
+) -> Result<VerifyOutcome> {
     let tasks_dir = config.tasks_dir();
 
     let mut ts = TaskState::load(&tasks_dir, task_id)
@@ -190,7 +225,7 @@ command: "{}"
     } else {
         apply_failure(&mut ts, &tasks_dir)?;
         // Generate analysis prompt
-        let mut ctx = build_context_for_phase(&config, task_id, PromptPhase::VerifyAnalysis)?;
+        let mut ctx = build_context_for_phase(config, task_id, PromptPhase::VerifyAnalysis)?;
         ctx.failed_tests = result.failed_names.join("\n");
         ctx.verify_file = verify_content;
 

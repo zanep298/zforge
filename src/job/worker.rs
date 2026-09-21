@@ -27,12 +27,12 @@ pub fn run(job_id: &str) -> Result<OperationOutcome> {
 
     // Per-task lock prevents two workers from racing on the same `.state.yaml`.
     // Held for the worker's entire lifetime; kernel releases on process death.
-    let _task_lock = crate::state::try_acquire_task_lock(&config.tasks_dir(), &job.task_id)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let task_lock = crate::state::lock_task(&config.tasks_dir(), &job.task_id)?;
 
     mark_running(&config, job_id, std::process::id())?;
 
-    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&job)));
+    let caught =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&job, &task_lock)));
 
     let result: Result<OperationOutcome> = match caught {
         Ok(r) => r,
@@ -60,9 +60,15 @@ pub fn run(job_id: &str) -> Result<OperationOutcome> {
     result
 }
 
-fn dispatch(job: &crate::job::schema::Job) -> Result<OperationOutcome> {
+/// The worker owns the task lock for its lifetime and hands the guard to the
+/// operation, which threads it through everything nested inside.
+fn dispatch(
+    job: &crate::job::schema::Job,
+    task_lock: &crate::state::TaskLockGuard,
+) -> Result<OperationOutcome> {
     match job.kind {
-        JobKind::Ship => crate::cli::ship::run(
+        JobKind::Ship => crate::cli::ship::run_locked(
+            task_lock,
             &job.task_id,
             job.command_override.clone(),
             job.timeout_secs,

@@ -44,6 +44,10 @@ pub fn run(task_id: &str, artifact: &str, note: Option<String>, yes: bool) -> Re
         );
     }
 
+    // Approval rewrites `.state.yaml` (artifact sync + gate advance); own the
+    // task from load to save so no other command can interleave.
+    let _task_lock = crate::state::lock_task(&tasks_dir, task_id)?;
+
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 

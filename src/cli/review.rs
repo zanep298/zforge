@@ -13,6 +13,16 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
     let tasks_dir = config.tasks_dir();
 
+    // `--done` rewrites `.state.yaml`, so it owns the task from load to save.
+    // Without `--done` this only dispatches an agent — holding the lock for
+    // the whole session would lock out MCP calls the agent itself makes; the
+    // orchestrator takes the lock around each write it performs instead.
+    let _task_lock = if done {
+        Some(crate::state::lock_task(&tasks_dir, task_id)?)
+    } else {
+        None
+    };
+
     let mut ts = TaskState::load(&tasks_dir, task_id)
         .map_err(|_| anyhow::anyhow!("Task {} not found.", task_id))?;
 

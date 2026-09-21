@@ -13,6 +13,12 @@
 //!     mutex, the file is just an inode to attach it to.
 //!   - Held for the lifetime of the `TaskLockGuard`. Dropping the guard
 //!     releases the lock. Process death also releases (kernel cleanup).
+//!   - NOT re-entrant. `flock` is bound to the open file description, so a
+//!     second acquire from the same process conflicts with the first exactly
+//!     as one from another process would. Code that already owns the lock
+//!     passes its guard down (`Some(&guard)`) instead of acquiring again —
+//!     see [`with_task_lock`]. Ownership is proven by holding the guard, not
+//!     inferred from an environment variable.
 
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
@@ -23,8 +29,32 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub struct TaskLockGuard {
     file: File,
-    #[allow(dead_code)]
     path: PathBuf,
+    task_id: String,
+}
+
+impl TaskLockGuard {
+    /// Task this guard owns.
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    /// True when this guard is the lock for `task_id` under `tasks_dir`.
+    fn covers(&self, tasks_dir: &Path, task_id: &str) -> bool {
+        if self.task_id != task_id {
+            return false;
+        }
+        let expected = tasks_dir.join(task_id).join(".task.lock");
+        if self.path == expected {
+            return true;
+        }
+        // Same file reached through different spellings (relative vs
+        // absolute, symlinked tmp dirs on macOS).
+        match (self.path.canonicalize(), expected.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Drop for TaskLockGuard {
@@ -55,7 +85,7 @@ impl std::fmt::Display for TaskLockError {
             } => write!(
                 f,
                 "task {task_id} is locked by another zforge process (pid {pid}). \
-                 If that process is gone, retry; flock auto-releases on exit."
+                 If that process is gone, retry; flock auto-releases on exit. {AGENT_HINT}"
             ),
             TaskLockError::Busy {
                 task_id,
@@ -63,7 +93,7 @@ impl std::fmt::Display for TaskLockError {
             } => write!(
                 f,
                 "task {task_id} is locked by another zforge process. \
-                 If you're sure it crashed, retry — flock auto-releases on exit."
+                 If you're sure it crashed, retry — flock auto-releases on exit. {AGENT_HINT}"
             ),
             TaskLockError::Io(e) => write!(f, "task-lock I/O error: {e}"),
         }
@@ -71,6 +101,52 @@ impl std::fmt::Display for TaskLockError {
 }
 
 impl std::error::Error for TaskLockError {}
+
+/// Appended to `Busy` so an agent spawned by `zforge ship` — whose prompt may
+/// tell it to run `zforge verify` — understands why that call is refused
+/// and what to do instead.
+const AGENT_HINT: &str = "If you are an agent launched by that zforge process \
+    (e.g. the code agent under `zforge ship`), it runs verification itself — \
+    run the project's test command directly instead.";
+
+/// [`try_acquire`] with the error converted for `anyhow` callers.
+pub fn lock_task(tasks_dir: &Path, task_id: &str) -> anyhow::Result<TaskLockGuard> {
+    try_acquire(tasks_dir, task_id).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Run `f` while owning the lock for `task_id`.
+///
+/// - `held = Some(guard)`: the caller already owns the lock (e.g. `ship`
+///   calling into `verify`, or the orchestrator recording a fallback while
+///   `ship` holds the task). The guard is checked to be for this task and
+///   passed through; nothing is re-acquired, so there is no self-deadlock.
+/// - `held = None`: acquire for the duration of `f`, returning `Busy`
+///   without running `f` when another holder exists.
+pub fn with_task_lock<T>(
+    tasks_dir: &Path,
+    task_id: &str,
+    held: Option<&TaskLockGuard>,
+    f: impl FnOnce(&TaskLockGuard) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    match held {
+        Some(guard) => {
+            if !guard.covers(tasks_dir, task_id) {
+                anyhow::bail!(
+                    "internal: lock held for task {} ({}) passed to an operation on task {} ({})",
+                    guard.task_id,
+                    guard.path.display(),
+                    task_id,
+                    tasks_dir.join(task_id).join(".task.lock").display(),
+                );
+            }
+            f(guard)
+        }
+        None => {
+            let guard = lock_task(tasks_dir, task_id)?;
+            f(&guard)
+        }
+    }
+}
 
 /// Non-blocking acquire. Returns `Busy` immediately when another process
 /// holds the lock — caller decides whether to retry or exit.
@@ -97,7 +173,11 @@ pub fn try_acquire(tasks_dir: &Path, task_id: &str) -> Result<TaskLockGuard, Tas
             // content.
             let _ = file.set_len(0);
             let _ = writeln!(&file, "{}", std::process::id());
-            Ok(TaskLockGuard { file, path })
+            Ok(TaskLockGuard {
+                file,
+                path,
+                task_id: task_id.to_string(),
+            })
         }
         Err(_) => {
             let owner_pid = read_pid(&path);
@@ -165,6 +245,53 @@ mod tests {
             lock_path.exists(),
             "lock file kept around — inode reused for next holder"
         );
+    }
+
+    #[test]
+    fn with_task_lock_acquires_when_not_held() {
+        let tmp = TempDir::new().unwrap();
+        let ran = with_task_lock(tmp.path(), "T1", None, |g| {
+            assert_eq!(g.task_id(), "T1");
+            // Held while `f` runs.
+            assert!(try_acquire(tmp.path(), "T1").is_err());
+            Ok(true)
+        })
+        .unwrap();
+        assert!(ran);
+        // Released afterwards.
+        let _again = try_acquire(tmp.path(), "T1").expect("released after f");
+    }
+
+    #[test]
+    fn with_task_lock_reuses_a_held_guard_without_reacquiring() {
+        let tmp = TempDir::new().unwrap();
+        let outer = try_acquire(tmp.path(), "T1").unwrap();
+        // A fresh acquire here would be Busy against `outer`; passing the
+        // guard down must not attempt one.
+        let v = with_task_lock(tmp.path(), "T1", Some(&outer), |_| Ok(7)).unwrap();
+        assert_eq!(v, 7);
+    }
+
+    #[test]
+    fn with_task_lock_does_not_run_f_when_busy() {
+        let tmp = TempDir::new().unwrap();
+        let _other = try_acquire(tmp.path(), "T1").unwrap();
+        let mut ran = false;
+        let err = with_task_lock(tmp.path(), "T1", None, |_| {
+            ran = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(!ran, "f must not run without the lock");
+        assert!(err.to_string().contains("locked"));
+    }
+
+    #[test]
+    fn with_task_lock_rejects_a_guard_for_another_task() {
+        let tmp = TempDir::new().unwrap();
+        let g1 = try_acquire(tmp.path(), "T1").unwrap();
+        let err = with_task_lock(tmp.path(), "T2", Some(&g1), |_| Ok(())).unwrap_err();
+        assert!(err.to_string().contains("internal"));
     }
 
     #[test]

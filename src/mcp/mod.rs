@@ -248,10 +248,14 @@ fn tool_get_prompt(args: &Value) -> Result<String> {
     // writes each phase's artifact without an explicit `--done`, so advancing
     // here (up to the next review gate) keeps the FSM honest across the
     // stateless get_prompt calls.
-    let mut ts = TaskState::load(&config.tasks_dir(), task_id)?;
-    if crate::cli::state_sync::sync_from_artifacts(&mut ts, &config.tasks_dir(), task_id)? {
-        ts.save(&config.tasks_dir())?;
-    }
+    let tasks_dir = config.tasks_dir();
+    let ts = crate::state::with_task_lock(&tasks_dir, task_id, None, |_| {
+        let mut ts = TaskState::load(&tasks_dir, task_id)?;
+        if crate::cli::state_sync::sync_from_artifacts(&mut ts, &tasks_dir, task_id)? {
+            ts.save(&tasks_dir)?;
+        }
+        Ok(ts)
+    })?;
 
     let mut ctx = build_context_for_phase(&config, task_id, prompt_phase)?;
     ctx.output_file = match phase {
@@ -339,18 +343,17 @@ fn tool_ship(args: &Value) -> Result<String> {
 
     let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
     let tasks_dir = config.tasks_dir();
-    let mut ts = TaskState::load(&tasks_dir, task_id)
-        .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
-
-    crate::cli::ship::check_ship_gate(&ts.flow, &ts.state, task_id).map_err(|e| {
-        // Rephrase for the MCP audience so the LLM gets the correct next-call hint.
-        anyhow::anyhow!("{e}. Resolve the blocking step before retrying ship.")
-    })?;
 
     if max_iterations == 1 {
-        // Legacy: caller already wrote code. Just mark Coded + verify.
+        // Legacy: caller already wrote code. Mark Coded + verify, holding the
+        // task lock across both so nothing can change the state in between.
+        let guard = crate::state::lock_task(&tasks_dir, task_id)?;
+        let mut ts = TaskState::load(&tasks_dir, task_id)
+            .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
+        check_ship_gate_for_mcp(&ts, task_id)?;
         crate::cli::ship::ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")?;
-        let outcome = crate::cli::verify::run_with_outcome(task_id, command, timeout)?;
+        let outcome =
+            crate::cli::verify::run_with_outcome_locked(task_id, command, timeout, Some(&guard))?;
         if !outcome.passed {
             anyhow::bail!(verify_failure_message(task_id, &outcome));
         }
@@ -361,9 +364,14 @@ fn tool_ship(args: &Value) -> Result<String> {
         ));
     }
 
+    // Gate check up front so a refused ship gets the MCP-phrased hint.
+    let ts = TaskState::load(&tasks_dir, task_id)
+        .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
+    check_ship_gate_for_mcp(&ts, task_id)?;
+
     // Verifier loop: server drives code+verify iterations. CLI `ship` already
-    // implements the loop with full agent dispatch; delegate to it so MCP and
-    // CLI share the same code path.
+    // implements the loop with full agent dispatch (and takes the task lock);
+    // delegate to it so MCP and CLI share the same code path.
     let outcome = crate::cli::ship::run(task_id, command, timeout, max_iterations)?;
     if !outcome.is_success() {
         // Same verdict the CLI turns into a nonzero exit code and the worker
@@ -380,6 +388,13 @@ fn tool_ship(args: &Value) -> Result<String> {
         "Ship complete for task {task_id} after up to {max_iterations} verifier iteration(s). \
          See .zforge/tasks/{task_id}/verify.md. {next}"
     ))
+}
+
+fn check_ship_gate_for_mcp(ts: &TaskState, task_id: &str) -> Result<()> {
+    crate::cli::ship::check_ship_gate(&ts.flow, &ts.state, task_id).map_err(|e| {
+        // Rephrase for the MCP audience so the LLM gets the correct next-call hint.
+        anyhow::anyhow!("{e}. Resolve the blocking step before retrying ship.")
+    })
 }
 
 fn ship_next_hint(tasks_dir: &std::path::Path, task_id: &str) -> String {

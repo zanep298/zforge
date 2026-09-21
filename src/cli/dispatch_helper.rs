@@ -15,7 +15,7 @@ use crate::cost::{
 };
 use crate::prompt::{Engine, PromptContext};
 use crate::registry;
-use crate::state::TaskState;
+use crate::state::{TaskLockGuard, TaskState};
 use anyhow::Result;
 use chrono::Utc;
 use std::io::IsTerminal;
@@ -47,17 +47,31 @@ pub fn run_phase_for_task(
     template_name: &str,
     ctx: &PromptContext,
 ) -> Result<()> {
+    run_phase_for_task_locked(config, ts, template_name, ctx, None)
+}
+
+/// [`run_phase_for_task`] for a caller that already owns the task lock
+/// (`ship`). The guard is handed to the orchestrator so its fallback writes
+/// happen under the caller's lock instead of trying to re-acquire it.
+pub fn run_phase_for_task_locked(
+    config: &Config,
+    ts: &TaskState,
+    template_name: &str,
+    ctx: &PromptContext,
+    held: Option<&TaskLockGuard>,
+) -> Result<()> {
     let engine = Engine::new(&config.agents_dir());
 
     // Route 1: explicit agent → orchestrator, no default needed.
     if ts.effective_agent().is_some() {
         let rendered = engine.render(template_name, ctx)?;
-        return crate::orchestrator::run_phase(
+        return crate::orchestrator::run_phase_with_lock(
             &ts.task_id,
             template_name,
             &config.project_root(),
             &rendered,
             None,
+            held,
         );
     }
 
@@ -66,12 +80,13 @@ pub fn run_phase_for_task(
     let interactive = std::io::stdout().is_terminal();
     if !interactive && default_runner_available(&config.project_root()) {
         let rendered = engine.render(template_name, ctx)?;
-        return crate::orchestrator::run_phase(
+        return crate::orchestrator::run_phase_with_lock(
             &ts.task_id,
             template_name,
             &config.project_root(),
             &rendered,
             Some(DEFAULT_RUNNER),
+            held,
         );
     }
 
