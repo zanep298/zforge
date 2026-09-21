@@ -1,0 +1,340 @@
+#![cfg(unix)]
+//! `zforge doctor` for Claude Code (IMP-005).
+//!
+//! The real binary runs with every config location in a temp dir and stubs
+//! on `PATH`. The `claude` stub answers `claude mcp get <name>` from files
+//! the test writes, so each MCP state (connected, pending, pinned elsewhere,
+//! absent) can be set up exactly; the `rtk` stub behaves like the real hook
+//! or not, to exercise the smoke test.
+
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+
+struct Env {
+    root: tempfile::TempDir,
+    project: PathBuf,
+    bin: PathBuf,
+}
+
+impl Env {
+    /// A project initialized for Claude, with healthy stubs.
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        let project = r.join("proj");
+        for d in ["proj", "home", "zf", "claude", "bin", "mcp"] {
+            std::fs::create_dir_all(r.join(d)).unwrap();
+        }
+        let env = Self {
+            bin: r.join("bin"),
+            project,
+            root,
+        };
+        env.stub(
+            "claude",
+            r#"[ "$1" = "--version" ] && { echo "2.1.0 (Claude Code)"; exit 0; }
+if [ "$1" = "mcp" ] && [ "$2" = "get" ]; then
+  f="$MCP_DIR/$3.txt"
+  [ -f "$f" ] && { cat "$f"; exit 0; }
+  echo "No MCP server named \"$3\"."; exit 1
+fi
+exit 0"#,
+        );
+        env.stub(
+            "codegraph",
+            r#"[ "$1" = "init" ] && mkdir -p .codegraph; exit 0"#,
+        );
+        env.healthy_rtk();
+        let out = env.zforge(&["init", "--agent", "claude", "--no-install", "--force"]);
+        assert!(
+            out.status.success(),
+            "init: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        env
+    }
+
+    fn stub(&self, name: &str, body: &str) {
+        let path = self.bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// `rtk hook claude` that performs the documented rewrite.
+    fn healthy_rtk(&self) {
+        self.stub(
+            "rtk",
+            r#"if [ "$1" = "hook" ]; then
+  cat >/dev/null
+  echo '{"hookSpecificOutput":{"updatedInput":{"command":"rtk git status"}}}'
+fi
+exit 0"#,
+        );
+    }
+
+    fn dir(&self, name: &str) -> PathBuf {
+        self.root.path().join(name)
+    }
+
+    fn mcp(&self, server: &str, status: &str, args: &str) {
+        std::fs::write(
+            self.dir("mcp").join(format!("{server}.txt")),
+            format!("{server}:\n  Scope: Local config\n  Status: {status}\n  Type: stdio\n  Args: {args}\n"),
+        )
+        .unwrap();
+    }
+
+    fn root_arg(&self) -> String {
+        self.project.canonicalize().unwrap().display().to_string()
+    }
+
+    fn user_settings(&self, json: &str) {
+        std::fs::write(self.dir("claude").join("settings.json"), json).unwrap();
+    }
+
+    fn zforge(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_zforge"))
+            .args(args)
+            .current_dir(&self.project)
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
+            .env("HOME", self.dir("home"))
+            .env("ZFORGE_HOME", self.dir("zf"))
+            .env("CLAUDE_CONFIG_DIR", self.dir("claude"))
+            .env("MCP_DIR", self.dir("mcp"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    }
+
+    /// `doctor --json` → (exit code, check name → check).
+    fn doctor(&self) -> (i32, serde_json::Map<String, Value>) {
+        let out = self.zforge(&["doctor", "--json"]);
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+            panic!(
+                "doctor --json not JSON ({e}):\n{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        let checks = report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["name"].as_str().unwrap().to_string(), c.clone()))
+            .collect();
+        (out.status.code().unwrap(), checks)
+    }
+}
+
+fn level<'a>(checks: &'a serde_json::Map<String, Value>, name: &str) -> &'a str {
+    checks[name]["level"].as_str().unwrap()
+}
+
+/// Everything wired: every check reaches the highest level it can confirm.
+#[test]
+fn healthy_claude_setup() {
+    let env = Env::new();
+    let root = env.root_arg();
+    env.mcp("zforge", "✔ Connected", "mcp");
+    env.mcp(
+        "codegraph",
+        "✔ Connected",
+        &format!("serve --mcp --path {root}"),
+    );
+    let script = env.dir("home").join("caveman-activate.js");
+    std::fs::write(&script, "").unwrap();
+    env.user_settings(&format!(
+        r#"{{"hooks":{{"PreToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":"rtk hook claude"}}]}}],
+           "SessionStart":[{{"hooks":[{{"type":"command","command":"node {}"}}]}}]}}}}"#,
+        script.display()
+    ));
+
+    let (code, c) = env.doctor();
+    assert_eq!(code, 0);
+    assert_eq!(level(&c, "claude"), "working");
+    assert_eq!(level(&c, "runner"), "configured");
+    assert_eq!(level(&c, "agents"), "configured");
+    assert_eq!(level(&c, "skills"), "configured");
+    assert_eq!(level(&c, "zforge mcp"), "working");
+    assert_eq!(level(&c, "codegraph mcp"), "working");
+    assert_eq!(level(&c, "rtk hook"), "working");
+    assert_eq!(level(&c, "caveman hook"), "configured");
+    // What cannot be confirmed is said, not assumed.
+    assert!(c["agents"]["not_checked"]
+        .as_str()
+        .unwrap()
+        .contains("subagent"));
+    assert!(c["skills"]["not_checked"]
+        .as_str()
+        .unwrap()
+        .contains("IMP-004"));
+}
+
+#[test]
+fn missing_claude_fails_the_run() {
+    let env = Env::new();
+    std::fs::remove_file(env.bin.join("claude")).unwrap();
+    let (code, c) = env.doctor();
+    assert_eq!(code, 1, "a required check failed");
+    assert_eq!(level(&c, "claude"), "missing");
+}
+
+#[test]
+fn a_broken_agent_definition_fails_the_run() {
+    let env = Env::new();
+    let f = env.project.join(".claude/agents/plan-agent.md");
+    let body = std::fs::read_to_string(&f)
+        .unwrap()
+        .replace("name: plan-agent", "name: x");
+    std::fs::write(&f, body).unwrap();
+
+    let (code, c) = env.doctor();
+    assert_eq!(code, 1);
+    assert_eq!(level(&c, "agents"), "broken");
+    assert!(c["agents"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("plan-agent"));
+}
+
+/// A registered file is not a working server: absent, pending approval and
+/// pinned to another project are each reported for what they are.
+#[test]
+fn mcp_states_are_distinguished() {
+    let env = Env::new();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "zforge mcp"), "missing");
+
+    env.mcp(
+        "zforge",
+        "⏸ Pending approval (run `claude` to approve)",
+        "mcp",
+    );
+    env.mcp(
+        "codegraph",
+        "✔ Connected",
+        "serve --mcp --path /some/other/project",
+    );
+    let (code, c) = env.doctor();
+    assert_eq!(code, 0, "optional checks do not fail the run");
+    assert_eq!(level(&c, "zforge mcp"), "recognized");
+    assert_eq!(level(&c, "codegraph mcp"), "broken");
+    assert!(c["codegraph mcp"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("not pinned"));
+
+    env.mcp(
+        "codegraph",
+        "✗ Failed to connect",
+        &format!("serve --mcp --path {}", env.root_arg()),
+    );
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "codegraph mcp"), "broken");
+}
+
+/// rtk installed is not rtk working: the hook must be registered, and must
+/// actually rewrite a command.
+#[test]
+fn rtk_hook_levels() {
+    let env = Env::new();
+    let (_, c) = env.doctor();
+    assert_eq!(
+        level(&c, "rtk hook"),
+        "present",
+        "installed but not registered"
+    );
+
+    env.user_settings(
+        r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}]}}"#,
+    );
+    env.stub("rtk", r#"[ "$1" = "hook" ] && cat >/dev/null; exit 0"#); // registered, does nothing
+    let (_, c) = env.doctor();
+    assert_eq!(
+        level(&c, "rtk hook"),
+        "broken",
+        "the smoke test must catch a no-op hook"
+    );
+
+    env.healthy_rtk();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "rtk hook"), "working");
+}
+
+#[test]
+fn caveman_hook_with_a_missing_script_is_broken() {
+    let env = Env::new();
+    env.user_settings(
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node /nowhere/caveman-activate.js"}]}]}}"#,
+    );
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "caveman hook"), "broken");
+}
+
+/// A task at Verified whose code changed since is flagged (IMP-002).
+#[test]
+fn stale_evidence_is_reported() {
+    let env = Env::new();
+    let git = |args: &[&str]| {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(&env.project)
+            .output()
+            .unwrap()
+            .status
+            .success());
+    };
+    std::fs::write(env.project.join("lib.rs"), "fn a() {}\n").unwrap();
+    git(&["init", "-q", "."]);
+    git(&["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"]);
+    git(&[
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "init",
+    ]);
+
+    let tasks = env.project.join(".zforge/tasks/TASK-1");
+    std::fs::create_dir_all(&tasks).unwrap();
+    std::fs::write(
+        tasks.join(".state.yaml"),
+        "task_id: TASK-1\nflow: Full\nstate: Verified\nupdated_at: \"2026-01-01T00:00:00+00:00\"\nhistory: []\n",
+    )
+    .unwrap();
+    let cmd = test_command(&env.project);
+    std::fs::write(
+        tasks.join("verify.md"),
+        format!("---\npassed: true\ncommand: \"{cmd}\"\ncandidate: 0000000000000000000000000000000000000000\n---\n"),
+    )
+    .unwrap();
+
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "evidence"), "broken");
+    assert!(c["evidence"]["detail"].as_str().unwrap().contains("TASK-1"));
+}
+
+fn test_command(project: &Path) -> String {
+    let cfg: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(project.join(".zforge/config.yaml")).unwrap(),
+    )
+    .unwrap();
+    cfg["project"]["test_command"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn text_report_names_fixes() {
+    let env = Env::new();
+    let out = env.zforge(&["doctor"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("zforge doctor — Claude Code"));
+    assert!(
+        text.contains("fix: zforge mcp register --agent claude"),
+        "{text}"
+    );
+}

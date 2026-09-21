@@ -173,6 +173,15 @@ enum Commands {
         #[command(subcommand)]
         cmd: crate::cli::git::GitCmd,
     },
+    /// Check what the Claude Code setup actually does: CLI, runner, phase
+    /// agents, skills, MCP servers (connected?), hooks (do they run?), and
+    /// whether verified tasks' evidence still matches the code. Exits 1 when
+    /// a required check fails.
+    Doctor {
+        /// Machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
     /// INTERNAL: background worker entry point — invoked by `ship --async`.
     /// Do not call directly.
     #[command(hide = true)]
@@ -283,6 +292,7 @@ fn dispatch() -> Result<OperationOutcome> {
             }
         }
         Commands::Worker { job_id } => zforge::job::worker::run(&job_id),
+        Commands::Doctor { json } => cli::doctor::run(json),
         other => dispatch_unit(other).map(Into::into),
     }
 }
@@ -379,7 +389,10 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Cost { cmd } => cli::cost::run(cmd),
         Commands::Git { cmd } => cli::git::run(cmd),
         // Handled by `dispatch` because they carry a verdict.
-        Commands::Verify { .. } | Commands::Ship { .. } | Commands::Worker { .. } => {
+        Commands::Verify { .. }
+        | Commands::Ship { .. }
+        | Commands::Worker { .. }
+        | Commands::Doctor { .. } => {
             unreachable!("outcome-bearing commands are dispatched before dispatch_unit")
         }
     }

@@ -3,6 +3,7 @@ pub mod artifact_metadata;
 pub mod code;
 pub mod cost;
 pub mod dispatch_helper;
+pub mod doctor;
 pub mod flow_guard;
 pub mod git;
 pub mod init;
