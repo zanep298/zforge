@@ -581,22 +581,18 @@ fn tool_job_log(args: &Value) -> Result<String> {
 }
 
 fn tool_job_cancel(args: &Value) -> Result<String> {
+    use crate::job::lifecycle::{cancel_job, CancelOutcome};
     let job_id = require_str(args, "job_id")?;
     let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
-    let job = crate::job::store::load_job(&config, job_id)?;
-    if job.status.is_terminal() {
-        return Ok(format!(
-            "job {job_id} already {}; no-op",
-            job.status.as_str()
-        ));
-    }
-    if let Some(pid) = job.worker_pid {
-        // Same termination as `zforge job cancel`: worker group plus the
-        // groups of the agents/tests it started, SIGTERM then SIGKILL.
-        crate::job::lifecycle::terminate_job_processes(&config, job_id, pid);
-    }
-    crate::job::lifecycle::mark_cancelled(&config, job_id)?;
-    Ok(format!("cancelled {job_id}"))
+    // Same path as `zforge job cancel`: worker group plus the groups of the
+    // agents/tests it started, SIGTERM then SIGKILL — also for a job whose
+    // worker has not yet marked it running.
+    Ok(match cancel_job(&config, job_id)? {
+        CancelOutcome::AlreadyTerminal(status) => {
+            format!("job {job_id} already {}; no-op", status.as_str())
+        }
+        CancelOutcome::Terminated | CancelOutcome::NoWorker => format!("cancelled {job_id}"),
+    })
 }
 
 fn tool_job_list(_args: &Value) -> Result<String> {

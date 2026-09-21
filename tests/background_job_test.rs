@@ -605,3 +605,66 @@ fn job_wait_returns_for_a_queued_job_whose_worker_died() {
     );
     assert_eq!(out.status.code(), Some(1), "failed job → exit 1");
 }
+
+/// A cancel that lands while the job is still `queued` — worker launched but
+/// not yet `running` — must stop that worker, not only relabel the job. The
+/// launched pid is the worker's process group (`process_group(0)`).
+#[test]
+#[serial]
+fn cancel_stops_a_queued_worker_that_has_not_started_running() {
+    use std::os::unix::process::CommandExt;
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    let mut worker = std::process::Command::new("sleep")
+        .arg("60")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    zforge::job::store::record_launch(&config, &job_id, worker.id()).unwrap();
+
+    zforge::job::lifecycle::cancel_job(&config, &job_id).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exited = loop {
+        if let Some(status) = worker.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    if exited.is_none() {
+        let _ = worker.kill();
+        panic!("cancel left the queued job's worker running");
+    }
+    assert_eq!(
+        load_job(&config, &job_id).unwrap().status,
+        JobStatus::Cancelled
+    );
+}
+
+/// A worker that outlives a cancel must not flip the job back: terminal
+/// states are final, and a cancelled job may not start running.
+#[test]
+#[serial]
+fn a_cancelled_job_stays_cancelled() {
+    use zforge::job::lifecycle::{mark_cancelled, mark_failed, mark_running, mark_success};
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    mark_cancelled(&config, &job_id).unwrap();
+
+    assert!(
+        mark_running(&config, &job_id, std::process::id()).is_err(),
+        "a cancelled job must refuse to start"
+    );
+    mark_success(&config, &job_id).unwrap();
+    mark_failed(&config, &job_id, "late").unwrap();
+
+    let job = load_job(&config, &job_id).unwrap();
+    assert_eq!(job.status, JobStatus::Cancelled);
+    assert_eq!(job.worker_pid, None);
+    assert_eq!(job.error, None);
+}

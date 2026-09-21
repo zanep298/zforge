@@ -2,7 +2,7 @@
 
 use crate::config;
 use crate::job::{
-    lifecycle::{mark_cancelled, reconcile_dead_worker},
+    lifecycle::reconcile_dead_worker,
     schema::{Job, JobStatus},
     store::{job_log_path, list_jobs, load_job},
 };
@@ -248,23 +248,14 @@ fn wait(a: WaitArgs) -> Result<()> {
 }
 
 fn cancel(a: CancelArgs) -> Result<()> {
+    use crate::job::lifecycle::{cancel_job, CancelOutcome};
     let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
-    let job = load_job(&config, &a.job_id)?;
-    if job.status.is_terminal() {
-        note!("job {} already {}", a.job_id, job.status.as_str());
-        return Ok(());
+    match cancel_job(&config, &a.job_id)? {
+        CancelOutcome::AlreadyTerminal(status) => {
+            note!("job {} already {}", a.job_id, status.as_str())
+        }
+        CancelOutcome::Terminated => note!("cancelled {}", a.job_id),
+        CancelOutcome::NoWorker => note!("cancelled {} (no worker was launched)", a.job_id),
     }
-    let Some(pid) = job.worker_pid else {
-        // Worker hadn't recorded its PID — mark cancelled and move on.
-        mark_cancelled(&config, &a.job_id)?;
-        note!("cancelled {} (no worker PID recorded)", a.job_id);
-        return Ok(());
-    };
-
-    // Children of a dead worker may still be running, so this runs whether
-    // or not the worker itself is alive.
-    crate::job::lifecycle::terminate_job_processes(&config, &a.job_id, pid);
-    mark_cancelled(&config, &a.job_id)?;
-    note!("cancelled {}", a.job_id);
     Ok(())
 }

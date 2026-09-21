@@ -1,11 +1,32 @@
 use crate::config::Config;
-use crate::job::schema::JobStatus;
+use crate::job::schema::{Job, JobStatus};
 use crate::job::store::{load_job, read_launch_pid, save_atomic};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use chrono::Utc;
 
+/// Terminal states are final. A worker that outlives a cancel (or a
+/// reconcile that already failed the job) must not flip the record back, so
+/// every late transition is a no-op on a terminal job.
+fn update_unless_terminal(
+    config: &Config,
+    job_id: &str,
+    apply: impl FnOnce(&mut Job),
+) -> Result<()> {
+    let mut job = load_job(config, job_id)?;
+    if job.status.is_terminal() {
+        return Ok(());
+    }
+    apply(&mut job);
+    save_atomic(config, &job)
+}
+
+/// Fails on a terminal job — in particular a job cancelled while it was
+/// still queued — so the worker stops instead of running it.
 pub fn mark_running(config: &Config, job_id: &str, pid: u32) -> Result<()> {
     let mut job = load_job(config, job_id)?;
+    if job.status.is_terminal() {
+        bail!("job {job_id} is already {}", job.status.as_str());
+    }
     job.status = JobStatus::Running;
     job.started_at = Some(Utc::now());
     job.worker_pid = Some(pid);
@@ -13,29 +34,62 @@ pub fn mark_running(config: &Config, job_id: &str, pid: u32) -> Result<()> {
 }
 
 pub fn mark_success(config: &Config, job_id: &str) -> Result<()> {
-    let mut job = load_job(config, job_id)?;
-    job.status = JobStatus::Success;
-    job.finished_at = Some(Utc::now());
-    job.exit_code = Some(0);
-    save_atomic(config, &job)
+    update_unless_terminal(config, job_id, |job| {
+        job.status = JobStatus::Success;
+        job.finished_at = Some(Utc::now());
+        job.exit_code = Some(0);
+    })
 }
 
 pub fn mark_failed(config: &Config, job_id: &str, err: &str) -> Result<()> {
-    let mut job = load_job(config, job_id)?;
-    job.status = JobStatus::Failed;
-    job.finished_at = Some(Utc::now());
-    job.error = Some(err.to_string());
-    save_atomic(config, &job)
+    update_unless_terminal(config, job_id, |job| {
+        job.status = JobStatus::Failed;
+        job.finished_at = Some(Utc::now());
+        job.error = Some(err.to_string());
+    })
 }
 
 pub fn mark_cancelled(config: &Config, job_id: &str) -> Result<()> {
-    let mut job = load_job(config, job_id)?;
+    update_unless_terminal(config, job_id, |job| {
+        job.status = JobStatus::Cancelled;
+        job.finished_at = Some(Utc::now());
+    })
+}
+
+/// What [`cancel_job`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelOutcome {
+    /// The job had already finished; nothing was touched.
+    AlreadyTerminal(JobStatus),
+    /// The job's worker group (and recorded child groups) were stopped.
+    Terminated,
+    /// No worker was ever launched; the job was only marked cancelled.
+    NoWorker,
+}
+
+/// Cancel a job: stop its worker and everything it started, then mark it
+/// `cancelled`. Shared by `zforge job cancel` and the MCP `job_cancel` tool.
+///
+/// The worker is found by the pid it recorded when it started running or,
+/// for a job still `queued`, by the pid the submitter launched
+/// (`launch.pid`). Before, a queued job was only relabelled: its worker kept
+/// going, ran the task, and overwrote `cancelled` with its own result.
+pub fn cancel_job(config: &Config, job_id: &str) -> Result<CancelOutcome> {
+    let job = load_job(config, job_id)?;
     if job.status.is_terminal() {
-        return Ok(());
+        return Ok(CancelOutcome::AlreadyTerminal(job.status));
     }
-    job.status = JobStatus::Cancelled;
-    job.finished_at = Some(Utc::now());
-    save_atomic(config, &job)
+    let worker = job.worker_pid.or_else(|| read_launch_pid(config, job_id));
+    // Children of a dead worker may still be running, so this runs whether
+    // or not the worker itself is alive.
+    if let Some(pid) = worker {
+        terminate_job_processes(config, job_id, pid);
+    }
+    mark_cancelled(config, job_id)?;
+    Ok(match worker {
+        Some(_) => CancelOutcome::Terminated,
+        None => CancelOutcome::NoWorker,
+    })
 }
 
 /// How long a `queued` job may go without a recorded worker launch before
