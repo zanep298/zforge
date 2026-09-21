@@ -10,31 +10,6 @@ const PATTERNS_MD: &str = "# Coding Patterns\n\n## Approved Patterns\n\n## Test 
 const GLOSSARY_MD: &str = "# Domain Glossary\n";
 const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
 
-const CLAUDE_SETTINGS_JSON: &str = r#"{
-  "permissions": {
-    "allow": [
-      "Bash(zforge *)",
-      "mcp__zforge__task_import",
-      "mcp__zforge__get_prompt",
-      "mcp__zforge__approve",
-      "mcp__zforge__verify",
-      "mcp__zforge__ship",
-      "mcp__zforge__status",
-      "mcp__codegraph__codegraph_search",
-      "mcp__codegraph__codegraph_context",
-      "mcp__codegraph__codegraph_files",
-      "mcp__codegraph__codegraph_node",
-      "mcp__codegraph__codegraph_explore",
-      "mcp__codegraph__codegraph_callers",
-      "mcp__codegraph__codegraph_callees",
-      "mcp__codegraph__codegraph_impact",
-      "mcp__codegraph__codegraph_trace",
-      "mcp__codegraph__codegraph_status"
-    ]
-  }
-}
-"#;
-
 const FALLBACK_CODING_STYLE: &str = "# Coding Style\n\n\
 - Prefer immutability: create new values, don't mutate in place\n\
 - Functions under 50 lines; files under 800 lines\n\
@@ -417,9 +392,25 @@ fn scaffold_claude(
     let claude_dir = cwd.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
     let settings_path = claude_dir.join("settings.json");
-    let created = write_safe(&settings_path, CLAUDE_SETTINGS_JSON, force)?;
-    stats.record(created);
-    print_file_status(created, ".claude/settings.json");
+    // Shared with the user and other tools: `--force` merges zforge's
+    // allow entries in instead of replacing the file.
+    match write_settings(&settings_path, force)? {
+        SettingsWrite::Created => {
+            stats.record(true);
+            print_file_status(true, ".claude/settings.json");
+        }
+        SettingsWrite::Merged => {
+            stats.record(false);
+            println!(
+                "{} .claude/settings.json — kept; refreshed zforge permissions only",
+                "✓".green()
+            );
+        }
+        SettingsWrite::Unchanged | SettingsWrite::Skipped => {
+            stats.record(false);
+            print_file_status(false, ".claude/settings.json");
+        }
+    }
 
     // .claude/agents/ — per-target rendered copies (model: line resolved from
     // models.yaml when present, falling back to template frontmatter).
@@ -675,6 +666,7 @@ use detect::detect_project;
 use lang_skills::{build_lang_skills_section, lang_skill_templates};
 
 mod agent_render;
+mod claude_settings;
 pub(crate) mod claude_skills;
 mod config_file;
 mod detect;
@@ -684,6 +676,7 @@ mod runner;
 mod store_paths;
 mod tools;
 
+use claude_settings::{write_settings, SettingsWrite};
 use config_file::{write_config, ConfigWrite, Managed};
 use runner::{on_path, resolve_default_runner};
 use store_paths::StorePaths;
@@ -886,7 +879,7 @@ mod tests {
 
     #[test]
     fn claude_settings_allow_ship_tool_used_by_command_template() {
-        assert!(CLAUDE_SETTINGS_JSON.contains("\"mcp__zforge__ship\""));
+        assert!(claude_settings::CLAUDE_SETTINGS_JSON.contains("\"mcp__zforge__ship\""));
     }
 
     #[test]

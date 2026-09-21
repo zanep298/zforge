@@ -615,6 +615,38 @@ fn refresh_keeps_custom_models_and_renders_them() {
     assert!(env.read(".zforge/memory/patterns.md").contains("keep: me"));
 }
 
+/// `.claude/settings.json` is shared with the user: a refresh adds
+/// zforge's permissions to it instead of replacing it.
+#[test]
+fn refresh_keeps_user_claude_settings() {
+    let env = Env::new(&CLIENTS);
+    env.init(&agent_flag("claude"));
+
+    let settings = env.project.join(".claude/settings.json");
+    std::fs::write(
+        &settings,
+        r#"{
+  "permissions": {
+    "allow": ["Bash(make *)", "mcp__codegraph__query"],
+    "deny": ["Bash(rm -rf *)"]
+  },
+  "hooks": {"Stop": [{"command": "make lint"}]}
+}
+"#,
+    )
+    .unwrap();
+
+    env.init(&agent_flag("claude")); // --force refresh
+
+    let out: serde_json::Value = serde_json::from_str(&env.read(".claude/settings.json")).unwrap();
+    let allow = out["permissions"]["allow"].as_array().unwrap();
+    assert_eq!(allow[0], "Bash(make *)", "user permission kept");
+    assert!(allow.contains(&serde_json::json!("mcp__codegraph__codegraph_search")));
+    assert!(!allow.contains(&serde_json::json!("mcp__codegraph__query")));
+    assert_eq!(out["permissions"]["deny"][0], "Bash(rm -rf *)");
+    assert_eq!(out["hooks"]["Stop"][0]["command"], "make lint");
+}
+
 #[test]
 fn refresh_keeps_user_config_and_updates_runner() {
     let env = Env::new(&CLIENTS);
