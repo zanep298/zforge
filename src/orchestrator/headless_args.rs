@@ -8,7 +8,7 @@
 //! Foreground mode (`zforge ship T1` without `--async`, or `zforge code
 //! T1`) does NOT inject bypass flags — a user is present to answer prompts.
 //!
-//! Each agent's bypass flags are documented in `docs/agent-contracts.md`.
+//! Each agent's bypass flags are documented in `docs/v1/agent-contracts.md`.
 
 /// Return the bypass args for the given agent. Empty when we don't know the
 /// agent — user is expected to bake equivalent flags into their registered

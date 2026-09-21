@@ -268,12 +268,38 @@ Agents that are not installed are skipped, not failed.
 
 | Guide | Description |
 |-------|-------------|
-| [docs/getting-started.md](docs/getting-started.md) | Install, init, first task |
-| [docs/workflow.md](docs/workflow.md) | Pipeline phases explained |
-| [docs/commands.md](docs/commands.md) | Full command reference |
-| [docs/flows.md](docs/flows.md) | Flow presets: full, fixbug, spike, docs |
-| [docs/retry.md](docs/retry.md) | Rewinding and redoing a phase |
-| [docs/memory.md](docs/memory.md) | How pattern memory accumulates across tasks |
-| [docs/mcp.md](docs/mcp.md) | MCP server tools and orchestrator integration |
-| [docs/install-global.md](docs/install-global.md) | Global store, shared vs local mode |
-| [docs/opencode.md](docs/opencode.md) | Using zforge with OpenCode |
+| [docs/v1/getting-started.md](docs/v1/getting-started.md) | v1 install, init, first task |
+| [docs/v1/workflow.md](docs/v1/workflow.md) | v1 pipeline phases explained |
+| [docs/v1/commands.md](docs/v1/commands.md) | v1 command reference |
+| [docs/v1/flows.md](docs/v1/flows.md) | v1 flow presets: full, fixbug, spike, docs |
+| [docs/v1/retry.md](docs/v1/retry.md) | v1 phase retry behavior |
+| [docs/v1/memory.md](docs/v1/memory.md) | v1 pattern memory |
+| [docs/v1/mcp.md](docs/v1/mcp.md) | v1 MCP integration |
+| [docs/v1/install-global.md](docs/v1/install-global.md) | v1 global store and install modes |
+| [docs/v1/opencode.md](docs/v1/opencode.md) | v1 OpenCode integration |
+| [docs/v2/README.md](docs/v2/README.md) | v2 documentation index and recommended reading order |
+| [docs/v2/product-direction.md](docs/v2/product-direction.md) | Quality-first product objective, target users, autonomy boundary, and accepted outcomes |
+| [docs/v2/fleet-and-human-attention.md](docs/v2/fleet-and-human-attention.md) | Work batches, preflight, Decision Inbox, quality-first scheduling, and consolidated decisions |
+| [docs/v2/flow.md](docs/v2/flow.md) | Proposed autonomous flow with decomposition and risk-based supervision |
+| [docs/v2/cost.md](docs/v2/cost.md) | Proposed v2 agent token accounting, forecasting, and budget enforcement |
+| [docs/v2/agents.md](docs/v2/agents.md) | Proposed v2 agent roles, independence, assignment, and composition |
+| [docs/v2/model-routing.md](docs/v2/model-routing.md) | Automatic quality-first runtime-agent/model selection, catalog, fallback, and evaluation |
+| [docs/v2/deterministic-runtime.md](docs/v2/deterministic-runtime.md) | Proposed v2 orchestrator, policy, workspace, gates, state, Git, and delivery runtime |
+| [docs/v2/skills.md](docs/v2/skills.md) | Proposed v2 skill packages, resolution, policy boundaries, versioning, and evaluation |
+| [docs/v2/data-model.md](docs/v2/data-model.md) | Normative draft for v2 records, IDs, relationships, persistence, and invariants |
+| [docs/v2/state-and-events.md](docs/v2/state-and-events.md) | Normative draft for lifecycle states, event streams, transition guards, idempotency, and recovery |
+| [docs/v2/artifacts-and-traceability.md](docs/v2/artifacts-and-traceability.md) | Normative draft for artifacts, evidence validity, trace graphs, coverage, invalidation, and evidence bundles |
+| [docs/v2/execution-dag.md](docs/v2/execution-dag.md) | Normative draft for graph compilation, validation, scheduling, concurrency, correction, and completion |
+| [docs/v2/policy-and-risk.md](docs/v2/policy-and-risk.md) | Normative draft for risk classification, protected actions, scoped grants, approval, and exceptions |
+| [docs/v2/configuration.md](docs/v2/configuration.md) | Normative draft for configuration layers, typed merge, references, secrets, and immutable run snapshots |
+| [docs/v2/workspace-and-git.md](docs/v2/workspace-and-git.md) | Normative draft for isolated workspaces, scoped changes, Git reconciliation, commits, and cleanup |
+| [docs/v2/quality-gates.md](docs/v2/quality-gates.md) | Normative draft for gate selection, execution, parsing, evidence, baselines, flakiness, and reuse |
+| [docs/v2/errors-and-recovery.md](docs/v2/errors-and-recovery.md) | Normative draft for error taxonomy, recovery routing, retries, reconciliation, and terminal failure |
+| [docs/v2/cli-and-mcp.md](docs/v2/cli-and-mcp.md) | Normative draft for v2 CLI/MCP parity, commands, queries, jobs, identity, and compatibility |
+| [docs/v2/security-threat-model.md](docs/v2/security-threat-model.md) | Threat model for assets, trust boundaries, attack paths, controls, residual risk, and incident response |
+| [docs/v2/evaluation.md](docs/v2/evaluation.md) | Normative draft for benchmarks, metrics, evaluator integrity, release gates, and continuous evaluation |
+
+V2 is a design target, separate from the current v1 workflow above. It stops at
+reviewable development results and excludes application deployment and production
+access/debugging. See [Development Handoff and Review](docs/v2/delivery-and-review.md)
+and [Project Onboarding and Local Testing](docs/v2/project-onboarding-and-local-testing.md).

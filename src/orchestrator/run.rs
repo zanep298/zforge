@@ -149,7 +149,7 @@ pub fn run_phase_with_lock(
         // Real binaries (claude, codex) print failure messages to stdout
         // — not stderr. Codex also exits 0 even on API errors. Concatenate
         // both streams so retryable-pattern matching sees the whole picture.
-        // PR9 contract verification documented in docs/agent-contracts.md.
+        // PR9 contract verification documented in docs/v1/agent-contracts.md.
         let combined_output = format!("{}\n{}", outcome.stderr, outcome.stdout);
         let policy_reason = policy.should_fallback(outcome.exit_code, &combined_output);
 

@@ -113,7 +113,7 @@ fn default_retryable_exit_codes() -> Vec<i32> {
 /// (kept for backward compat with existing `registry.yaml` files), the
 /// orchestrator scans **stdout + stderr concatenated** against these patterns
 /// because real binaries (claude, codex) write failure text to stdout. See
-/// `docs/agent-contracts.md` for the per-agent verification.
+/// `docs/v1/agent-contracts.md` for the per-agent verification.
 fn default_retryable_stderr_patterns() -> Vec<String> {
     vec![
         // Generic LLM provider signals — appear in either stream.

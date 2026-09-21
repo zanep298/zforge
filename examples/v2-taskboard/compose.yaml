@@ -1,0 +1,32 @@
+# This is a local test environment, not the zForge agent sandbox adapter.
+x-runtime: &runtime
+  build:
+    context: .
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 64
+  mem_limit: 128m
+  cpus: 1.0
+  networks: [fixture]
+
+services:
+  api:
+    <<: *runtime
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+  checks:
+    <<: *runtime
+    environment:
+      API_URL: http://api:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    command: [sh, -ec, "python -m unittest discover -s tests -v && python -m unittest discover -s e2e -v"]
+
+networks:
+  fixture:
+    internal: true
