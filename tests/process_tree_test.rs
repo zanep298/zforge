@@ -33,13 +33,16 @@ fn assert_dies_within(pid: i32, limit: Duration) {
     }
 }
 
+fn read_pid(path: &Path) -> Option<i32> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
 fn wait_for_pid(path: &Path) -> i32 {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        if let Some(pid) = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-        {
+        if let Some(pid) = read_pid(path) {
             return pid;
         }
         assert!(Instant::now() < deadline, "{path:?} never written");
@@ -188,23 +191,38 @@ fn verify_timeout_is_bounded_and_kills_the_test_process_tree() {
     let script = write_script(scratch.path(), &grandchild_script(&pidfile, false));
     let p = Project::new(&script.display().to_string(), "Coded");
 
-    // 3s budget: enough for the script to start and record its grandchild
-    // even on a loaded CI runner, far below the grandchild's 60s.
-    let started = Instant::now();
-    let child = p.cmd(&["verify", "T1", "--timeout", "3"]).spawn().unwrap();
-    let grandchild = wait_for_pid(&pidfile);
-    let out = wait_with_limit(child, Duration::from_secs(30));
-    let elapsed = started.elapsed();
+    // On a loaded runner the timeout can fire before the script has even
+    // recorded its grandchild. Such a run proves nothing about the tree
+    // kill, so it is retried with a longer budget instead of failing — the
+    // pidfile is read only after zforge exits, never raced against it.
+    for timeout_secs in [3u64, 6, 12] {
+        let _ = std::fs::remove_file(&pidfile);
+        let started = Instant::now();
+        let child = p
+            .cmd(&["verify", "T1", "--timeout", &timeout_secs.to_string()])
+            .spawn()
+            .unwrap();
+        let out = wait_with_limit(child, Duration::from_secs(30 + timeout_secs));
+        let elapsed = started.elapsed();
 
-    assert_eq!(
-        out.status.code(),
-        Some(EXIT_TIMEOUT),
-        "a timed-out suite is a Timeout, not a Failed run: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    // timeout (3s) + KILL_GRACE (2s) + 2 x DRAIN_GRACE (1s) = 7s worst case.
-    assert!(elapsed < Duration::from_secs(9), "waited {elapsed:?}");
-    assert_dies_within(grandchild, Duration::from_secs(3));
+        assert_eq!(
+            out.status.code(),
+            Some(EXIT_TIMEOUT),
+            "a timed-out suite is a Timeout, not a Failed run: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // timeout + KILL_GRACE (2s) + 2 x DRAIN_GRACE (1s) worst case,
+        // plus 2s slack for process start-up.
+        let bound = Duration::from_secs(timeout_secs + 6);
+        assert!(elapsed < bound, "waited {elapsed:?} (bound {bound:?})");
+
+        let Some(grandchild) = read_pid(&pidfile) else {
+            continue;
+        };
+        assert_dies_within(grandchild, Duration::from_secs(3));
+        return;
+    }
+    panic!("the test script never recorded its grandchild, even with a 12s budget");
 }
 
 /// Normal exit that leaves a background process holding the pipes.
