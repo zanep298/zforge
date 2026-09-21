@@ -107,9 +107,36 @@ impl Drop for TempIndex {
     }
 }
 
+/// Variables that bind git to a particular repository, as listed by
+/// `git rev-parse --local-env-vars` (git clears the same set before it
+/// descends into a submodule). Inherited from a git hook or a user's shell
+/// they would point every call at that repository instead of `root`, so
+/// they are removed; `GIT_INDEX_FILE` is set again when a throwaway index
+/// is in use.
+const REPO_LOCAL_GIT_ENV: [&str; 15] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<Output, String> {
     let mut cmd = Command::new("git");
     cmd.args(args).current_dir(root);
+    for var in REPO_LOCAL_GIT_ENV {
+        cmd.env_remove(var);
+    }
     if let Some(idx) = index {
         cmd.env("GIT_INDEX_FILE", idx);
     }

@@ -66,10 +66,15 @@ impl Project {
     }
 
     fn zforge(&self, args: &[&str]) -> Output {
+        self.zforge_with_env(args, &[])
+    }
+
+    fn zforge_with_env(&self, args: &[&str], env: &[(&str, &std::path::Path)]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_zforge"))
             .args(args)
             .current_dir(&self.root)
             .env("ZFORGE_HOME", self.root.join(".home"))
+            .envs(env.iter().copied())
             .output()
             .unwrap()
     }
@@ -276,4 +281,37 @@ fn a_failed_report_write_leaves_the_task_unverified() {
     let out = p.zforge(&["verify", "T1"]);
     assert!(!out.status.success(), "verify must report the failed write");
     assert!(p.state().contains("state: Coded"), "{}", p.state());
+}
+
+/// zforge run from a git hook (or any shell with `GIT_DIR` / `GIT_WORK_TREE`
+/// exported for another repository) must still fingerprint the project it
+/// works on. Inheriting those variables pointed every git call at the other
+/// repository, whose tree never changes — so edits to the project went
+/// unnoticed and stale evidence was accepted.
+#[test]
+fn inherited_git_environment_does_not_redirect_the_fingerprint() {
+    let p = Project::git("sh -c 'exit 0'");
+    let other = Project::git("sh -c 'exit 0'");
+    let git_dir = other.root.join(".git");
+    let env: [(&str, &std::path::Path); 2] =
+        [("GIT_DIR", &git_dir), ("GIT_WORK_TREE", &other.root)];
+
+    let out = p.zforge_with_env(&["verify", "T1"], &env);
+    assert!(out.status.success(), "verify: {}", err(&out));
+    p.edit_code();
+    std::fs::write(
+        p.task("review-summary.md"),
+        "## Summary\nok\n\n## New approved patterns\n",
+    )
+    .unwrap();
+    let out = p.zforge_with_env(&["review", "T1", "--done"], &env);
+
+    assert!(
+        !out.status.success(),
+        "edits to the project must invalidate its evidence"
+    );
+    assert!(
+        p.state().contains("state: Verified"),
+        "review must not advance"
+    );
 }
