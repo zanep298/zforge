@@ -115,10 +115,16 @@ grep/find when exploring the codebase.
 
 | Tool | Use when |
 |------|----------|
-| `mcp__codegraph__query` | Find functions, types, modules by name or pattern |
-| `mcp__codegraph__context` | Get semantic context for a task area |
-| `mcp__codegraph__files` | Browse file structure |
-| `mcp__codegraph__affected` | Find files/tests affected by a planned change |
+| `mcp__codegraph__codegraph_context` | Get semantic context for a task area (start here) |
+| `mcp__codegraph__codegraph_search` | Find functions, types, modules by name or pattern |
+| `mcp__codegraph__codegraph_node` | Show one symbol's source, signature, docstring |
+| `mcp__codegraph__codegraph_explore` | Survey several related symbols at once |
+| `mcp__codegraph__codegraph_callers` | Find what calls a symbol |
+| `mcp__codegraph__codegraph_callees` | Find what a symbol calls |
+| `mcp__codegraph__codegraph_impact` | See what a change to a symbol would break |
+| `mcp__codegraph__codegraph_trace` | Trace the call path from X to Y |
+| `mcp__codegraph__codegraph_files` | Browse file structure |
+| `mcp__codegraph__codegraph_status` | Check index freshness and stats |
 
 Run `codegraph index` to refresh the index after large changes.
 

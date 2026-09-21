@@ -32,10 +32,11 @@ Retry instructions:
 ## Code Search
 
 When you need to locate existing code, understand call sites, or find related symbols:
-- `mcp__codegraph__query` — find functions, types, traits, modules by name or pattern
-- `mcp__codegraph__context` — get semantic context for the area you're changing
-- `mcp__codegraph__affected` — discover which tests are affected by your changes
-- `mcp__codegraph__files` — browse file structure
+- `mcp__codegraph__codegraph_context` — get semantic context for the area you're changing (start here)
+- `mcp__codegraph__codegraph_search` — find functions, types, traits, modules by name or pattern
+- `mcp__codegraph__codegraph_impact` — discover what your change would break
+- `mcp__codegraph__codegraph_callers` / `mcp__codegraph__codegraph_callees` — walk call sites
+- `mcp__codegraph__codegraph_files` — browse file structure
 
 Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
 

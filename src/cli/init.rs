@@ -57,10 +57,16 @@ const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__zforge__verify",
       "mcp__zforge__ship",
       "mcp__zforge__status",
-      "mcp__codegraph__query",
-      "mcp__codegraph__context",
-      "mcp__codegraph__files",
-      "mcp__codegraph__affected"
+      "mcp__codegraph__codegraph_search",
+      "mcp__codegraph__codegraph_context",
+      "mcp__codegraph__codegraph_files",
+      "mcp__codegraph__codegraph_node",
+      "mcp__codegraph__codegraph_explore",
+      "mcp__codegraph__codegraph_callers",
+      "mcp__codegraph__codegraph_callees",
+      "mcp__codegraph__codegraph_impact",
+      "mcp__codegraph__codegraph_trace",
+      "mcp__codegraph__codegraph_status"
     ]
   }
 }

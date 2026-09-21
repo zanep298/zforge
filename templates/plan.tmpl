@@ -54,10 +54,11 @@ reviewed: false
 ## Code Search
 
 Before planning, locate affected files and symbols:
-- `mcp__codegraph__query` — find functions, types, modules by name
-- `mcp__codegraph__context` — get semantic context for the task area
-- `mcp__codegraph__affected` — find files/tests affected by a planned change
-- `mcp__codegraph__files` — browse file structure
+- `mcp__codegraph__codegraph_context` — get semantic context for the task area (start here)
+- `mcp__codegraph__codegraph_search` — find functions, types, modules by name
+- `mcp__codegraph__codegraph_impact` — find what a planned change would break
+- `mcp__codegraph__codegraph_trace` — trace the call path between two symbols
+- `mcp__codegraph__codegraph_files` — browse file structure
 
 Prefer these over grep/find for accuracy. Fall back to Grep / Glob if the server is not registered.
 
