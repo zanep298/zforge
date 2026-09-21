@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::job::schema::JobStatus;
-use crate::job::store::{load_job, save_atomic};
+use crate::job::store::{load_job, read_launch_pid, save_atomic};
 use anyhow::Result;
 use chrono::Utc;
 
@@ -38,27 +38,64 @@ pub fn mark_cancelled(config: &Config, job_id: &str) -> Result<()> {
     save_atomic(config, &job)
 }
 
-/// Polling-side health check. If the YAML says `Running` but the recorded PID
-/// no longer exists, the worker crashed before its terminal write — flip
-/// to `Failed` so callers don't poll forever.
+/// How long a `queued` job may go without a recorded worker launch before
+/// it is considered never started. Covers the controller dying between
+/// creating the job and recording the spawn.
+pub const LAUNCH_GRACE: chrono::Duration = chrono::Duration::seconds(30);
+
+/// Polling-side health check. Flips a job whose worker is gone to `Failed`
+/// so callers don't poll forever.
+///
+/// - `running`, recorded worker pid dead → the worker crashed before its
+///   terminal write.
+/// - `queued`, launched worker pid dead → the worker exited before it could
+///   start the job (FIX-009). Previously only `running` was reconciled, so
+///   such a job stayed `queued` and `job wait` never returned.
+/// - `queued`, no launch recorded after [`LAUNCH_GRACE`] → never launched.
+///
+/// A `queued` job whose launched worker is still alive is left alone: it is
+/// a worker that is starting up normally.
 pub fn reconcile_dead_worker(config: &Config, job_id: &str) -> Result<JobStatus> {
     let job = load_job(config, job_id)?;
-    if job.status != JobStatus::Running {
-        return Ok(job.status);
+    match job.status {
+        JobStatus::Running => {
+            let Some(pid) = job.worker_pid else {
+                return Ok(job.status);
+            };
+            if pid_alive(pid) {
+                return Ok(JobStatus::Running);
+            }
+            mark_failed(
+                config,
+                job_id,
+                "worker process died without recording outcome",
+            )?;
+            Ok(JobStatus::Failed)
+        }
+        JobStatus::Queued => match read_launch_pid(config, job_id) {
+            Some(pid) if pid_alive(pid) => Ok(JobStatus::Queued),
+            Some(pid) => {
+                mark_failed(
+                    config,
+                    job_id,
+                    &format!(
+                        "worker (pid {pid}) exited before starting the job; see `zforge job log {job_id}`"
+                    ),
+                )?;
+                Ok(JobStatus::Failed)
+            }
+            None if Utc::now() - job.created_at > LAUNCH_GRACE => {
+                mark_failed(
+                    config,
+                    job_id,
+                    "no worker was launched for this job (the submitting process may have died)",
+                )?;
+                Ok(JobStatus::Failed)
+            }
+            None => Ok(JobStatus::Queued),
+        },
+        other => Ok(other),
     }
-    let pid = match job.worker_pid {
-        Some(p) => p,
-        None => return Ok(job.status),
-    };
-    if !pid_alive(pid) {
-        mark_failed(
-            config,
-            job_id,
-            "worker process died without recording outcome",
-        )?;
-        return Ok(JobStatus::Failed);
-    }
-    Ok(JobStatus::Running)
 }
 
 /// `kill(pid, 0)` returns Ok if signal could be delivered (process exists +

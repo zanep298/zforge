@@ -198,15 +198,31 @@ pub fn run_async(
     max_iterations: u32,
 ) -> Result<()> {
     let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
+    let (job, pid) = submit_job(&config, task_id, command, timeout, max_iterations)?;
+    note!("{} job {} spawned (pid {})", "▶".cyan(), job.job_id, pid);
+    note!("  poll with: zforge job status {}", job.job_id);
+    note!("  follow:    zforge job log {} --follow", job.job_id);
+    note!("  wait:      zforge job wait {}", job.job_id);
+    Ok(())
+}
+
+/// Validate, create the job record and launch its worker. Shared by the CLI
+/// (`ship --async`) and the MCP `ship_async` tool, which used to carry its
+/// own copy without the lock probe or the spawn-failure handling.
+pub(crate) fn submit_job(
+    config: &crate::config::Config,
+    task_id: &str,
+    command: Option<String>,
+    timeout: u64,
+    max_iterations: u32,
+) -> Result<(crate::job::schema::Job, u32)> {
     let tasks_dir = config.tasks_dir();
 
-    // Probe the task lock to fail fast if another worker / foreground process
-    // is already running this task. Release immediately — the spawned worker
-    // re-acquires for its own lifetime. Brief race window (microseconds) is
-    // acceptable; worker's acquire is the real guard.
+    // Fail fast if another process holds the task. Released at once — the
+    // worker takes its own lock. If something grabs the lock in between,
+    // the worker records the failure on the job instead of exiting silently.
     {
-        let _probe = crate::state::try_acquire_task_lock(&tasks_dir, task_id)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let _probe = crate::state::lock_task(&tasks_dir, task_id)?;
     }
 
     // Pre-validate everything `ship` checks synchronously so the failure
@@ -217,19 +233,33 @@ pub fn run_async(
     check_ship_gate(&ts.flow, &ts.state, task_id)?;
 
     let job = crate::job::store::create_job(
-        &config,
+        config,
         task_id,
         crate::job::schema::JobKind::Ship,
         command,
         timeout,
         max_iterations,
     )?;
-    let pid = crate::job::spawn::spawn_worker(&config, &job.job_id)?;
-    note!("{} job {} spawned (pid {})", "▶".cyan(), job.job_id, pid);
-    note!("  poll with: zforge job status {}", job.job_id);
-    note!("  follow:    zforge job log {} --follow", job.job_id);
-    note!("  wait:      zforge job wait {}", job.job_id);
-    Ok(())
+
+    // A job that never got a worker must not sit in `queued` (FIX-009).
+    let pid = match crate::job::spawn::spawn_worker(config, &job.job_id) {
+        Ok(pid) => pid,
+        Err(e) => {
+            let reason = format!("failed to start worker: {e:#}");
+            crate::job::lifecycle::mark_failed(config, &job.job_id, &reason)?;
+            return Err(e.context(format!("job {} marked failed", job.job_id)));
+        }
+    };
+    // Lets `reconcile_dead_worker` tell a worker that died before starting
+    // from one still starting up. Best-effort: without it a dead worker is
+    // still caught, after `LAUNCH_GRACE`.
+    if let Err(e) = crate::job::store::record_launch(config, &job.job_id, pid) {
+        eprintln!(
+            "warning: could not record worker pid for {}: {e:#}",
+            job.job_id
+        );
+    }
+    Ok((job, pid))
 }
 
 /// Build the code-phase prompt context and dispatch the agent. On retry

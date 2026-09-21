@@ -35,9 +35,19 @@ pub fn run(job_id: &str) -> Result<OperationOutcome> {
 
     // Per-task lock prevents two workers from racing on the same `.state.yaml`.
     // Held for the worker's entire lifetime; kernel releases on process death.
-    let task_lock = crate::state::lock_task(&config.tasks_dir(), &job.task_id)?;
-
-    mark_running(&config, job_id, std::process::id())?;
+    // From here on the job record exists, so every way this worker can fail
+    // to start is recorded on it. Before FIX-009 a worker that lost the race
+    // for the task lock exited 1 and left the job `queued` forever.
+    let task_lock = match start(&config, &job) {
+        Ok(lock) => lock,
+        Err(e) => {
+            let reason = format!("worker could not start: {e:#}");
+            if let Err(write_err) = mark_failed(&config, job_id, &reason) {
+                eprintln!("{reason}\n(also failed to record it on the job: {write_err:#})");
+            }
+            return Err(e);
+        }
+    };
 
     let caught =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(&job, &task_lock)));
@@ -66,6 +76,16 @@ pub fn run(job_id: &str) -> Result<OperationOutcome> {
     }
 
     result
+}
+
+/// Take the task lock and mark the job running.
+fn start(
+    config: &crate::config::Config,
+    job: &crate::job::schema::Job,
+) -> Result<crate::state::TaskLockGuard> {
+    let lock = crate::state::lock_task(&config.tasks_dir(), &job.task_id)?;
+    mark_running(config, &job.job_id, std::process::id())?;
+    Ok(lock)
 }
 
 /// The worker owns the task lock for its lifetime and hands the guard to the

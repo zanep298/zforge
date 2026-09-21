@@ -505,20 +505,8 @@ fn tool_ship_async(args: &Value) -> Result<String> {
         .unwrap_or(1);
 
     let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
-    let tasks_dir = config.tasks_dir();
-    let ts = TaskState::load(&tasks_dir, task_id)
-        .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
-    crate::cli::ship::check_ship_gate(&ts.flow, &ts.state, task_id)?;
-
-    let job = crate::job::store::create_job(
-        &config,
-        task_id,
-        crate::job::schema::JobKind::Ship,
-        command,
-        timeout,
-        max_iterations,
-    )?;
-    let pid = crate::job::spawn::spawn_worker(&config, &job.job_id)?;
+    let (job, pid) =
+        crate::cli::ship::submit_job(&config, task_id, command, timeout, max_iterations)?;
     Ok(format!(
         "Job {} spawned (pid {}). Poll: job_status(job_id=\"{}\"); block: job_wait(job_id=\"{}\").",
         job.job_id, pid, job.job_id, job.job_id

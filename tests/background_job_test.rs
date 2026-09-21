@@ -411,3 +411,197 @@ fn log_file_exists_after_job_created() {
     let log = job_log_path(&config, &job.job_id);
     assert!(log.exists(), "log file should be pre-created");
 }
+
+// ─── FIX-009: startup failures are observable on the job ─────────────────────
+
+/// Project with T1 ready to ship, cwd inside it, fake agent registered.
+struct ShipFixture {
+    _home: TestHome,
+    _cwd: CwdGuard,
+    _cfg_dir: tempfile::TempDir,
+    project: tempfile::TempDir,
+}
+
+impl ShipFixture {
+    fn new() -> Self {
+        ensure_fake_agent_built();
+        set_worker_binary();
+        let home = TestHome::new();
+        let project = tempfile::tempdir().unwrap();
+        make_project(project.path());
+        write_min_agents_dir(project.path());
+        write_config(project.path(), "sh -c 'true'");
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let agent_cfg = write_fake_config(cfg_dir.path(), "primary", &json!({"exit_code": 0}));
+        seed_registry_with_fake_agent(&[agent_cfg.to_str().unwrap()]);
+        let cwd = CwdGuard::enter(project.path());
+        make_task_ready_to_ship(project.path(), "T1");
+        Self {
+            _home: home,
+            _cwd: cwd,
+            _cfg_dir: cfg_dir,
+            project,
+        }
+    }
+
+    fn config(&self) -> zforge::config::Config {
+        zforge::config::load_from(&self.project.path().join(".zforge/config.yaml")).unwrap()
+    }
+
+    fn create_job(&self) -> String {
+        zforge::job::store::create_job(
+            &self.config(),
+            "T1",
+            zforge::job::schema::JobKind::Ship,
+            None,
+            60,
+            1,
+        )
+        .unwrap()
+        .job_id
+    }
+}
+
+/// The backlog repro: the worker loses the race for the task lock. It used
+/// to exit 1 and leave the job `queued`, so `job wait` never returned.
+#[test]
+#[serial]
+fn worker_that_cannot_take_the_task_lock_fails_the_job() {
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    let _holder = zforge::state::try_acquire_task_lock(&config.tasks_dir(), "T1").unwrap();
+
+    let pid = zforge::job::spawn::spawn_worker(&config, &job_id).unwrap();
+    zforge::job::store::record_launch(&config, &job_id, pid).unwrap();
+
+    let status = wait_terminal(fx.project.path(), &job_id, Duration::from_secs(20));
+    assert_eq!(status, JobStatus::Failed);
+    let err = load_job(&config, &job_id)
+        .unwrap()
+        .error
+        .unwrap_or_default();
+    assert!(
+        err.contains("could not start") && err.contains("locked"),
+        "the job must say why it never ran: {err:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn failure_to_spawn_the_worker_fails_the_job() {
+    let fx = ShipFixture::new();
+    std::env::set_var("ZFORGE_WORKER_BIN", "/nonexistent/zforge-worker");
+    let result = zforge::cli::ship::run_async("T1", None, 60, 1);
+    set_worker_binary();
+
+    assert!(result.is_err(), "submitting must report the spawn failure");
+    let jobs = zforge::job::store::list_jobs(&fx.config()).unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, JobStatus::Failed, "not left queued");
+    assert!(jobs[0]
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("failed to start worker"));
+}
+
+/// A launched worker that died before marking the job running.
+#[test]
+#[serial]
+fn queued_job_whose_worker_died_is_reconciled_to_failed() {
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    let dead_pid = gone.id();
+    gone.wait().unwrap();
+    zforge::job::store::record_launch(&config, &job_id, dead_pid).unwrap();
+
+    assert_eq!(
+        reconcile_dead_worker(&config, &job_id).unwrap(),
+        JobStatus::Failed
+    );
+    let err = load_job(&config, &job_id)
+        .unwrap()
+        .error
+        .unwrap_or_default();
+    assert!(err.contains("exited before starting"), "{err:?}");
+}
+
+/// Recovery must not kill a worker that is still starting up.
+#[test]
+#[serial]
+fn queued_job_with_a_live_worker_is_left_alone() {
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    zforge::job::store::record_launch(&config, &job_id, std::process::id()).unwrap();
+
+    assert_eq!(
+        reconcile_dead_worker(&config, &job_id).unwrap(),
+        JobStatus::Queued
+    );
+    // A job just created, with no launch recorded yet, is also left alone.
+    let fresh = fx.create_job();
+    assert_eq!(
+        reconcile_dead_worker(&config, &fresh).unwrap(),
+        JobStatus::Queued
+    );
+}
+
+/// The submitter died between creating the job and launching a worker.
+#[test]
+#[serial]
+fn queued_job_never_launched_fails_after_the_grace() {
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    let mut job = load_job(&config, &job_id).unwrap();
+    job.created_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    zforge::job::store::save_atomic(&config, &job).unwrap();
+
+    assert_eq!(
+        reconcile_dead_worker(&config, &job_id).unwrap(),
+        JobStatus::Failed
+    );
+    assert!(load_job(&config, &job_id)
+        .unwrap()
+        .error
+        .unwrap_or_default()
+        .contains("no worker was launched"));
+}
+
+/// `job wait` returns (non-zero) instead of polling a dead queued job until
+/// its timeout.
+#[test]
+#[serial]
+fn job_wait_returns_for_a_queued_job_whose_worker_died() {
+    let fx = ShipFixture::new();
+    let config = fx.config();
+    let job_id = fx.create_job();
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    let dead_pid = gone.id();
+    gone.wait().unwrap();
+    zforge::job::store::record_launch(&config, &job_id, dead_pid).unwrap();
+
+    let started = Instant::now();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_zforge"))
+        .args([
+            "job",
+            "wait",
+            &job_id,
+            "--timeout",
+            "20",
+            "--poll-ms",
+            "100",
+        ])
+        .current_dir(fx.project.path())
+        .output()
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "job wait kept polling"
+    );
+    assert_eq!(out.status.code(), Some(1), "failed job → exit 1");
+}

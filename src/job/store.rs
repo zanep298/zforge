@@ -22,6 +22,28 @@ pub fn job_log_path(config: &Config, job_id: &str) -> PathBuf {
     job_dir(config, job_id).join("log")
 }
 
+/// PID of the worker process the controller launched. Written by the
+/// controller only, in its own file, so it never races the worker's
+/// writes to `job.yaml` (FIX-009).
+pub fn launch_pid_path(config: &Config, job_id: &str) -> PathBuf {
+    job_dir(config, job_id).join("launch.pid")
+}
+
+pub fn record_launch(config: &Config, job_id: &str, pid: u32) -> Result<()> {
+    crate::state::write_atomic(
+        &launch_pid_path(config, job_id),
+        format!("{pid}\n").as_bytes(),
+    )
+}
+
+pub fn read_launch_pid(config: &Config, job_id: &str) -> Option<u32> {
+    std::fs::read_to_string(launch_pid_path(config, job_id))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
 /// `J-YYYYMMDD-HHMMSS-XXXX` — chronological + collision-resistant within
 /// the same second. The 4-char suffix is from the lower bits of a monotonic
 /// counter seeded by the wall clock; avoids `rand` crate.

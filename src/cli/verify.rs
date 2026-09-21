@@ -153,73 +153,17 @@ fn verify_under_lock(
         }
     }
 
-    // Write verify.md
-    let coverage_str = result
-        .coverage
-        .map(|c| format!("{:.1}", c))
-        .unwrap_or_else(|| "null".to_string());
-    let verify_content = format!(
-        r#"---
-id: "{}"
-type: verify
-passed: {}
-total_tests: {}
-passed_tests: {}
-failed_tests: {}
-coverage: {}
-duration_seconds: {:.2}
-ran_at: "{}"
-command: "{}"
----
-
-## Test Results
-
-### Summary
-{} — {}/{} passed — {:.2}s
-
-### Failed Tests
-{}
-
-### Raw Output
-```
-{}
-```
-"#,
+    let report = VerifyReport {
         task_id,
-        result.passed,
-        result.total_tests,
-        result.passed_tests,
-        result.failed_tests,
-        coverage_str,
-        duration_secs,
-        Local::now().to_rfc3339(),
-        cmd,
-        if result.passed { "PASS" } else { "FAIL" },
-        result.passed_tests,
-        result.total_tests,
-        duration_secs,
-        result
-            .failed_names
-            .iter()
-            .map(|n| format!("- {}", n))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        result.raw_output
-    );
-
+        command: &cmd,
+        result: &result,
+        ran_at: Local::now().to_rfc3339(),
+    }
+    .render()?;
     let verify_path = tasks_dir.join(task_id).join("verify.md");
-    writer::write_file(&verify_path, &verify_content)?;
-    let verify_tokens = tokens::estimate(&verify_content);
-    writer::set_frontmatter(
-        &verify_path,
-        "tokens",
-        serde_yaml::Value::Number(verify_tokens.into()),
-    )?;
-    writer::set_frontmatter(
-        &verify_path,
-        "model",
-        serde_yaml::Value::String("runner".to_string()),
-    )?;
+    writer::write_file(&verify_path, &report.content)?;
+    let verify_content = report.content;
+    let verify_tokens = report.tokens;
     note!();
     note!(
         "Verify report: tasks/{}/verify.md  ({} tokens)",
@@ -254,6 +198,96 @@ command: "{}"
         failed_names: result.failed_names,
         timed_out: result.timed_out,
     })
+}
+
+/// `verify.md`: YAML frontmatter with the result, then a readable report.
+///
+/// The frontmatter used to be assembled with `format!`, splicing the test
+/// command between double quotes. A command containing a quote —
+/// `/bin/sh -c "exit 0"` — produced invalid YAML: the report was written,
+/// then the frontmatter update that followed failed to parse it, and the
+/// task never advanced even though the suite passed (FIX-010). Values are
+/// now serialized, so any command, including backslashes and newlines,
+/// round-trips exactly.
+struct VerifyReport<'a> {
+    task_id: &'a str,
+    command: &'a str,
+    result: &'a runner::TestResult,
+    ran_at: String,
+}
+
+struct RenderedReport {
+    content: String,
+    tokens: usize,
+}
+
+impl VerifyReport<'_> {
+    fn render(&self) -> Result<RenderedReport> {
+        let r = self.result;
+        let duration_secs = r.duration.as_secs_f64();
+        let mut fm = indexmap::IndexMap::<&str, serde_yaml::Value>::new();
+        fm.insert("id", self.task_id.into());
+        fm.insert("type", "verify".into());
+        fm.insert("passed", r.passed.into());
+        fm.insert("total_tests", (r.total_tests as u64).into());
+        fm.insert("passed_tests", (r.passed_tests as u64).into());
+        fm.insert("failed_tests", (r.failed_tests as u64).into());
+        fm.insert(
+            "coverage",
+            r.coverage
+                .map(|c| ((c * 10.0).round() / 10.0).into())
+                .unwrap_or(serde_yaml::Value::Null),
+        );
+        fm.insert(
+            "duration_seconds",
+            ((duration_secs * 100.0).round() / 100.0).into(),
+        );
+        fm.insert("ran_at", self.ran_at.clone().into());
+        fm.insert("command", self.command.into());
+        if r.timed_out {
+            fm.insert("timed_out", true.into());
+        }
+
+        let failed = r
+            .failed_names
+            .iter()
+            .map(|n| format!("- {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fence = code_fence_for(&r.raw_output);
+        let body = format!(
+            "## Test Results\n\n### Summary\n{} — {}/{} passed — {:.2}s\n\n\
+             ### Failed Tests\n{}\n\n### Raw Output\n{fence}\n{}\n{fence}\n",
+            if r.passed { "PASS" } else { "FAIL" },
+            r.passed_tests,
+            r.total_tests,
+            duration_secs,
+            failed,
+            r.raw_output.trim_end_matches('\n'),
+        );
+
+        // Token count is measured on the report without its own metadata.
+        let draft = assemble(&fm, &body)?;
+        let tokens = tokens::estimate(&draft);
+        fm.insert("tokens", (tokens as u64).into());
+        fm.insert("model", "runner".into());
+        Ok(RenderedReport {
+            content: assemble(&fm, &body)?,
+            tokens,
+        })
+    }
+}
+
+fn assemble(fm: &indexmap::IndexMap<&str, serde_yaml::Value>, body: &str) -> Result<String> {
+    let yaml = serde_yaml::to_string(fm)?;
+    Ok(format!("---\n{yaml}---\n\n{body}"))
+}
+
+/// A Markdown fence longer than any backtick run in `text`, so test output
+/// containing ``` cannot close the block early.
+fn code_fence_for(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    "`".repeat(longest.max(2) + 1)
 }
 
 /// A passing run either advances `Coded → Verified` for the first time, or
@@ -326,7 +360,97 @@ fn ensure_command_binary_matches(configured: &str, override_cmd: &str) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_command_binary_matches;
+    use super::{code_fence_for, ensure_command_binary_matches, VerifyReport};
+    use crate::fs::reader::MarkdownFile;
+    use crate::runner::TestResult;
+    use std::time::Duration;
+
+    fn result(passed: bool, raw: &str) -> TestResult {
+        TestResult {
+            passed,
+            total_tests: 3,
+            passed_tests: if passed { 3 } else { 2 },
+            failed_tests: if passed { 0 } else { 1 },
+            failed_names: if passed { vec![] } else { vec!["m::t".into()] },
+            coverage: Some(81.25),
+            duration: Duration::from_millis(1234),
+            raw_output: raw.into(),
+            error: None,
+            timed_out: false,
+        }
+    }
+
+    fn render_and_parse(command: &str, r: &TestResult) -> (String, MarkdownFile) {
+        let rendered = VerifyReport {
+            task_id: "T-1",
+            command,
+            result: r,
+            ran_at: "2026-01-01T00:00:00+00:00".into(),
+        }
+        .render()
+        .unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("verify.md");
+        std::fs::write(&path, &rendered.content).unwrap();
+        (
+            rendered.content,
+            MarkdownFile::read(&path).expect("report must parse"),
+        )
+    }
+
+    // FIX-010: the backlog repro and every character that broke the old
+    // hand-built YAML must round-trip exactly.
+    #[test]
+    fn commands_with_quotes_backslashes_and_newlines_round_trip() {
+        for cmd in [
+            r#"/bin/sh -c "exit 0""#,
+            r#"sh -c 'echo "a\b"'"#,
+            "sh -c 'echo one\necho two'",
+            "cargo test -- --test-threads=1: #not-a-comment",
+        ] {
+            let (_, md) = render_and_parse(cmd, &result(true, "ok"));
+            assert_eq!(md.get_str("command"), Some(cmd), "command {cmd:?}");
+            assert!(md.get_bool("passed"));
+        }
+    }
+
+    #[test]
+    fn frontmatter_carries_the_result() {
+        let (_, md) = render_and_parse("cargo test", &result(false, "boom"));
+        assert!(!md.get_bool("passed"));
+        assert_eq!(md.get_str("id"), Some("T-1"));
+        assert_eq!(md.get_str("model"), Some("runner"));
+        assert!(md.frontmatter["tokens"].as_u64().unwrap() > 0);
+        assert_eq!(md.frontmatter["failed_tests"].as_u64(), Some(1));
+        assert_eq!(md.frontmatter["coverage"].as_f64(), Some(81.3));
+    }
+
+    // Raw output is kept verbatim, even when it contains a fence or a line
+    // that looks like a frontmatter delimiter.
+    #[test]
+    fn raw_output_with_fences_and_dashes_is_preserved() {
+        let raw = "line 1\n---\n```rust\nfn x() {}\n```\nlast";
+        let (content, md) = render_and_parse("cargo test", &result(true, raw));
+        assert!(
+            md.get_bool("passed"),
+            "--- in output must not end the frontmatter"
+        );
+        assert!(
+            md.body.contains(raw),
+            "raw output not preserved:\n{content}"
+        );
+        assert!(
+            content.contains("````\nline 1"),
+            "fence must outgrow the output's ```"
+        );
+    }
+
+    #[test]
+    fn fence_is_longer_than_any_backtick_run() {
+        assert_eq!(code_fence_for("plain"), "```");
+        assert_eq!(code_fence_for("a ``` b"), "````");
+        assert_eq!(code_fence_for("`````"), "``````");
+    }
 
     #[test]
     fn allows_argument_overrides_with_matching_binary() {

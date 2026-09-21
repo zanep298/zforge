@@ -24,7 +24,7 @@ fn write_config(root: &Path, test_command: &str) {
             r#"project:
   name: "test"
   language: "shell"
-  test_command: "{test_command}"
+  test_command: "{cmd}"
   root_dir: "."
 opencode:
   model: "claude-sonnet-4-6"
@@ -36,7 +36,8 @@ paths:
   skills: "./.zforge/skills"
 review:
   auto_approve: false
-"#
+"#,
+            cmd = test_command.replace('\\', "\\\\").replace('"', "\\\""),
         ),
     )
     .unwrap();
@@ -173,4 +174,36 @@ fn unknown_task_exits_nonzero() {
         Some(EXIT_FAILED),
         "an operation that cannot run at all must not exit 0"
     );
+}
+
+/// FIX-010 backlog repro: a passing suite whose command contains double
+/// quotes. The hand-built frontmatter broke on the quote, the report
+/// failed to parse, and the task never reached Verified.
+#[test]
+fn verify_with_a_quoted_command_passes_and_advances() {
+    let project = tempfile::tempdir().unwrap();
+    scaffold(project.path(), r#"/bin/sh -c "exit 0""#, "Coded");
+
+    let out = run(project.path(), &["verify", "T1"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let state =
+        std::fs::read_to_string(project.path().join(".zforge/tasks/T1/.state.yaml")).unwrap();
+    assert!(state.contains("state: Verified"), "{state}");
+
+    let report =
+        std::fs::read_to_string(project.path().join(".zforge/tasks/T1/verify.md")).unwrap();
+    let fm = report
+        .split("\n---\n")
+        .next()
+        .unwrap()
+        .trim_start_matches("---\n");
+    let parsed: serde_yaml::Value = serde_yaml::from_str(fm).expect("frontmatter must parse");
+    assert_eq!(parsed["command"].as_str(), Some(r#"/bin/sh -c "exit 0""#));
+    assert_eq!(parsed["passed"].as_bool(), Some(true));
 }
