@@ -30,7 +30,7 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     ts.require(State::Verified)?;
 
     if done {
-        ensure_verify_evidence_passes(&tasks_dir, task_id)?;
+        ensure_verify_evidence_passes(&config, &tasks_dir, task_id)?;
 
         if !reader::artifact_exists(&tasks_dir, task_id, "review-summary.md") {
             anyhow::bail!(
@@ -77,34 +77,40 @@ pub fn run(task_id: &str, done: bool) -> Result<()> {
     Ok(())
 }
 
-/// Refuse to sign off a review whose supporting verification is not green.
+/// Sign off only on evidence that still describes the task.
 ///
-/// `ts.require(State::Verified)` only asks what the state file is *called*.
-/// `verify` now withdraws `Verified` when a re-run fails, so the two agree in
-/// the normal case — but this re-reads the artifact the reviewer is actually
-/// vouching for, so a `verify.md` that says `passed: false` blocks sign-off
-/// even if the state file were edited by hand or left stale by an older
-/// zforge.
+/// Required: the latest verification passed (FIX-002), it ran the
+/// configured test command, and it verified the code that is on disk now
+/// (IMP-002). The last two are new: previously a green `verify.md` from an
+/// earlier revision of the code — or from a narrowed `--command` — was
+/// accepted as proof for whatever was being reviewed.
 ///
-/// Limitation: this checks the *content* of `verify.md`, not that it was
-/// produced from the tree under review. Binding evidence to a specific
-/// candidate is IMP-002 and is not implemented here — a review can still be
-/// signed off against a green report from an earlier revision of the code.
-fn ensure_verify_evidence_passes(tasks_dir: &std::path::Path, task_id: &str) -> Result<()> {
+/// Outside a git repository the code cannot be fingerprinted. That is
+/// reported, and the review proceeds on the other two checks.
+fn ensure_verify_evidence_passes(
+    config: &crate::config::Config,
+    tasks_dir: &std::path::Path,
+    task_id: &str,
+) -> Result<()> {
     let verify_path = tasks_dir.join(task_id).join("verify.md");
-    let Ok(verify_md) = reader::MarkdownFile::read(&verify_path) else {
-        anyhow::bail!(
-            "verify.md not found or unreadable for {task_id}. Run: zf verify {task_id} before review --done."
-        );
-    };
-
-    if !verify_md.get_bool("passed") {
-        anyhow::bail!(
-            "verify.md for {task_id} records passed: false — review cannot be completed over a \
-             failing test suite. Fix the failures and re-run: zf verify {task_id}"
-        );
+    match crate::evidence::current_status(
+        &verify_path,
+        &config.project_root(),
+        &config.project.test_command,
+    ) {
+        crate::evidence::EvidenceStatus::Current => Ok(()),
+        crate::evidence::EvidenceStatus::Unbound { reason } => {
+            eprintln!(
+                "{} verification is not tied to a code revision ({reason}); \
+                 reviewing on the report alone",
+                "⚠".yellow()
+            );
+            Ok(())
+        }
+        crate::evidence::EvidenceStatus::Invalid { reason } => {
+            anyhow::bail!("cannot complete review of {task_id}: {reason}. Run: zf verify {task_id}")
+        }
     }
-    Ok(())
 }
 
 fn extract_and_update_memory(

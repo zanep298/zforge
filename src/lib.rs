@@ -3,6 +3,7 @@ pub mod config;
 pub mod cost;
 pub mod embedded;
 pub mod error;
+pub mod evidence;
 pub mod fs;
 pub mod jira;
 pub mod job;

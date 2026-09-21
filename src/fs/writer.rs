@@ -89,12 +89,14 @@ fn extract_pattern_key(line: &str) -> String {
     }
 }
 
+/// Write an artifact atomically (temp file + fsync + rename): a crash
+/// leaves the previous version or the new one, never a truncated file that
+/// a later read would take as the whole report.
 pub fn write_file(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, content)?;
-    Ok(())
+    crate::state::write_atomic(path, content.as_bytes())
 }
 
 #[cfg(test)]

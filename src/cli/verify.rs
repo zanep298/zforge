@@ -127,7 +127,17 @@ fn verify_under_lock(
 
     note!("{} Running: {}", "🧪".bold(), cmd);
 
+    // IMP-002: record which code this run verified. Taken before and after;
+    // the evidence is bound to the tree as it stands after the run — the one
+    // a later review sees, including any files the suite itself generates.
+    let project_root = config.project_root();
+    let before = crate::evidence::fingerprint(&project_root);
     let result = runner::run_with_language(&cmd, &work_dir, timeout, &config.project.language)?;
+    let candidate = crate::evidence::fingerprint(&project_root);
+    let candidate_note = candidate_note(&before, &candidate);
+    if let Some(note) = &candidate_note {
+        eprintln!("{} {note}", "⚠".yellow());
+    }
 
     let duration_secs = result.duration.as_secs_f64();
 
@@ -153,15 +163,32 @@ fn verify_under_lock(
         }
     }
 
+    let ran_at = Local::now().to_rfc3339();
     let report = VerifyReport {
         task_id,
         command: &cmd,
         result: &result,
-        ran_at: Local::now().to_rfc3339(),
+        ran_at: ran_at.clone(),
+        candidate: &candidate,
+        candidate_note: candidate_note.as_deref(),
     }
     .render()?;
+    // Evidence first, state after: a crash in between leaves a report the
+    // state does not yet claim, never a Verified state without its report.
     let verify_path = tasks_dir.join(task_id).join("verify.md");
     writer::write_file(&verify_path, &report.content)?;
+    let record = crate::evidence::history::VerifyRecord {
+        ran_at,
+        passed: result.passed,
+        timed_out: result.timed_out,
+        total_tests: result.total_tests,
+        failed_tests: result.failed_tests,
+        command: cmd.clone(),
+        candidate: candidate.hash().map(str::to_string),
+    };
+    if let Err(e) = crate::evidence::history::append(&tasks_dir, task_id, &record) {
+        eprintln!("warning: could not append to verify history: {e:#}");
+    }
     let verify_content = report.content;
     let verify_tokens = report.tokens;
     note!();
@@ -214,6 +241,9 @@ struct VerifyReport<'a> {
     command: &'a str,
     result: &'a runner::TestResult,
     ran_at: String,
+    /// The code this run verified (IMP-002).
+    candidate: &'a crate::evidence::Candidate,
+    candidate_note: Option<&'a str>,
 }
 
 struct RenderedReport {
@@ -244,6 +274,23 @@ impl VerifyReport<'_> {
         );
         fm.insert("ran_at", self.ran_at.clone().into());
         fm.insert("command", self.command.into());
+        fm.insert(
+            crate::evidence::CANDIDATE_KEY,
+            self.candidate
+                .hash()
+                .map(Into::into)
+                .unwrap_or(serde_yaml::Value::Null),
+        );
+        let note = match (self.candidate_note, self.candidate) {
+            (Some(n), _) => Some(n.to_string()),
+            (None, crate::evidence::Candidate::Unavailable(why)) => {
+                Some(format!("evidence not bound to code: {why}"))
+            }
+            _ => None,
+        };
+        if let Some(n) = note {
+            fm.insert(crate::evidence::CANDIDATE_NOTE_KEY, n.into());
+        }
         if r.timed_out {
             fm.insert("timed_out", true.into());
         }
@@ -275,6 +322,23 @@ impl VerifyReport<'_> {
             content: assemble(&fm, &body)?,
             tokens,
         })
+    }
+}
+
+/// Warn when files changed while the suite ran: the evidence is bound to
+/// the tree after the run, which may not be the code the tests started on.
+fn candidate_note(
+    before: &crate::evidence::Candidate,
+    after: &crate::evidence::Candidate,
+) -> Option<String> {
+    match (before.hash(), after.hash()) {
+        (Some(b), Some(a)) if a != b => Some(format!(
+            "files changed while the suite ran (before {}, after {}); evidence is bound \
+             to the tree after the run",
+            &b[..b.len().min(12)],
+            &a[..a.len().min(12)]
+        )),
+        _ => None,
     }
 }
 
@@ -381,11 +445,14 @@ mod tests {
     }
 
     fn render_and_parse(command: &str, r: &TestResult) -> (String, MarkdownFile) {
+        let candidate = crate::evidence::Candidate::Git("abc123".into());
         let rendered = VerifyReport {
             task_id: "T-1",
             command,
             result: r,
             ran_at: "2026-01-01T00:00:00+00:00".into(),
+            candidate: &candidate,
+            candidate_note: None,
         }
         .render()
         .unwrap();
