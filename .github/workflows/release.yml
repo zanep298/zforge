@@ -12,8 +12,16 @@ permissions:
   contents: write
 
 jobs:
+  # Tag pushes don't trigger ci.yml on their own, and the tagged commit may
+  # never have been through a PR. Re-run the full gate here so a release
+  # cannot publish binaries from a tree with failing tests.
+  ci:
+    name: CI gate
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build ${{ matrix.target }}
+    needs: ci
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -81,7 +89,7 @@ jobs:
           merge-multiple: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true

@@ -1,0 +1,76 @@
+name: CI
+
+# Runs on every PR and push to main, and is also called by release.yml so a
+# tag cannot publish binaries from a tree whose tests fail.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The suite shells out to bash/sh and relies on flock and process
+        # groups, so it runs on the Unix targets zforge is released for.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Real-agent tests (real_claude_test, real_codex_test,
+      # real_fallback_e2e_test) return early unless ZFORGE_TEST_REAL_* is
+      # set. They are not enabled here: a green run does not prove
+      # compatibility with the real claude/codex CLIs.
+      - name: cargo test
+        run: cargo test --locked --all-targets
+
+  build-windows:
+    name: build (windows)
+    # A Windows binary is published on release but the test suite is
+    # Unix-only; this at least catches compile breakage before tagging.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --locked
