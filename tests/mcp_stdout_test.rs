@@ -222,3 +222,48 @@ fn failing_verify_returns_a_framed_tool_error() {
         "a failing test suite must surface as a tool error, got: {frame}"
     );
 }
+
+/// FIX-011 over MCP: the orchestrating LLM has written the docs change and
+/// calls `ship`. The docs flow has no verify step, so ship ends at Coded
+/// instead of failing on a phase the flow does not have.
+#[test]
+fn mcp_ship_on_docs_flow_ends_at_coded() {
+    let project = tempfile::tempdir().unwrap();
+    scaffold_project(project.path());
+    std::fs::write(
+        project.path().join(".zforge/tasks/T1/.state.yaml"),
+        r#"task_id: T1
+flow: Docs
+state: Imported
+updated_at: "2026-01-01T00:00:00+00:00"
+history:
+  - state: Imported
+    at: "2026-01-01T00:00:00+00:00"
+    note: ""
+"#,
+    )
+    .unwrap();
+
+    let ship = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "ship", "arguments": { "task_id": "T1" } }
+    });
+    let (stdout, _stderr) = run_mcp_session(project.path(), &[ship]);
+    let frames = assert_every_stdout_line_is_json(&stdout);
+    let frame = &frames[0];
+    assert_eq!(
+        frame.pointer("/result/isError").and_then(|v| v.as_bool()),
+        Some(false),
+        "ship on docs must succeed: {frame}"
+    );
+    let text = frame
+        .pointer("/result/content/0/text")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert!(text.contains("no verify step"), "{text}");
+
+    let state =
+        std::fs::read_to_string(project.path().join(".zforge/tasks/T1/.state.yaml")).unwrap();
+    assert!(state.contains("state: Coded"), "{state}");
+    assert!(!project.path().join(".zforge/tasks/T1/verify.md").exists());
+}

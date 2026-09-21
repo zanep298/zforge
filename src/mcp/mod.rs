@@ -352,6 +352,15 @@ fn tool_ship(args: &Value) -> Result<String> {
             .map_err(|_| anyhow::anyhow!("task {task_id} not found"))?;
         check_ship_gate_for_mcp(&ts, task_id)?;
         crate::cli::ship::ensure_coded_state(&mut ts, &tasks_dir, "code phase complete (ship)")?;
+        // Same contract as the CLI (FIX-011): a flow without a verify step
+        // is complete once the code is in.
+        if !ts.flow.contains(&State::Verified) {
+            return Ok(format!(
+                "Ship complete for task {task_id}: the {} flow has no verify step, so it ends \
+                 at Coded. Pipeline complete.",
+                ts.flow.as_str()
+            ));
+        }
         let outcome =
             crate::cli::verify::run_with_outcome_locked(task_id, command, timeout, Some(&guard))?;
         if !outcome.passed {

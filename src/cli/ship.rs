@@ -4,6 +4,7 @@ use crate::cli::flow_guard;
 use crate::cli::outcome::OperationOutcome;
 use crate::config;
 use crate::note;
+use crate::orchestrator::Start;
 use crate::prompt::{build_context_for_phase, PromptPhase};
 use crate::state::{dispatch_command, with_task_lock, Flow, State, TaskLockGuard, TaskState};
 use anyhow::Result;
@@ -103,29 +104,43 @@ pub fn run_locked(
         return Ok(OperationOutcome::blocked(e.to_string()));
     }
 
-    if ts.state >= State::Coded {
-        // Code already done in a prior session — just verify (idempotent path).
+    let max_iter = max_iterations.max(1);
+
+    // FIX-011: flows without a verify step (docs, spike) end at `Coded`.
+    // `ship` used to dispatch the code agent, advance to `Coded`, and only
+    // then fail on the verify phase the flow does not have.
+    if !ts.flow.contains(&State::Verified) {
+        return ship_without_verify(&config, &ts, task_id, max_iter, guard);
+    }
+
+    // FIX-008: a task already at `Coded` or later resumes by verifying the
+    // existing code first. It used to verify once and stop, whatever
+    // `--max-iterations` said.
+    let resuming = ts.state >= State::Coded;
+    if resuming {
         note!(
-            "{} State already {}, skipping code phase",
+            "{} State already {}, verifying the existing code first",
             "ℹ".blue(),
             ts.state.as_str()
         );
-        return cli::verify::run_locked(task_id, command, timeout, Some(guard));
     }
 
-    let max_iter = max_iterations.max(1);
     if max_iter == 1 {
-        // Single-shot ship: code → verify, no self-fix loop. The verify
-        // outcome is the ship outcome — a red suite means ship failed.
-        run_code_phase(&config, &ts, task_id, None, 1, 1, guard)?;
-        advance_to_coded_after_dispatch(&tasks_dir, task_id)?;
+        // Single-shot: (code →) verify. The verify outcome is the ship
+        // outcome — a red suite means ship failed.
+        if !resuming {
+            run_code_phase(&config, &ts, task_id, None, 1, 1, guard)?;
+            advance_to_coded_after_dispatch(&tasks_dir, task_id)?;
+        }
         return cli::verify::run_locked(task_id, command, timeout, Some(guard));
     }
 
-    // Verifier-driven loop. Hand control to the orchestrator-level iterate()
-    // helper so the same plumbing is unit-tested in isolation.
-    let outcome = crate::orchestrator::iterate(
+    // Verifier-driven loop, budget counted in verifier runs. Hand control to
+    // the orchestrator-level helper so the plumbing is unit-tested alone.
+    let start = if resuming { Start::Verify } else { Start::Code };
+    let outcome = crate::orchestrator::iterate_from(
         max_iter,
+        start,
         |attempt, prev_failure| {
             // Reload each attempt: the previous attempt's dispatch may have
             // swapped `active_agent`, and the prompt should use it.
@@ -162,6 +177,39 @@ pub fn run_locked(
             outcome.iterations
         );
     }
+    Ok(OperationOutcome::Success)
+}
+
+/// `ship` for a flow whose last state is `Coded`: dispatch the code agent
+/// (unless the code phase is already done) and stop. There is no test gate
+/// to run, so reaching `Coded` completes the flow.
+fn ship_without_verify(
+    config: &crate::config::Config,
+    ts: &TaskState,
+    task_id: &str,
+    max_iter: u32,
+    guard: &TaskLockGuard,
+) -> Result<OperationOutcome> {
+    let flow = ts.flow.as_str();
+    if max_iter > 1 {
+        note!(
+            "{} --max-iterations {max_iter} ignored: the {flow} flow has no verify step to loop on",
+            "ℹ".blue()
+        );
+    }
+    if ts.state >= State::Coded {
+        note!(
+            "{} Task already Coded — the {flow} flow is complete; nothing to ship",
+            "✓".green()
+        );
+        return Ok(OperationOutcome::Success);
+    }
+    run_code_phase(config, ts, task_id, None, 1, 1, guard)?;
+    advance_to_coded_after_dispatch(&config.tasks_dir(), task_id)?;
+    note!(
+        "{} The {flow} flow has no verify step — ship ends at Coded. Task complete.",
+        "✓".green()
+    );
     Ok(OperationOutcome::Success)
 }
 

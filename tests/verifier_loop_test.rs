@@ -380,3 +380,237 @@ fn ship_reports_blocked_when_gate_refuses() {
         "a blocked ship must not move the FSM"
     );
 }
+
+// ─── FIX-008: resuming at Coded uses the verifier budget ────────────────────
+
+/// Task in `flow`, walked to `state`, with the artifacts phases expect.
+fn make_task_at(project: &Path, task_id: &str, flow: Flow, state: State) {
+    let tasks_dir = project.join(".zforge/tasks");
+    std::fs::create_dir_all(tasks_dir.join(task_id)).unwrap();
+    for name in ["task.md", "spec.md", "testspec.md", "plan.md"] {
+        std::fs::write(
+            tasks_dir.join(task_id).join(name),
+            format!("# {name}\nstub\n"),
+        )
+        .unwrap();
+    }
+    let mut ts = TaskState::new_with_flow(task_id, flow);
+    ts.assigned_agent = Some("primary".into());
+    ts.active_agent = Some("primary".into());
+    while ts.state < state {
+        let next = ts.flow.next_after(&ts.state).cloned().unwrap();
+        ts.advance(next, "fixture").unwrap();
+    }
+    ts.save(&tasks_dir).unwrap();
+}
+
+/// Code-agent dispatches recorded in the cost log (one entry per spawn).
+fn code_dispatches(project: &Path) -> usize {
+    std::fs::read_to_string(project.join(".zforge/cost-log.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["phase"] == "code")
+        .count()
+}
+
+fn counter(path: &Path) -> u32 {
+    std::fs::read_to_string(path)
+        .map(|s| s.trim().parse().unwrap())
+        .unwrap_or(0)
+}
+
+struct LoopFixture {
+    _home: TestHome,
+    _cwd: CwdGuard,
+    _cfg: tempfile::TempDir,
+    counter_dir: tempfile::TempDir,
+    project: tempfile::TempDir,
+}
+
+impl LoopFixture {
+    /// The test command passes from its `pass_at`-th run onwards.
+    fn new(pass_at: u32, flow: Flow, state: State) -> Self {
+        ensure_fake_agent_built();
+        let home = TestHome::new();
+        let project = tempfile::tempdir().unwrap();
+        make_project(project.path());
+        write_min_agents_dir(project.path());
+        let counter_dir = tempfile::tempdir().unwrap();
+        let cmd = write_counter_script(
+            counter_dir.path(),
+            &counter_dir.path().join("counter"),
+            pass_at,
+        );
+        write_config(project.path(), &cmd);
+        let cfg = tempfile::tempdir().unwrap();
+        let agent_cfg = write_fake_config(cfg.path(), "primary", &json!({"exit_code": 0}));
+        seed_registry_with_fake_agent(&[agent_cfg.to_str().unwrap()]);
+        let cwd = CwdGuard::enter(project.path());
+        make_task_at(project.path(), "T1", flow, state);
+        Self {
+            _home: home,
+            _cwd: cwd,
+            _cfg: cfg,
+            counter_dir,
+            project,
+        }
+    }
+
+    fn verifies(&self) -> u32 {
+        counter(&self.counter_dir.path().join("counter"))
+    }
+
+    fn state(&self) -> State {
+        TaskState::load(&self.project.path().join(".zforge/tasks"), "T1")
+            .unwrap()
+            .state
+    }
+}
+
+/// The backlog repro: `ship --max-iterations 3` on a Coded task with failing
+/// tests verified once and stopped without ever calling the code agent.
+#[test]
+#[serial]
+fn resume_at_coded_fixes_failures_within_the_budget() {
+    let fx = LoopFixture::new(2, Flow::Full, State::Coded);
+
+    let outcome = zforge::cli::ship::run("T1", None, 60, 3).expect("ship runs");
+    assert!(outcome.is_success(), "{outcome:?}");
+    assert_eq!(
+        fx.verifies(),
+        2,
+        "verify the existing code, then once after the fix"
+    );
+    assert_eq!(code_dispatches(fx.project.path()), 1, "one fix attempt");
+    assert_eq!(fx.state(), State::Verified);
+}
+
+/// Code that already passes costs no agent call.
+#[test]
+#[serial]
+fn resume_at_coded_that_passes_dispatches_nothing() {
+    let fx = LoopFixture::new(1, Flow::Full, State::Coded);
+
+    let outcome = zforge::cli::ship::run("T1", None, 60, 3).expect("ship runs");
+    assert!(outcome.is_success());
+    assert_eq!(fx.verifies(), 1);
+    assert_eq!(code_dispatches(fx.project.path()), 0);
+}
+
+/// The budget counts verifier runs: 3 iterations = 3 verifications and at
+/// most 2 code dispatches when resuming.
+#[test]
+#[serial]
+fn resume_never_exceeds_the_configured_budget() {
+    let fx = LoopFixture::new(999, Flow::Full, State::Coded);
+
+    let err = zforge::cli::ship::run("T1", None, 60, 3).unwrap_err();
+    assert!(err.to_string().contains("budget exhausted"), "{err}");
+    assert_eq!(fx.verifies(), 3);
+    assert_eq!(code_dispatches(fx.project.path()), 2);
+    assert_eq!(fx.state(), State::Coded);
+}
+
+// ─── FIX-011: flows without a verify step end at Coded ──────────────────────
+
+/// The backlog repro: on the docs flow ship dispatched code, advanced to
+/// Coded, then failed on the verify phase the flow does not have.
+#[test]
+#[serial]
+fn ship_on_docs_flow_codes_and_completes_at_coded() {
+    let fx = LoopFixture::new(1, Flow::Docs, State::Imported);
+
+    let outcome = zforge::cli::ship::run("T1", None, 60, 1).expect("ship runs");
+    assert!(outcome.is_success(), "{outcome:?}");
+    assert_eq!(fx.state(), State::Coded);
+    assert_eq!(code_dispatches(fx.project.path()), 1);
+    assert_eq!(fx.verifies(), 0, "no test suite for a flow without verify");
+    assert!(!fx
+        .project
+        .path()
+        .join(".zforge/tasks/T1/verify.md")
+        .exists());
+}
+
+#[test]
+#[serial]
+fn ship_on_spike_flow_codes_and_completes_at_coded() {
+    let fx = LoopFixture::new(1, Flow::Spike, State::SpecDone);
+
+    // --max-iterations has nothing to loop on here and is ignored.
+    let outcome = zforge::cli::ship::run("T1", None, 60, 3).expect("ship runs");
+    assert!(outcome.is_success(), "{outcome:?}");
+    assert_eq!(fx.state(), State::Coded);
+    assert_eq!(code_dispatches(fx.project.path()), 1);
+    assert_eq!(fx.verifies(), 0);
+}
+
+/// Refused before any work: the spike flow needs its spec first.
+#[test]
+#[serial]
+fn ship_on_spike_before_spec_is_blocked_without_calling_the_agent() {
+    let fx = LoopFixture::new(1, Flow::Spike, State::Imported);
+
+    let outcome = zforge::cli::ship::run("T1", None, 60, 1).expect("ship runs");
+    assert!(
+        matches!(outcome, OperationOutcome::Blocked { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(fx.state(), State::Imported);
+    assert_eq!(code_dispatches(fx.project.path()), 0);
+}
+
+#[test]
+#[serial]
+fn ship_on_a_completed_docs_task_is_a_no_op() {
+    let fx = LoopFixture::new(1, Flow::Docs, State::Coded);
+
+    let outcome = zforge::cli::ship::run("T1", None, 60, 1).expect("ship runs");
+    assert!(outcome.is_success());
+    assert_eq!(code_dispatches(fx.project.path()), 0);
+    assert_eq!(fx.state(), State::Coded);
+}
+
+/// Full and fixbug keep their verify gate.
+#[test]
+#[serial]
+fn flows_with_verify_still_run_the_suite() {
+    for flow in [Flow::Full, Flow::Fixbug] {
+        let prev = zforge::state::Flow::previous_of(&flow, &State::Coded)
+            .cloned()
+            .unwrap();
+        let fx = LoopFixture::new(1, flow, prev);
+        let outcome = zforge::cli::ship::run("T1", None, 60, 1).expect("ship runs");
+        assert!(outcome.is_success(), "{flow:?}: {outcome:?}");
+        assert_eq!(fx.verifies(), 1, "{flow:?}");
+        assert_eq!(fx.state(), State::Verified, "{flow:?}");
+    }
+}
+
+/// The async job path follows the same contract.
+#[test]
+#[serial]
+fn async_ship_on_docs_flow_succeeds_at_coded() {
+    let fx = LoopFixture::new(1, Flow::Docs, State::Imported);
+    std::env::set_var("ZFORGE_WORKER_BIN", env!("CARGO_BIN_EXE_zforge"));
+
+    zforge::cli::ship::run_async("T1", None, 60, 1).unwrap();
+    let config = zforge::config::load_from(&fx.project.path().join(".zforge/config.yaml")).unwrap();
+    let job_id = zforge::job::store::list_jobs(&config).unwrap()[0]
+        .job_id
+        .clone();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        zforge::job::lifecycle::reconcile_dead_worker(&config, &job_id).ok();
+        let job = zforge::job::store::load_job(&config, &job_id).unwrap();
+        if job.status.is_terminal() {
+            break job.status;
+        }
+        assert!(std::time::Instant::now() < deadline, "job did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert_eq!(status, zforge::job::schema::JobStatus::Success);
+    assert_eq!(fx.state(), State::Coded);
+}

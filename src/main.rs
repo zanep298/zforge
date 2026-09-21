@@ -91,11 +91,14 @@ enum Commands {
         #[arg(long, default_value = "600")]
         timeout: u64,
     },
-    /// Run code + verify in one go. Idempotent: skips code if state already Coded.
+    /// Run code + verify in one go.
     ///
     /// When `--max-iterations` > 1, ship runs the SWE-bench-style verifier loop:
     /// on test failure, the failed test names + verify.md are fed back into the
-    /// next code attempt as feedback. Loop bails when the budget is exhausted.
+    /// next code attempt. The budget counts verifier runs. A task already at
+    /// Coded resumes by verifying the existing code first, then uses the
+    /// remaining iterations for fixes. Flows without a verify step (docs,
+    /// spike) end at Coded.
     Ship {
         task_id: String,
         #[arg(long)]

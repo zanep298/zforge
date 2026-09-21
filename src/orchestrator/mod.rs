@@ -14,4 +14,4 @@ pub mod spawn;
 pub mod verifier_loop;
 
 pub use run::{run_phase, run_phase_with_lock};
-pub use verifier_loop::{iterate, LoopOutcome};
+pub use verifier_loop::{iterate, iterate_from, LoopOutcome, Start};

@@ -61,7 +61,7 @@ When `--flow` is omitted, `cli::task::infer_flow` picks one from the task title 
 
 `advance()` only accepts the state immediately after the current one *in this task's flow*. CLI phase commands gate entry through `cli/flow_guard.rs` (`ensure_phase_in_flow` + `ensure_predecessor_complete`). All "Next:" output goes through `TaskState::next_hint()` so the suggested command always matches the active flow. MCP routing uses `mcp::next_cmd_with_flow` for the same reason.
 
-`zforge ship <ID>` (CLI) wraps `code` + `verify`: dispatches the code sub-agent (if state `< Coded`), advances to `Coded`, then runs the test suite. The MCP `ship` tool is the orchestrator-side counterpart — assumes the LLM has already written code and combines the `Coded` advance + `verify` into a single tool call (saves a round trip vs. invoking them separately). Verify itself never calls an LLM — it shells out via `runner::run_with_language()`.
+`zforge ship <ID>` (CLI) wraps `code` + `verify`: dispatches the code sub-agent (if state `< Coded`), advances to `Coded`, then runs the test suite. The MCP `ship` tool is the orchestrator-side counterpart — assumes the LLM has already written code and combines the `Coded` advance + `verify` into a single tool call (saves a round trip vs. invoking them separately). Verify itself never calls an LLM — it shells out via `runner::run_with_language()`. On a flow without a verify step (docs, spike) `ship` stops at `Coded` and succeeds — the flow is complete; CLI, MCP and async jobs share this contract (FIX-011).
 
 ### Retry
 
@@ -157,7 +157,7 @@ The agentless runner is `Config::default_runner()` — `runner.default` from `.z
 
 `zforge ship <ID> --max-iterations N` (and MCP `ship` with `max_iterations > 1`) runs the code → verify cycle up to N times. On test failure, `verify.md` content + failed test names are injected into the next code prompt via `PromptContext.failed_tests` + `verify_file` + `verify_ref` in `context_files`. The `code.tmpl` template gates a "Verifier Feedback" section behind `{{if failed_tests}}...{{end}}` so retries get explicit failure context while first attempts get the clean template.
 
-`orchestrator::verifier_loop::iterate(max_iterations, code_runner, verify_runner)` is the pure control function — closures inject the actual spawn + verify so the loop is unit-testable without real agents. `ship.rs` calls `iterate` with closures that dispatch the assigned agent through the PR3 orchestrator and call `verify::run_with_outcome` respectively. Single-shot mode (`--max-iterations 1`, default) bypasses the loop and preserves pre-PR4 behavior. Budget exhaustion = terminal error with failing test names included.
+`orchestrator::verifier_loop::iterate_from(max_iterations, start, code_runner, verify_runner)` is the pure control function — closures inject the actual spawn + verify so the loop is unit-testable without real agents (`iterate` = `iterate_from(.., Start::Code, ..)`). The budget counts **verifier runs**: at most `max_iterations` verifications and never more code dispatches. A task already at `Coded` or later resumes with `Start::Verify` — the first iteration verifies the existing code, later ones are code-with-feedback → verify (FIX-008; before, resume verified once and stopped). Single-shot mode (`--max-iterations 1`, default) bypasses the loop: (code →) verify. Budget exhaustion = terminal error with failing test names included.
 
 ### Per-phase model routing (PR6)
 
