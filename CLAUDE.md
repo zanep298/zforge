@@ -82,17 +82,33 @@ Valid phases: `spec`, `testspec`, `plan`, `code`, `verify`, `review`. Each phase
 
 ### Prompt / template system
 
-Each pipeline phase has a `.tmpl` file in `.zforge/agents/` (generated at `zforge init` from `templates/`). `build_context_for_phase()` in `context.rs` decides which files to inline vs. emit as `/file` refs — different phases get different context. `Engine::render()` handles `{{variable}}` substitution and `{{if var}}...{{end}}` conditionals. `Engine::dispatch()` auto-detects Claude Code or OpenCode binary and launches the appropriate agent.
+Each pipeline phase has a `.tmpl` file in `.zforge/agents/` (generated at `zforge init` from `templates/`). `build_context_for_phase()` in `context.rs` decides which files to inline vs. emit as `/file` refs — different phases get different context. `Engine::render()` handles `{{variable}}` substitution and `{{if var}}...{{end}}` conditionals. `Engine::dispatch_with_runner()` streams a phase through the project's default runner (claude or opencode) on the terminal — it no longer auto-detects whatever client is on `$PATH`.
 
 Memory files (`.zforge/memory/patterns.md`, `anti-patterns.md`, `domain-glossary.md`) are injected as `/file` refs only when they contain at least one non-heading, non-empty line — empty scaffolds with just `#` headers are skipped. `has_content_ref()` in `context.rs` enforces this. Pattern extraction from `review-summary.md` runs automatically at `zforge review <ID> --done` via `append_unique_lines()`, which deduplicates by the key portion (text before `:`) of each `- key: description` line, both against existing file content and within the same batch.
 
 ### `zforge init` scaffolding
 
-Templates are embedded via `embedded.rs`. Init writes `.zforge/`, `CLAUDE.md`, `.mcp.json`, `.claude/settings.json`, `.claude/agents/` (symlinks → `.zforge/agents/`), and `.claude/rules/` (copies from `~/.claude/rules/` or bundled fallbacks).
+Templates are embedded via `embedded.rs`. Init writes `.zforge/`, `CLAUDE.md` / `AGENTS.md`, `.claude/settings.json`, per-client agent definitions (`.claude/agents/`, `.codex/agents/`, `.opencode/agents/`), and `.claude/rules/`. `init.rs` orchestrates; the pieces live in `cli/init/`:
+
+| Module | Owns |
+|--------|------|
+| `store_paths.rs` | `StorePaths` — where agents/skills are, for config.yaml **and** every instruction file. Shared mode names the real global store (`$ZFORGE_HOME` aware, via `embedded::global_store_dir` = `registry::paths::registry_dir`); local mode `.zforge/skills`. Templates reference skills only through `{{skills_dir}}` (FIX-013). |
+| `config_file.rs` | `.zforge/config.yaml` ownership (FIX-017): created once from the template; on re-init only the managed keys `runner.default`, `paths.agents`, `paths.skills` change. `models.yaml` and `memory/` are never overwritten, even with `--force`, which now means "refresh generated files" only. |
+| `runner.rs` | Default runner (FIX-015): `--default-runner` (must be a scaffolded client) → the only client → with `--agent all`, first of claude → codex → opencode on `$PATH`. Written to `runner.default`. Registry seeding covers exactly the scaffolded clients. |
+| `tools.rs` | rtk (FIX-016: `-g`, `-g --codex`, `-g --opencode` per client; `--opencode` includes the Claude setup), CodeGraph (FIX-012), caveman. `--no-install` never installs missing tools but still configures present ones — tests rely on it. |
+
+**CodeGraph registration (FIX-012)** — pinned to the project with `codegraph serve --mcp --path <root>` (without `--path` it resolves the index from the client's cwd and fails when started elsewhere), and registered natively per client, merging into existing config:
+- Claude: `claude mcp add --scope local codegraph -- …` (per-project, private, connected immediately). `.mcp.json` is **not** used: servers declared there stay "pending approval" and a project cannot approve itself.
+- OpenCode: `mcp.codegraph` in `<project>/opencode.json`.
+- Codex: `[mcp_servers.codegraph]` in `<project>/.codex/config.toml`. Codex loads project config only for **trusted** projects (`[projects."<path>"] trust_level = "trusted"` in `$CODEX_HOME/config.toml`); init reports when the project is not yet trusted and never trusts it on the user's behalf.
+
+`mcp_register::codex_config_path` honours `$CODEX_HOME` like Codex does.
+
+`tests/init_e2e_test.rs` runs the real binary with HOME / ZFORGE_HOME / CODEX_HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR in a temp dir and argv-recording stubs on `PATH`. Its `real_clients_load_the_codegraph_registration` test is `#[ignore]`d; run it with `--ignored` when the real CLIs are installed.
 
 ### MCP server
 
-`zforge mcp` runs as a stdio JSON-RPC server. It delegates directly to the same `cli::*` functions the CLI uses — no separate code paths. Registered via project-local `.mcp.json` so Claude Code picks it up automatically. `zforge mcp register` writes the registration into the agent's config (supports Claude Code, Codex, OpenCode).
+`zforge mcp` runs as a stdio JSON-RPC server. It delegates directly to the same `cli::*` functions the CLI uses — no separate code paths. `zforge mcp register` writes the registration into the agent's config (Claude Code via `claude mcp add`, Codex `$CODEX_HOME/config.toml`, OpenCode `$XDG_CONFIG_HOME/opencode/opencode.json`); `init` does this automatically for Codex and OpenCode.
 
 **Artifact-derived FSM sync.** The CLI advances the FSM with explicit `--done` commands; the MCP flow has no such signal — `get_prompt` hands a prompt to the driving LLM, which writes the artifact itself, but nothing marks the generate-phase complete. `cli::state_sync::sync_from_artifacts` reconciles the two: it walks the task's flow and advances the FSM to match the generate-phase artifacts present on disk (`spec.md`→SpecDone, `testspec.md`→TestspecDone, `plan.md`→Planned), stopping before any review gate (still crossed by `approve`) and before code/verify/review (driven by `ship`/`verify`/`review`). It's called at the top of `mcp::tool_get_prompt` and `cli::approve::run` so state stays honest across stateless `get_prompt` calls. State is a function of artifacts-on-disk plus explicit approvals — the same end state whether driven by CLI or MCP. Pairs with `approve`'s strict predecessor precondition: sync catches the FSM up, then approve rejects only genuinely-out-of-order calls.
 
@@ -127,11 +143,15 @@ Templates are embedded via `embedded.rs`. Init writes `.zforge/`, `CLAUDE.md`, `
 
 CLI phase commands (`spec`, `testspec`, `plan`, `code`, the code half of `ship`) route through `cli::dispatch_helper::run_phase_for_task`, which picks one of three routes so cost telemetry is captured wherever a human isn't watching:
 
-1. **Explicit agent** (`effective_agent()` is `Some`, i.e. imported with `--agent`) → orchestrator always, so the chosen runner + fallback + model routing are honored (the legacy path auto-detects `claude`/`opencode` on `$PATH` and would silently ignore the selection).
-2. **Agentless + non-interactive** (`!stdout().is_terminal()` — async worker, MCP stdio, CI, piped) → orchestrator with `DEFAULT_RUNNER` (`"claude"`) passed as `run_phase`'s `default_agent` arg, so agentless autonomous runs are measured. Also keeps claude's stdout piped (captured, not printed) so it can't corrupt the MCP JSON-RPC channel.
-3. **Agentless + interactive TTY** (human at a terminal) → legacy `Engine::dispatch()` streaming (auto-detect `claude`/`opencode` on `$PATH`). Output streams live but can't be captured, so the cost entry is flagged `tokens_source = "input-only"` and reported as unmeasured.
+1. **Explicit agent** (`effective_agent()` is `Some`, i.e. imported with `--agent`) → orchestrator always, so the chosen runner + fallback + model routing are honored.
+2. **Agentless + interactive TTY + default runner claude/opencode** → `Engine::dispatch_with_runner()` streams the phase on the terminal. Output can't be captured, so the cost entry is flagged `tokens_source = "input-only"` and reported as unmeasured.
+3. **Agentless, anything else** (async worker, MCP stdio, CI, piped — or a runner without a streaming mode, i.e. codex) → orchestrator with the project's default runner, so the run is captured and costed; captured stdout also can't corrupt the MCP JSON-RPC channel.
 
-`orchestrator::run_phase(task_id, phase, project_root, prompt, default_agent)` takes `default_agent` as a transient fallback used only when the task's `effective_agent()` is `None` — `assigned_agent` on disk stays `None`, preserving the never-mutate invariant. Route 2 falls back to route 3 when `DEFAULT_RUNNER` isn't in `registry.agents{}`. `verify` never touches the orchestrator — it shells out to the test runner directly. Integration tests use the `examples/fake_agent.rs` stub driven by a JSON config path passed as the agent's args (`{exit_code, stderr, stdout, sleep_ms}`).
+The agentless runner is `Config::default_runner()` — `runner.default` from `.zforge/config.yaml`, written by `init` (FIX-015); `config::FALLBACK_RUNNER` (`claude`) only applies to a hand-written config without the key. Route 3 requires the runner to resolve in the registry and errors with a fix-it message otherwise — it no longer silently falls back to auto-detection.
+
+**Named phase agents (FIX-014)** — `orchestrator::agent_args::named_agent_for` adds `--agent <phase>-agent` for claude and opencode when `.claude/agents/<phase>-agent.md` / `.opencode/agents/<phase>-agent.md` exists (both the orchestrator and `dispatch_with_runner` use it). Declared fallback: a missing definition runs without `--agent` and prints a warning naming the file. Codex has no named agents; its per-phase config is the `zforge_<phase>` profile.
+
+`orchestrator::run_phase(task_id, phase, project_root, prompt, default_agent)` takes `default_agent` as a transient fallback used only when the task's `effective_agent()` is `None` — `assigned_agent` on disk stays `None`, preserving the never-mutate invariant. `verify` never touches the orchestrator — it shells out to the test runner directly. Integration tests use the `examples/fake_agent.rs` stub driven by a JSON config path passed as the agent's args (`{exit_code, stderr, stdout, sleep_ms}`).
 
 ### Verifier-driven loop (PR4 / SWE-bench pattern)
 

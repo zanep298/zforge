@@ -6,43 +6,6 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::mcp_register::Agent;
 
-const DEFAULT_CONFIG: &str = r#"project:
-  name: ""
-  language: "rust"
-  test_command: "cargo test"
-  root_dir: "."
-opencode:
-  model: "claude-sonnet-4-6"
-  context_files: []
-paths:
-  tasks: "./.zforge/tasks"
-  agents: "./.zforge/agents"
-  memory: "./.zforge/memory"
-  skills: "./.zforge/skills"
-review:
-  auto_approve: false
-"#;
-
-/// Config written by `init --shared` — points agents/skills at the global
-/// `~/.zforge/` store so multiple projects share a single source of truth.
-/// Tasks and memory stay local because they are project-specific.
-const SHARED_CONFIG: &str = r#"project:
-  name: ""
-  language: "rust"
-  test_command: "cargo test"
-  root_dir: "."
-opencode:
-  model: "claude-sonnet-4-6"
-  context_files: []
-paths:
-  tasks: "./.zforge/tasks"
-  agents: "~/.zforge/agents"
-  memory: "./.zforge/memory"
-  skills: "~/.zforge/skills"
-review:
-  auto_approve: false
-"#;
-
 const PATTERNS_MD: &str = "# Coding Patterns\n\n## Approved Patterns\n\n## Test Patterns\n";
 const GLOSSARY_MD: &str = "# Domain Glossary\n";
 const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
@@ -115,49 +78,66 @@ impl InitStats {
     }
 }
 
-pub fn run(
-    agent: Agent,
-    force: bool,
-    local: bool,
-    no_register: bool,
-    name: Option<String>,
-    switch: bool,
-) -> Result<()> {
+/// Options for `zforge init`.
+pub struct InitOptions {
+    pub agent: Agent,
+    /// Refresh generated files (agent definitions, instruction files,
+    /// settings). Never resets config.yaml, models.yaml or memory.
+    pub force: bool,
+    pub local: bool,
+    pub no_register: bool,
+    pub name: Option<String>,
+    pub switch: bool,
+    /// Override the runner used for tasks without `--agent`.
+    pub default_runner: Option<String>,
+    /// Install missing tools (rtk, codegraph, caveman). `--no-install`
+    /// clears it; tools already present are still configured.
+    pub install_missing: bool,
+}
+
+pub fn run(opts: InitOptions) -> Result<()> {
     let cwd = env::current_dir()?;
     let detected = detect_project(&cwd);
+    let force = opts.force;
+    let local = opts.local;
 
-    let want_claude = matches!(agent, Agent::Claude | Agent::All);
-    let want_codex = matches!(agent, Agent::Codex | Agent::All);
-    let want_opencode = matches!(agent, Agent::OpenCode | Agent::All);
-
-    let agent_label = match agent {
-        Agent::All => "all (claude, codex, opencode)",
-        Agent::Claude => "claude",
-        Agent::Codex => "codex",
-        Agent::OpenCode => "opencode",
+    let targets: Vec<&str> = match opts.agent {
+        Agent::All => vec!["claude", "codex", "opencode"],
+        Agent::Claude => vec!["claude"],
+        Agent::Codex => vec!["codex"],
+        Agent::OpenCode => vec!["opencode"],
     };
+    let want = |t: &str| targets.contains(&t);
+
+    // Resolve before writing anything, so a bad --default-runner fails
+    // cleanly instead of leaving a half-scaffolded project.
+    let runner = resolve_default_runner(&targets, opts.default_runner.as_deref(), on_path)?;
+
     let mode_label = if local { " (local mode)" } else { "" };
     println!(
         "Scaffolding zforge for: {}{}",
-        agent_label.cyan(),
+        targets.join(", ").cyan(),
         mode_label.dimmed()
     );
 
     // Default is shared mode: templates + agents + skills live in the
-    // global ~/.zforge/ store and config points there. `--local` forks every
-    // file into the project. First-time install of the global store happens
-    // automatically when shared.
+    // global store and config points there. `--local` forks every file
+    // into the project. First-time install of the store happens here.
     let global_store = if !local {
         Some(crate::cli::install::ensure_global_store()?)
     } else {
         None
+    };
+    let store_paths = match &global_store {
+        Some(root) => StorePaths::shared(root, dirs::home_dir().as_deref()),
+        None => StorePaths::local(),
     };
 
     let zforge_dir = cwd.join(".zforge");
 
     if zforge_dir.exists() && !force {
         print!(
-            "{} .zforge/ already exists. Overwrite? [y/N] ",
+            "{} .zforge/ already exists. Update it? [y/N] ",
             "⚠".yellow()
         );
         io::stdout().flush()?;
@@ -171,26 +151,43 @@ pub fn run(
 
     let mut stats = InitStats::new();
 
-    // Config — default (shared) mode points paths at ~/.zforge/{agents,skills}.
-    // `--local` keeps everything inside the project at ./.zforge/.
-    let base_config = if local { DEFAULT_CONFIG } else { SHARED_CONFIG };
-    let config_content = base_config
-        .replace(
-            "language: \"rust\"",
-            &format!("language: \"{}\"", detected.language),
-        )
-        .replace(
-            "test_command: \"cargo test\"",
-            &format!("test_command: \"{}\"", detected.test_command),
-        );
-    let created = write_safe(&zforge_dir.join("config.yaml"), &config_content, force)?;
-    stats.record(created);
-    print_file_status(created, ".zforge/config.yaml");
+    // config.yaml: created on first init; afterwards only the keys init
+    // owns (runner.default, paths.agents, paths.skills) change (FIX-017).
+    let managed = Managed {
+        default_runner: runner.name(),
+        paths: &store_paths,
+    };
+    match write_config(
+        &zforge_dir.join("config.yaml"),
+        &detected.language,
+        &detected.test_command,
+        &managed,
+    )? {
+        ConfigWrite::Created => {
+            stats.record(true);
+            print_file_status(true, ".zforge/config.yaml");
+        }
+        ConfigWrite::Updated => {
+            stats.record(false);
+            println!(
+                "{} .zforge/config.yaml — kept; updated runner/paths only",
+                "✓".green()
+            );
+        }
+        ConfigWrite::Unchanged => {
+            stats.record(false);
+            print_file_status(false, ".zforge/config.yaml");
+        }
+    }
+    println!("{} default runner: {}", "▶".cyan(), runner.explain());
 
+    // models.yaml is user-owned: never overwritten, even with --force, so
+    // the documented "edit models.yaml, then init --force" refresh keeps
+    // the edits and renders them into the agent files below (FIX-017).
     let created = write_safe(
         &zforge_dir.join("models.yaml"),
         include_str!("../../templates/models.yaml"),
-        force,
+        false,
     )?;
     stats.record(created);
     print_file_status(created, ".zforge/models.yaml");
@@ -200,13 +197,13 @@ pub fn run(
         language: detected.language.clone(),
         test_command: detected.test_command,
         project_name: detected.project_name,
+        skills_dir: store_paths.skills_ref.clone(),
     };
 
     // Local mode forks every template/agent/skill into the project so
-    // each file can be customized standalone. Shared mode (default) skips
-    // these writes; the global store at ~/.zforge/ already holds them.
+    // each file can be customized standalone. Shared mode skips these
+    // writes; the global store already holds them.
     if local {
-        // Prompt templates (.tmpl — used by zf spec/testspec/plan/code/verify/review)
         let tmpl_dir = zforge_dir.join("agents");
         std::fs::create_dir_all(&tmpl_dir)?;
         for (name, content) in prompt_templates() {
@@ -218,18 +215,16 @@ pub fn run(
             label(stats.created > 0)
         );
 
-        // Agent definitions (.md — source material for per-tool agent files)
         for (name, raw) in agent_templates() {
             let rendered = apply_vars(raw, &vars);
             let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
             stats.record(created);
         }
         println!(
-            "{} .zforge/agents/ — Claude Code agent definitions",
+            "{} .zforge/agents/ — agent definitions",
             label(stats.created > 0)
         );
 
-        // Skills (workflow)
         let skills_dir = zforge_dir.join("skills");
         std::fs::create_dir_all(&skills_dir)?;
         for (name, raw) in skill_templates() {
@@ -237,8 +232,6 @@ pub fn run(
             let created = write_safe(&skills_dir.join(name), &rendered, force)?;
             stats.record(created);
         }
-
-        // Skills (language-specific)
         let lang_count = lang_skills.len();
         for (name, raw) in &lang_skills {
             let rendered = apply_vars(raw, &vars);
@@ -256,11 +249,11 @@ pub fn run(
         println!(
             "{} agents + skills resolved from {}",
             "↪".cyan(),
-            "~/.zforge/".dimmed()
+            store_paths.skills_ref.trim_end_matches("/skills").dimmed()
         );
     }
 
-    // Memory
+    // Memory is user-owned: created once, never overwritten (FIX-017).
     let mem_dir = zforge_dir.join("memory");
     std::fs::create_dir_all(&mem_dir)?;
     for (name, content) in [
@@ -268,42 +261,43 @@ pub fn run(
         ("domain-glossary.md", GLOSSARY_MD),
         ("anti-patterns.md", ANTI_PATTERNS_MD),
     ] {
-        let created = write_safe(&mem_dir.join(name), content, force)?;
+        let created = write_safe(&mem_dir.join(name), content, false)?;
         stats.record(created);
     }
     println!("{} .zforge/memory/ — 3 files", label(stats.created > 0));
 
-    // .zforge/README.md
     let readme = apply_vars(include_str!("../../templates/zforge-readme.md"), &vars);
     let created = write_safe(&zforge_dir.join("README.md"), &readme, force)?;
     stats.record(created);
     print_file_status(created, ".zforge/README.md");
 
-    let lang_skills_section = build_lang_skills_section(&vars.language, &lang_skills);
+    let lang_skills_section =
+        build_lang_skills_section(&vars.language, &lang_skills, &store_paths.skills_ref);
     let vars_with_lang = VarsExt {
         vars: &vars,
         lang_skills_section: &lang_skills_section,
     };
 
-    // .zforge/tasks/ (always)
     let tasks_dir = zforge_dir.join("tasks");
     std::fs::create_dir_all(&tasks_dir)?;
     println!("{} .zforge/tasks/", "✓".green());
 
-    // --- Claude Code scaffolding --------------------------------------------
-    if want_claude {
+    let tool_opts = ToolOptions {
+        install_missing: opts.install_missing,
+    };
+
+    if want("claude") {
         scaffold_claude(
             &cwd,
             &zforge_dir,
             &vars_with_lang,
             force,
             global_store.as_deref(),
+            tool_opts,
             &mut stats,
         )?;
     }
-
-    // --- Codex CLI scaffolding ----------------------------------------------
-    if want_codex {
+    if want("codex") {
         scaffold_codex(
             &cwd,
             &zforge_dir,
@@ -314,9 +308,7 @@ pub fn run(
             &mut stats,
         )?;
     }
-
-    // --- OpenCode scaffolding -----------------------------------------------
-    if want_opencode {
+    if want("opencode") {
         scaffold_opencode(
             &cwd,
             &zforge_dir,
@@ -327,8 +319,8 @@ pub fn run(
         )?;
     }
 
-    setup_rtk();
-    setup_codegraph(&cwd);
+    setup_rtk(&targets, tool_opts);
+    setup_codegraph(&cwd, &targets, tool_opts);
 
     println!();
     println!(
@@ -338,262 +330,61 @@ pub fn run(
     println!();
     println!("Next steps:");
     println!("  1. Edit .zforge/config.yaml — set project.name");
-    if want_claude {
+    if want("claude") {
         println!("  2. Verify CLAUDE.md — project details correct");
         println!("     Register Claude Code MCP: zforge mcp register --agent claude");
     }
-    if want_codex {
+    if want("codex") || want("opencode") {
         println!("  2. Verify AGENTS.md — project details correct");
-        println!("     (Codex MCP + profiles were registered automatically above)");
-    }
-    if want_opencode {
-        println!("  2. Verify AGENTS.md — project details correct");
-        println!("     (OpenCode MCP was registered automatically above)");
     }
     println!("  3. Run: zforge task import TASK-123");
     if !local {
         println!();
         println!(
-            "  {} Templates + skills served from {}",
+            "  {} Templates + skills served from the global store; refresh with {}",
             "ℹ".cyan(),
-            "~/.zforge/".dimmed()
-        );
-        println!("     Refresh with: {}", "zforge install --force".cyan());
-        println!(
-            "     Drop {} or pass --local for project-local copies.",
-            ".zforge/agents/<name>.tmpl".cyan()
+            "zforge install --force".cyan()
         );
     }
 
-    if !no_register {
-        // Seed default AgentSpec rows for the agents the user enabled so the
-        // orchestrator can resolve them without manual registry.yaml edits.
-        let wanted: Vec<&str> = {
-            let mut v = vec!["claude"];
-            if want_codex {
-                v.push("codex");
-            }
-            if want_opencode {
-                v.push("opencode");
-            }
-            v
-        };
-        match crate::registry::auto::ensure_default_agents(&wanted) {
-            Ok(inserted) if !inserted.is_empty() => println!(
-                "registered default agents in registry.yaml: {}",
-                inserted.join(", ")
-            ),
-            Ok(_) => {}
-            Err(e) => eprintln!("warning: default-agent seeding failed: {e:#}"),
-        }
-        match crate::registry::auto::auto_register(&cwd, name.as_deref(), switch) {
-            Ok(crate::registry::auto::AutoResult::Registered { name }) => {
-                println!("registered project {name} in ~/.zforge/registry.yaml");
-            }
-            Ok(crate::registry::auto::AutoResult::AlreadyExists { name }) => {
-                println!("project {name} already registered");
-            }
-            Ok(crate::registry::auto::AutoResult::Suffixed {
-                requested,
-                final_name,
-            }) => {
-                eprintln!(
-                    "warning: name {requested:?} already in registry; registered as {final_name:?}"
-                );
-            }
-            Ok(crate::registry::auto::AutoResult::Updated { old_name, new_name }) => {
-                println!("renamed registry entry: {old_name} -> {new_name}");
-            }
-            Err(e) => {
-                eprintln!("warning: registry update failed: {e:#}");
-            }
-        }
+    if !opts.no_register {
+        register_project(&cwd, &targets, opts.name.as_deref(), opts.switch);
     }
 
     Ok(())
 }
 
-// --- rtk setup ---
-
-fn rtk_is_installed() -> bool {
-    std::process::Command::new("rtk")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-// --- codegraph setup ---
-
-fn codegraph_is_installed() -> bool {
-    std::process::Command::new("codegraph")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn setup_rtk() {
-    println!();
-    println!("Setting up rtk…");
-
-    if !rtk_is_installed() {
-        // Try brew first, fall back to curl install script
-        let brew = std::process::Command::new("brew")
-            .args(["install", "rtk"])
-            .status();
-        match brew {
-            Ok(s) if s.success() => println!("{} rtk installed via brew", "✓".green()),
-            _ => {
-                println!("  brew unavailable, trying curl installer…");
-                let curl = std::process::Command::new("sh")
-                    .args(["-c", "curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"])
-                    .status();
-                match curl {
-                    Ok(s) if s.success() => println!("{} rtk installed via curl", "✓".green()),
-                    Ok(s) => {
-                        eprintln!("  {} rtk install exited with {s}", "⚠".yellow());
-                        return;
-                    }
-                    Err(e) => {
-                        eprintln!("  {} rtk install failed: {e}", "⚠".yellow());
-                        return;
-                    }
-                }
-            }
-        }
-    } else {
-        println!("{} rtk already installed", "–".dimmed());
+/// Seed registry rows for exactly the clients scaffolded — before FIX-015
+/// `claude` was always added, whatever `--agent` said — and record the
+/// project in the global registry. Best-effort: scaffolding is the contract.
+fn register_project(cwd: &Path, targets: &[&str], name: Option<&str>, switch: bool) {
+    match crate::registry::auto::ensure_default_agents(targets) {
+        Ok(inserted) if !inserted.is_empty() => println!(
+            "registered default agents in registry.yaml: {}",
+            inserted.join(", ")
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("warning: default-agent seeding failed: {e:#}"),
     }
-
-    // rtk init -g wires Claude Code hooks globally
-    let init = std::process::Command::new("rtk")
-        .args(["init", "-g"])
-        .status();
-    match init {
-        Ok(s) if s.success() => {
-            println!("{} rtk init -g — Claude Code hooks configured", "✓".green())
+    match crate::registry::auto::auto_register(cwd, name, switch) {
+        Ok(crate::registry::auto::AutoResult::Registered { name }) => {
+            println!("registered project {name} in the zforge registry");
         }
-        Ok(s) => eprintln!("  {} rtk init exited with {s}", "⚠".yellow()),
-        Err(e) => eprintln!("  {} rtk init failed: {e}", "⚠".yellow()),
-    }
-}
-
-fn setup_codegraph(cwd: &Path) {
-    println!();
-    println!("Setting up codegraph…");
-
-    if !codegraph_is_installed() {
-        println!("  Installing @colbymchenry/codegraph via npm…");
-        let status = std::process::Command::new("npm")
-            .args(["install", "-g", "@colbymchenry/codegraph"])
-            .status();
-        match status {
-            Ok(s) if s.success() => {
-                println!("{} codegraph installed", "✓".green());
-            }
-            Ok(s) => {
-                eprintln!(
-                    "  {} npm install exited with {s} — skipping codegraph init",
-                    "⚠".yellow()
-                );
-                return;
-            }
-            Err(e) => {
-                eprintln!(
-                    "  {} npm not found ({e}) — skipping codegraph init",
-                    "⚠".yellow()
-                );
-                return;
-            }
+        Ok(crate::registry::auto::AutoResult::AlreadyExists { name }) => {
+            println!("project {name} already registered");
         }
-    } else {
-        println!("{} codegraph already installed", "–".dimmed());
-    }
-
-    let status = std::process::Command::new("codegraph")
-        .arg("init")
-        .current_dir(cwd)
-        .status();
-    match status {
-        Ok(s) if s.success() => {
-            println!("{} codegraph init — .codegraph/ created", "✓".green());
+        Ok(crate::registry::auto::AutoResult::Suffixed {
+            requested,
+            final_name,
+        }) => {
+            eprintln!(
+                "warning: name {requested:?} already in registry; registered as {final_name:?}"
+            );
         }
-        Ok(s) => {
-            eprintln!("  {} codegraph init exited with {s}", "⚠".yellow());
-            return;
+        Ok(crate::registry::auto::AutoResult::Updated { old_name, new_name }) => {
+            println!("renamed registry entry: {old_name} -> {new_name}");
         }
-        Err(e) => {
-            eprintln!("  {} codegraph init failed: {e}", "⚠".yellow());
-            return;
-        }
-    }
-
-    println!("  Indexing codebase…");
-    let status = std::process::Command::new("codegraph")
-        .args(["index", "--quiet"])
-        .current_dir(cwd)
-        .status();
-    match status {
-        Ok(s) if s.success() => {
-            println!("{} codegraph index — codebase indexed", "✓".green());
-        }
-        Ok(s) => {
-            eprintln!("  {} codegraph index exited with {s}", "⚠".yellow());
-        }
-        Err(e) => {
-            eprintln!("  {} codegraph index failed: {e}", "⚠".yellow());
-        }
-    }
-
-    register_codegraph_mcp(cwd);
-}
-
-fn register_codegraph_mcp(cwd: &Path) {
-    let mcp_path = cwd.join(".mcp.json");
-    let mut root: serde_json::Value = if mcp_path.exists() {
-        match std::fs::read_to_string(&mcp_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        {
-            Some(v) => v,
-            None => serde_json::json!({}),
-        }
-    } else {
-        serde_json::json!({})
-    };
-
-    let servers = root.as_object_mut().and_then(|o| {
-        if !o.contains_key("mcpServers") {
-            o.insert("mcpServers".to_string(), serde_json::json!({}));
-        }
-        o.get_mut("mcpServers")?.as_object_mut()
-    });
-
-    if let Some(servers) = servers {
-        if servers.contains_key("codegraph") {
-            println!("{} .mcp.json — codegraph already registered", "–".dimmed());
-            return;
-        }
-        servers.insert(
-            "codegraph".to_string(),
-            serde_json::json!({
-                "command": "codegraph",
-                "args": ["serve", "--mcp"]
-            }),
-        );
-    }
-
-    match serde_json::to_string_pretty(&root) {
-        Ok(content) => match std::fs::write(&mcp_path, content + "\n") {
-            Ok(_) => println!("{} .mcp.json — codegraph MCP registered", "✓".green()),
-            Err(e) => eprintln!("  {} write .mcp.json failed: {e}", "⚠".yellow()),
-        },
-        Err(e) => eprintln!("  {} serialize .mcp.json failed: {e}", "⚠".yellow()),
+        Err(e) => eprintln!("warning: registry update failed: {e:#}"),
     }
 }
 
@@ -605,6 +396,7 @@ fn scaffold_claude(
     vars_with_lang: &VarsExt<'_>,
     force: bool,
     global_store: Option<&Path>,
+    tool_opts: ToolOptions,
     stats: &mut InitStats,
 ) -> Result<()> {
     // CLAUDE.md at project root — auto-loaded by Claude Code
@@ -673,69 +465,10 @@ fn scaffold_claude(
         command_templates().len()
     );
 
-    // caveman — terse output mode (saves ~65% output tokens)
-    ensure_caveman();
+    // caveman — terse output mode
+    ensure_caveman(tool_opts);
 
     Ok(())
-}
-
-fn ensure_caveman() {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return,
-    };
-    let activate = home
-        .join(".claude")
-        .join("hooks")
-        .join("caveman-activate.js");
-    if activate.exists() {
-        println!("{} caveman already installed", "–".dimmed());
-        return;
-    }
-
-    println!();
-    println!("Installing caveman (terse output mode)…");
-
-    #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "irm https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1 | iex",
-        ])
-        .status();
-
-    #[cfg(not(target_os = "windows"))]
-    let status = std::process::Command::new("bash")
-        .arg("-c")
-        .arg("curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash")
-        .status();
-
-    let manual = if cfg!(target_os = "windows") {
-        "irm https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1 | iex"
-    } else {
-        "curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash"
-    };
-
-    match status {
-        Ok(s) if s.success() => {
-            println!("{} caveman installed", "✓".green());
-        }
-        Ok(s) => {
-            eprintln!(
-                "  {} caveman install exited {s}. Run manually: {manual}",
-                "⚠".yellow()
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "  {} caveman install failed: {e}. Run manually: {manual}",
-                "⚠".yellow()
-            );
-        }
-    }
 }
 
 fn scaffold_codex(
@@ -810,7 +543,10 @@ fn scaffold_codex(
                 .map(|(phase, model)| format!("zforge_{phase}={model}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!("{} ~/.codex/config.toml — {}", "✓".green(), profiles);
+            let cfg = crate::cli::mcp_register::codex_config_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "~/.codex/config.toml".into());
+            println!("{} {cfg} — {}", "✓".green(), profiles);
         }
     }
 
@@ -906,6 +642,8 @@ pub(crate) struct Vars {
     pub(crate) language: String,
     pub(crate) test_command: String,
     pub(crate) project_name: String,
+    /// Where skills live, as instruction files should name it (FIX-013).
+    pub(crate) skills_dir: String,
 }
 
 // Project-type detection lives in init::detect.
@@ -915,15 +653,25 @@ use detect::detect_project;
 use lang_skills::{build_lang_skills_section, lang_skill_templates};
 
 mod agent_render;
+mod config_file;
 mod detect;
 mod lang_skills;
 mod registry;
+mod runner;
+mod store_paths;
+mod tools;
+
+use config_file::{write_config, ConfigWrite, Managed};
+use runner::{on_path, resolve_default_runner};
+use store_paths::StorePaths;
+use tools::{ensure_caveman, setup_codegraph, setup_rtk, ToolOptions};
 
 pub(crate) fn apply_vars(template: &str, vars: &Vars) -> String {
     template
         .replace("{{language}}", &vars.language)
         .replace("{{test_command}}", &vars.test_command)
         .replace("{{project_name}}", &vars.project_name)
+        .replace("{{skills_dir}}", &vars.skills_dir)
     // leave {{task_id}} and other runtime vars as-is
 }
 
@@ -1023,6 +771,37 @@ mod tests {
             language: "rust".into(),
             test_command: "cargo test".into(),
             project_name: "demo".into(),
+            skills_dir: "/store/skills".into(),
+        }
+    }
+
+    // FIX-013: every skill reference in the instruction files must go
+    // through the resolved skills dir — none may hardcode `.zforge/skills`,
+    // which does not exist in shared mode.
+    #[test]
+    fn instruction_files_name_skills_through_the_resolved_dir() {
+        let vars = sample_vars();
+        let ext = VarsExt {
+            vars: &vars,
+            lang_skills_section: "",
+        };
+        for (name, tmpl) in [
+            ("CLAUDE.md", include_str!("../../templates/CLAUDE.md")),
+            ("AGENTS.md", include_str!("../../templates/AGENTS.md")),
+            (
+                "zforge-readme.md",
+                include_str!("../../templates/zforge-readme.md"),
+            ),
+        ] {
+            let rendered = apply_vars_ext(tmpl, &ext);
+            assert!(
+                !rendered.contains(".zforge/skills"),
+                "{name} still hardcodes .zforge/skills"
+            );
+            assert!(
+                rendered.contains("/store/skills/"),
+                "{name} should reference skills under the resolved dir"
+            );
         }
     }
 

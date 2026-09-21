@@ -7,6 +7,7 @@ use crate::cost::{
 };
 use crate::fs::reader;
 use crate::orchestrator::{
+    agent_args::{missing_warning, named_agent_for, NamedAgent},
     fallback::CompiledPolicy,
     headless_args::headless_args_for_agent,
     history::{fallback_count, record_fallback},
@@ -117,6 +118,7 @@ pub fn run_phase_with_lock(
         );
 
         let spec = with_profile_args(&base_spec, &agent_name, phase);
+        let spec = with_named_agent_args(spec, &agent_name, phase, project_root);
         let spec = with_model_args(&spec, &agent_name, configured_model.as_deref());
         let spec = with_headless_args(spec, &agent_name, is_headless());
 
@@ -208,6 +210,21 @@ pub fn run_phase_with_lock(
             sleep(Duration::from_millis(policy.cooldown_ms));
         }
     }
+}
+
+/// Append `--agent <phase>-agent` for clients that support named agents,
+/// or warn when the definition is missing (declared fallback, FIX-014).
+fn with_named_agent_args(
+    mut spec: AgentSpec,
+    agent_name: &str,
+    phase: &str,
+    project_root: &Path,
+) -> AgentSpec {
+    match named_agent_for(agent_name, phase, project_root) {
+        NamedAgent::Missing(file) => eprintln!("{}", missing_warning(agent_name, phase, &file)),
+        named => spec.args.extend(named.args()),
+    }
+    spec
 }
 
 /// Return a copy of `base` with model-selection args appended when

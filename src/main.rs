@@ -20,6 +20,8 @@ enum Commands {
         /// Which AI coding agent to scaffold for: claude (default), codex, opencode, all.
         #[arg(long, default_value = "claude")]
         agent: String,
+        /// Refresh generated files (agent definitions, CLAUDE.md/AGENTS.md,
+        /// settings). Never resets .zforge/config.yaml, models.yaml or memory.
         #[arg(long)]
         force: bool,
         /// Copy templates, agents, and skills into the project instead of
@@ -36,6 +38,15 @@ enum Commands {
         /// Set this project as the current_project after registering.
         #[arg(long)]
         switch: bool,
+        /// Runner for tasks imported without --agent: claude, codex or
+        /// opencode. Default: the only client set up, or with --agent all
+        /// the first of claude → codex → opencode found on PATH.
+        #[arg(long)]
+        default_runner: Option<String>,
+        /// Do not install missing tools (rtk, codegraph, caveman). Tools
+        /// already installed are still configured.
+        #[arg(long)]
+        no_install: bool,
     },
     /// Populate the global ~/.zforge/ store with embedded templates,
     /// agents, and skills. Run once per machine; rerun after upgrading
@@ -282,10 +293,18 @@ fn dispatch_unit(command: Commands) -> Result<()> {
             no_register,
             name,
             switch,
-        } => {
-            let parsed = cli::mcp_register::Agent::parse(&agent)?;
-            cli::init::run(parsed, force, local, no_register, name, switch)
-        }
+            default_runner,
+            no_install,
+        } => cli::init::run(cli::init::InitOptions {
+            agent: cli::mcp_register::Agent::parse(&agent)?,
+            force,
+            local,
+            no_register,
+            name,
+            switch,
+            default_runner,
+            install_missing: !no_install,
+        }),
         Commands::Install { force } => cli::install::run(force),
         Commands::Update => cli::update::run(),
         Commands::Task { action } => match action {

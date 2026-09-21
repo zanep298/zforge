@@ -137,33 +137,47 @@ impl Engine {
     /// fallback. For each, require both the binary and the corresponding agent
     /// file (`.claude/agents/<name>-agent.md` or `.opencode/agents/<name>-agent.md`).
     /// Otherwise fall back to printing the prompt.
-    pub fn dispatch(&self, template_name: &str, ctx: &PromptContext) -> Result<()> {
-        let agent_name = format!("{}-agent", template_name);
+    /// Stream one phase through `runner` (`claude` or `opencode`) on the
+    /// user's terminal.
+    ///
+    /// The runner is the project's choice (`runner.default`, FIX-015), not
+    /// whatever happens to be on `$PATH`: this used to try claude, then
+    /// opencode, then silently fall back to printing the prompt, so a codex
+    /// project ran through claude when claude was installed. A missing
+    /// binary is now an error. A missing phase definition runs without
+    /// `--agent` and says so (declared fallback, FIX-014).
+    pub fn dispatch_with_runner(
+        &self,
+        template_name: &str,
+        ctx: &PromptContext,
+        runner: &str,
+    ) -> Result<()> {
         let cwd = std::env::current_dir()?;
-
-        // Prefer Claude Code
-        if let Some(bin) = find_claude_bin() {
-            let agent_file = cwd
-                .join(".claude")
-                .join("agents")
-                .join(format!("{}.md", agent_name));
-            if agent_file.exists() {
-                return self.render_and_run_claude(template_name, ctx, &bin, &agent_name);
-            }
+        let named = crate::orchestrator::agent_args::named_agent_for(runner, template_name, &cwd);
+        if let crate::orchestrator::agent_args::NamedAgent::Missing(file) = &named {
+            eprintln!(
+                "{}",
+                crate::orchestrator::agent_args::missing_warning(runner, template_name, file)
+            );
         }
-
-        // Fallback: OpenCode
-        if let Some(bin) = find_opencode_bin() {
-            let agent_file = cwd
-                .join(".opencode")
-                .join("agents")
-                .join(format!("{}.md", agent_name));
-            if agent_file.exists() {
-                return self.render_and_run_opencode(template_name, ctx, &bin, &agent_name);
+        let agent_args = named.args();
+        match runner {
+            "claude" => {
+                let bin = find_claude_bin().ok_or_else(|| {
+                    anyhow::anyhow!("default runner `claude` is not installed (not on PATH)")
+                })?;
+                self.render_and_run_claude(template_name, ctx, &bin, &agent_args)
             }
+            "opencode" => {
+                let bin = find_opencode_bin().ok_or_else(|| {
+                    anyhow::anyhow!("default runner `opencode` is not installed (not on PATH)")
+                })?;
+                self.render_and_run_opencode(template_name, ctx, &bin, &agent_args)
+            }
+            other => anyhow::bail!(
+                "runner `{other}` has no interactive streaming mode; it runs through the orchestrator"
+            ),
         }
-
-        self.render_and_print(template_name, ctx)
     }
 
     fn render_and_run_claude(
@@ -171,7 +185,7 @@ impl Engine {
         template_name: &str,
         ctx: &PromptContext,
         claude_bin: &Path,
-        agent_name: &str,
+        agent_args: &[String],
     ) -> Result<()> {
         let rendered = self.render(template_name, ctx)?;
         let sep = "═".repeat(43);
@@ -185,7 +199,11 @@ impl Engine {
             "→ claude".dimmed()
         );
         note!("{}", sep.blue());
-        note!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
+        note!(
+            "  {} agent:  {}",
+            "▶".cyan().bold(),
+            agent_args.get(1).map(String::as_str).unwrap_or("(none)")
+        );
         note!("  {} output: {}", "📄".bold(), ctx.output_file);
         note!(
             "  {} prompt:  {} tokens",
@@ -196,7 +214,7 @@ impl Engine {
         note!();
 
         let mut cmd = std::process::Command::new(claude_bin);
-        cmd.arg("-p").arg(&rendered);
+        cmd.arg("-p").arg(&rendered).args(agent_args);
         if let Some(model) =
             reader::agent_model_for_dispatch(&self.agents_dir, "claude", template_name)
         {
@@ -224,7 +242,7 @@ impl Engine {
         template_name: &str,
         ctx: &PromptContext,
         opencode_bin: &Path,
-        agent_name: &str,
+        agent_args: &[String],
     ) -> Result<()> {
         let rendered = self.render(template_name, ctx)?;
         let sep = "═".repeat(43);
@@ -238,7 +256,11 @@ impl Engine {
             "→ opencode".dimmed()
         );
         note!("{}", sep.blue());
-        note!("  {} agent:  {}", "▶".cyan().bold(), agent_name);
+        note!(
+            "  {} agent:  {}",
+            "▶".cyan().bold(),
+            agent_args.get(1).map(String::as_str).unwrap_or("(none)")
+        );
         note!("  {} output: {}", "📄".bold(), ctx.output_file);
         note!(
             "  {} prompt:  {} tokens",
@@ -249,7 +271,7 @@ impl Engine {
         note!();
 
         let mut cmd = std::process::Command::new(opencode_bin);
-        cmd.arg("run").arg(&rendered).arg("--agent").arg(agent_name);
+        cmd.arg("run").arg(&rendered).args(agent_args);
         if let Some(model) =
             reader::agent_model_for_dispatch(&self.agents_dir, "opencode", template_name)
         {

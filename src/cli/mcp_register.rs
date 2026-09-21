@@ -129,7 +129,12 @@ fn register_claude(force: bool) -> Outcome {
 
 // --- Codex (~/.codex/config.toml) ---
 
+/// The user's Codex config. Honours `$CODEX_HOME` the way Codex itself
+/// does, so zforge edits the file Codex actually reads.
 pub(crate) fn codex_config_path() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(home).join("config.toml"));
+    }
     dirs::home_dir().map(|h| h.join(".codex").join("config.toml"))
 }
 
@@ -210,7 +215,7 @@ pub fn write_codex_profiles(agents_dir: &std::path::Path) -> Result<Vec<(&'stati
     Ok(written)
 }
 
-fn strip_toml_section(content: &str, header: &str) -> String {
+pub(crate) fn strip_toml_section(content: &str, header: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut in_block = false;
     for line in content.split_inclusive('\n') {
@@ -225,7 +230,7 @@ fn strip_toml_section(content: &str, header: &str) -> String {
     out.trim_end_matches('\n').to_string() + "\n"
 }
 
-fn append_block(existing: &str, block: &str) -> String {
+pub(crate) fn append_block(existing: &str, block: &str) -> String {
     let mut out = existing.to_string();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');

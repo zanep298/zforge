@@ -243,8 +243,11 @@ pub fn prompt_template(name: &str) -> Option<&'static str> {
 
 /// Global zforge store directory (`~/.zforge/`). None if home dir cannot be
 /// determined.
+/// The global store (`~/.zforge`, or `$ZFORGE_HOME`). Same resolution as
+/// the registry, so a custom `ZFORGE_HOME` moves templates, agents and
+/// skills together with `registry.yaml` instead of splitting them.
 pub fn global_store_dir() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".zforge"))
+    crate::registry::paths::registry_dir().ok()
 }
 
 #[cfg(test)]

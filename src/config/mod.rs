@@ -24,9 +24,35 @@ pub struct Config {
     pub paths: PathsConfig,
     #[serde(default)]
     pub review: ReviewConfig,
+    #[serde(default)]
+    pub runner: RunnerConfig,
 
     #[serde(skip)]
     pub config_file: PathBuf,
+}
+
+/// Which agent CLI runs phases for tasks imported without `--agent`.
+/// Written by `zforge init` (FIX-015); a task's own `--agent` still wins.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct RunnerConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+/// Runner used when neither the task nor `runner.default` names one — only
+/// reachable with a hand-written config, since `init` always sets it.
+pub const FALLBACK_RUNNER: &str = "claude";
+
+impl Config {
+    /// The project's default runner (`runner.default`), or
+    /// [`FALLBACK_RUNNER`] when the config does not set one.
+    pub fn default_runner(&self) -> &str {
+        self.runner
+            .default
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(FALLBACK_RUNNER)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -4,6 +4,7 @@
 //! an `assigned_agent`. Pre-PR2 tasks (no agent in `.state.yaml`) skip the
 //! orchestrator entirely and stay on the legacy `Engine::dispatch()` path.
 
+pub mod agent_args;
 pub mod fallback;
 pub mod headless_args;
 pub mod history;

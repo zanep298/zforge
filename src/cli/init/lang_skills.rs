@@ -1,9 +1,15 @@
-//! Per-language skill bundles installed under `.zforge/skills/`. Data lives
-//! in `crate::embedded`; this module owns the AGENTS.md table renderer.
+//! Per-language skill bundles. Data lives in `crate::embedded`; this module
+//! owns the AGENTS.md table renderer. Paths come from `StorePaths`, so the
+//! table points at wherever the skills actually are (project or global
+//! store) — see `store_paths`.
 
 pub(crate) use crate::embedded::lang_skill_templates;
 
-pub(crate) fn build_lang_skills_section(language: &str, skills: &[(String, &str)]) -> String {
+pub(crate) fn build_lang_skills_section(
+    language: &str,
+    skills: &[(String, &str)],
+    skills_dir: &str,
+) -> String {
     if skills.is_empty() {
         return String::new();
     }
@@ -11,8 +17,8 @@ pub(crate) fn build_lang_skills_section(language: &str, skills: &[(String, &str)
         .iter()
         .map(|(name, _)| {
             format!(
-                "| `.zforge/skills/{}` | {} patterns and testing |",
-                name, language
+                "| `{}/{}` | {} patterns and testing |",
+                skills_dir, name, language
             )
         })
         .collect();
@@ -85,14 +91,16 @@ mod tests {
     #[test]
     fn build_section_renders_markdown_table() {
         let skills = lang_skill_templates("flutter");
-        let section = build_lang_skills_section("flutter", &skills);
+        let section = build_lang_skills_section("flutter", &skills, ".zforge/skills");
         assert!(!section.contains("\\n"));
         assert!(section.contains("|------|---------|\n| `.zforge/skills/flutter-patterns.md`"));
+        let shared = build_lang_skills_section("flutter", &skills, "/home/u/.zforge/skills");
+        assert!(shared.contains("| `/home/u/.zforge/skills/flutter-patterns.md`"));
     }
 
     #[test]
     fn build_section_empty_for_unknown_language() {
-        let section = build_lang_skills_section("cobol", &[]);
+        let section = build_lang_skills_section("cobol", &[], ".zforge/skills");
         assert!(section.is_empty());
     }
 }

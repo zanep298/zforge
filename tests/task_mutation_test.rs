@@ -126,11 +126,21 @@ fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// Poll until another process holds T1's lock (i.e. `ship` has started).
+/// Poll until `child` (the `ship` process) holds T1's lock.
+///
+/// Detected from the lock file, which the holder writes its pid into after
+/// acquiring. An earlier version probed by acquiring the lock itself; if
+/// `ship` tried to acquire during that brief probe, *it* got Busy and exited,
+/// making the test flaky.
 fn wait_until_locked(tasks_dir: &Path, child: &mut Child) {
+    let lock_file = tasks_dir.join("T1").join(".task.lock");
+    let pid = child.id().to_string();
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if try_acquire_task_lock(tasks_dir, "T1").is_err() {
+        if std::fs::read_to_string(&lock_file)
+            .map(|s| s.trim() == pid)
+            .unwrap_or(false)
+        {
             return;
         }
         if let Some(status) = child.try_wait().unwrap() {

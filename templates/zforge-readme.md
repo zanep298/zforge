@@ -50,7 +50,7 @@ Load an agent in OpenCode with `/agent .zforge/agents/spec-agent.md`.
 | `skills/review-patch.md` | review-agent |
 
 Skills are checklists and constraints. Reference them in your agent prompts with
-`/file .zforge/skills/<name>.md`.
+`/file {{skills_dir}}/<name>.md`.
 
 ## Memory
 

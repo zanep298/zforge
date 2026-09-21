@@ -4,9 +4,8 @@
 //! Tasks created **with** `--agent` go through the PR3 orchestrator: it
 //! resolves the agent from the global registry, spawns it with stdin piping,
 //! and applies the fallback policy on retryable failures. Tasks created
-//! **without** an agent (pre-PR2 imports, or PR2 imports that omitted the
-//! flag) fall back to the legacy `Engine::dispatch()` path that auto-detects
-//! `claude` / `opencode` on `$PATH`.
+//! **without** an agent run on the project's default runner
+//! (`runner.default` in `.zforge/config.yaml`, set by `zforge init`).
 
 use crate::config::Config;
 use crate::cost::{
@@ -21,23 +20,24 @@ use chrono::Utc;
 use std::io::IsTerminal;
 use std::time::Instant;
 
-/// Runner used for agentless tasks when routed through the orchestrator (so
-/// cost telemetry is captured). Users select a different runner explicitly
-/// with `zforge task import --agent <name>`.
-const DEFAULT_RUNNER: &str = "claude";
-
 /// Dispatch one LLM phase for a task. Three routes:
 ///
 /// 1. **Explicit agent** (`--agent` at import) → orchestrator ALWAYS, so the
 ///    chosen runner + fallback policy + model routing are honored. The legacy
 ///    path auto-detects `claude`/`opencode` on `$PATH` and would silently
 ///    ignore the selection, so we never send an explicitly-agented task there.
-/// 2. **No agent, non-interactive** (async worker / MCP / CI / piped stdout)
-///    → orchestrator with `DEFAULT_RUNNER`. No human is watching, so losing
-///    live streaming costs nothing and we gain real cost telemetry.
-/// 3. **No agent, interactive TTY** (human at a terminal) → legacy streaming
-///    dispatch. Output streams live but can't be captured, so the cost entry
-///    is flagged `input-only` (unmeasured) in reports.
+/// 2. **No agent, interactive TTY, runner claude/opencode** → stream the
+///    phase through that runner on the terminal. Output can't be captured,
+///    so the cost entry is flagged `input-only` (unmeasured) in reports.
+/// 3. **No agent, anything else** (async worker / MCP / CI / piped stdout,
+///    or a runner without a streaming mode such as codex) → orchestrator
+///    with the default runner, so output is captured and costed.
+///
+/// The runner for 2 and 3 is `config.default_runner()` — the project's
+/// choice, recorded at init (FIX-015). It used to be hardcoded to `claude`,
+/// and when `claude` was not registered the dispatcher silently fell back
+/// to auto-detecting whatever client was on `$PATH`. Now an unregistered
+/// default runner is an error that says how to fix it.
 ///
 /// `template_name` is the phase name (`"spec"`, `"testspec"`, `"plan"`,
 /// `"code"`).
@@ -75,54 +75,55 @@ pub fn run_phase_for_task_locked(
         );
     }
 
-    // Route 2: agentless + non-interactive + default runner registered →
-    // orchestrator with the default runner for full cost telemetry.
+    let runner = config.default_runner();
+
+    // Route 2: human at a terminal and the runner can stream → live output.
     let interactive = std::io::stdout().is_terminal();
-    if !interactive && default_runner_available(&config.project_root()) {
+    if interactive && matches!(runner, "claude" | "opencode") {
         let rendered = engine.render(template_name, ctx)?;
-        return crate::orchestrator::run_phase_with_lock(
+        eprintln!(
+            "note: task {} has no assigned agent; running on the project default ({runner}). \
+             Cost telemetry will be input-only; import with `--agent <name>` for full tracking.",
+            ts.task_id
+        );
+        let started = Instant::now();
+        let result = engine.dispatch_with_runner(template_name, ctx, runner);
+        record_legacy_cost(
+            config,
             &ts.task_id,
             template_name,
-            &config.project_root(),
             &rendered,
-            Some(DEFAULT_RUNNER),
-            held,
+            started,
+            &result,
         );
+        return result;
     }
 
-    // Route 3: legacy streaming dispatch. Preserves prior behavior — prompt
-    // handed to whichever LLM binary is on $PATH, streamed to the TTY. Stdout
-    // isn't captured, so cost telemetry is input-only (flagged unmeasured in
-    // `zforge cost report`).
+    // Route 3: orchestrator with the default runner.
+    ensure_runner_registered(runner, &config.project_root())?;
     let rendered = engine.render(template_name, ctx)?;
-    eprintln!(
-        "note: task {} has no assigned agent; cost telemetry will be input-only. \
-         Reimport with `zforge task import --agent <name>` for full tracking.",
-        ts.task_id
-    );
-    let started = Instant::now();
-    let result = engine.dispatch(template_name, ctx);
-    record_legacy_cost(
-        config,
+    crate::orchestrator::run_phase_with_lock(
         &ts.task_id,
         template_name,
+        &config.project_root(),
         &rendered,
-        started,
-        &result,
-    );
-    result
+        Some(runner),
+        held,
+    )
 }
 
-/// True when `DEFAULT_RUNNER` resolves for this project — i.e. the orchestrator
-/// could actually spawn it. Uses the same `resolved_agent` path as `run_phase`
-/// (project `agent_overrides` first, then global `agents{}`), so a project that
-/// defines claude only via an override still routes through Route 2. When it
-/// can't resolve (e.g. a project that registered only codex), the caller falls
-/// back to legacy dispatch rather than hard-erroring on an unresolvable agent.
-fn default_runner_available(project_root: &std::path::Path) -> bool {
-    registry::io::load()
-        .map(|r| r.resolved_agent(DEFAULT_RUNNER, project_root).is_some())
-        .unwrap_or(false)
+/// The orchestrator can only spawn a runner the registry resolves (project
+/// `agent_overrides` first, then global `agents{}`).
+fn ensure_runner_registered(runner: &str, project_root: &std::path::Path) -> Result<()> {
+    let registry = registry::io::load()?;
+    if registry.resolved_agent(runner, project_root).is_none() {
+        anyhow::bail!(
+            "default runner `{runner}` (runner.default in .zforge/config.yaml) is not in the \
+             zforge registry. Run `zforge init --agent {runner}` to register it, or set \
+             runner.default to a registered agent."
+        );
+    }
+    Ok(())
 }
 
 /// Append a minimal CostEntry for the legacy dispatch path. Output is
