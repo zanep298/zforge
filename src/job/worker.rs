@@ -25,6 +25,14 @@ pub fn run(job_id: &str) -> Result<OperationOutcome> {
     let config = config::load().map_err(|_| anyhow::anyhow!("config not found — run: zf init"))?;
     let job = load_job(&config, job_id).context("load job")?;
 
+    // Agents and test commands run in process groups of their own, which a
+    // cancel signalling this worker's group does not reach. Record them in
+    // the job directory so `job cancel` can stop them too.
+    std::env::set_var(
+        crate::process::CHILD_PGIDS_FILE_ENV,
+        crate::process::child_pgids_file(&crate::job::store::job_dir(&config, job_id)),
+    );
+
     // Per-task lock prevents two workers from racing on the same `.state.yaml`.
     // Held for the worker's entire lifetime; kernel releases on process death.
     let task_lock = crate::state::lock_task(&config.tasks_dir(), &job.task_id)?;

@@ -2,7 +2,7 @@
 
 use crate::config;
 use crate::job::{
-    lifecycle::{mark_cancelled, pid_alive, reconcile_dead_worker},
+    lifecycle::{mark_cancelled, reconcile_dead_worker},
     schema::{Job, JobStatus},
     store::{job_log_path, list_jobs, load_job},
 };
@@ -261,49 +261,10 @@ fn cancel(a: CancelArgs) -> Result<()> {
         return Ok(());
     };
 
-    if pid_alive(pid) {
-        terminate_worker_gracefully(pid);
-    }
+    // Children of a dead worker may still be running, so this runs whether
+    // or not the worker itself is alive.
+    crate::job::lifecycle::terminate_job_processes(&config, &a.job_id, pid);
     mark_cancelled(&config, &a.job_id)?;
     note!("cancelled {}", a.job_id);
     Ok(())
-}
-
-/// SIGTERM the worker's process group, wait up to 5s, escalate to SIGKILL
-/// if still alive. Worker was spawned with `process_group(0)` (see
-/// `job::spawn`) so its PID is also its process-group leader. `kill(-pid,
-/// ...)` signals every process in the group — worker + all child agents
-/// (claude / codex / etc.) — preventing orphan LLM subprocesses from
-/// outliving cancel.
-#[cfg(unix)]
-fn terminate_worker_gracefully(pid: u32) {
-    // SAFETY: `kill` is async-signal-safe. Negative pid is the documented
-    // group-signal form in POSIX `kill(2)`. ESRCH (already dead) is harmless.
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGTERM);
-    }
-    let grace = Duration::from_secs(5);
-    let start = Instant::now();
-    while pid_alive(pid) && start.elapsed() < grace {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    if pid_alive(pid) {
-        // SAFETY: same as above.
-        unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
-        }
-    }
-}
-
-/// Windows stub. Job-cancel semantics on Windows would need
-/// `TerminateProcess` via winapi, or a Win32 Job Object that auto-kills
-/// children. Track in a follow-up. Until then, cancel is best-effort on
-/// Windows: the registry entry flips to `cancelled` but the worker
-/// subprocess is not actually killed.
-#[cfg(not(unix))]
-fn terminate_worker_gracefully(_pid: u32) {
-    eprintln!(
-        "warning: cancel on Windows does not yet terminate the worker — \
-         mark-only. Track in zforge issue tracker."
-    );
 }

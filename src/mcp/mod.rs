@@ -409,6 +409,13 @@ fn ship_next_hint(tasks_dir: &std::path::Path, task_id: &str) -> String {
 }
 
 fn verify_failure_message(task_id: &str, outcome: &crate::cli::verify::VerifyOutcome) -> String {
+    if outcome.timed_out {
+        return format!(
+            "Tests TIMED OUT for task {task_id}: the test command exceeded its time budget and \
+             was stopped (its whole process tree was killed). No pass/fail verdict was reached. \
+             See .zforge/tasks/{task_id}/verify.md for partial output."
+        );
+    }
     let failed_block = if outcome.failed_names.is_empty() {
         String::new()
     } else {
@@ -587,16 +594,9 @@ fn tool_job_cancel(args: &Value) -> Result<String> {
         ));
     }
     if let Some(pid) = job.worker_pid {
-        if crate::job::lifecycle::pid_alive(pid) {
-            // Negative PID = process group signal. Worker's pgrp leader is
-            // its own PID (see job::spawn::spawn_worker). This kills the
-            // worker AND any child agent process it spawned, preventing
-            // orphan claude/codex subprocesses from outliving cancel.
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGTERM);
-            }
-        }
+        // Same termination as `zforge job cancel`: worker group plus the
+        // groups of the agents/tests it started, SIGTERM then SIGKILL.
+        crate::job::lifecycle::terminate_job_processes(&config, job_id, pid);
     }
     crate::job::lifecycle::mark_cancelled(&config, job_id)?;
     Ok(format!("cancelled {job_id}"))
@@ -934,6 +934,7 @@ mod tests {
             passed_tests: 1,
             failed_tests: 2,
             failed_names: vec!["mod::a".into(), "mod::b".into()],
+            timed_out: false,
         };
         let msg = verify_failure_message("TASK-1", &outcome);
         assert!(msg.contains("TASK-1"));
@@ -950,6 +951,7 @@ mod tests {
             passed_tests: 0,
             failed_tests: 0,
             failed_names: vec![],
+            timed_out: false,
         };
         let msg = verify_failure_message("TASK-1", &outcome);
         assert!(!msg.contains("Failed tests:"));

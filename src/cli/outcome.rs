@@ -67,7 +67,6 @@ impl OperationOutcome {
         }
     }
 
-    #[allow(dead_code)]
     pub fn timeout(reason: impl Into<String>) -> Self {
         Self::Timeout {
             reason: reason.into(),

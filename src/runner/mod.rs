@@ -1,10 +1,8 @@
+use crate::process::run_bounded;
 use anyhow::Result;
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::thread;
+use std::process::Command;
 use std::time::{Duration, Instant};
-use wait_timeout::ChildExt;
 
 #[derive(Debug, Clone)]
 pub struct TestResult {
@@ -17,6 +15,9 @@ pub struct TestResult {
     pub duration: Duration,
     pub raw_output: String,
     pub error: Option<String>,
+    /// The command exceeded its time budget and was killed. Reported as a
+    /// timeout rather than a test failure.
+    pub timed_out: bool,
 }
 
 /// Runs the test command and parses its output as Rust/cargo output.
@@ -39,48 +40,16 @@ pub fn run_with_language(
         anyhow::bail!("empty command");
     }
 
-    let mut child = Command::new(&parts[0])
-        .args(&parts[1..])
-        .current_dir(work_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut cmd = Command::new(&parts[0]);
+    cmd.args(&parts[1..]).current_dir(work_dir);
+    // Bounded wait over the whole process tree — see `crate::process`. A
+    // test harness that backgrounds a server or a shell script with `&`
+    // used to keep the output pipes open past the timeout (FIX-006).
+    let out = run_bounded(cmd, None, Duration::from_secs(timeout_secs))?;
+    let timed_out = out.timed_out;
 
-    // Drain stdout/stderr in dedicated threads. OS pipe buffers cap at ~64 KB;
-    // a chatty `cargo test` will fill them and block the child if we only read
-    // after wait_timeout returns. On timeout, killing the child closes the pipes,
-    // which lets these reader threads hit EOF and join cleanly.
-    let mut stdout_pipe = child
-        .stdout
-        .take()
-        .expect("stdout piped by Command builder");
-    let mut stderr_pipe = child
-        .stderr
-        .take()
-        .expect("stderr piped by Command builder");
-    let stdout_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stdout_pipe.read_to_end(&mut buf);
-        buf
-    });
-    let stderr_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buf);
-        buf
-    });
-
-    let timeout = Duration::from_secs(timeout_secs);
-    let status_opt = child.wait_timeout(timeout)?;
-    let timed_out = status_opt.is_none();
-    if timed_out {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-
-    let stdout_bytes = stdout_handle.join().unwrap_or_default();
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
-    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
-    let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     let duration = start.elapsed();
     let raw_output = format!("{}{}", stdout, stderr);
 
@@ -95,15 +64,16 @@ pub fn run_with_language(
             duration,
             raw_output,
             error: Some(format!("test command timed out after {timeout_secs}s")),
+            timed_out: true,
         });
     }
 
-    let status = status_opt.expect("status present when not timed out");
+    let succeeded = out.status.map(|s| s.success()).unwrap_or(false);
     let mut result = parse_test_output(&raw_output, language);
     result.duration = duration;
-    result.passed = status.success();
+    result.passed = succeeded;
 
-    if !status.success() && result.total_tests == 0 {
+    if !succeeded && result.total_tests == 0 {
         result.error = Some(stderr);
     }
 
@@ -139,6 +109,7 @@ fn parse_generic_output(raw: &str) -> TestResult {
         duration: Duration::default(),
         raw_output: raw.to_string(),
         error: None,
+        timed_out: false,
     }
 }
 
@@ -182,6 +153,7 @@ pub fn parse_go_test_output(raw: &str) -> TestResult {
         duration: Duration::default(),
         raw_output: raw.to_string(),
         error: None,
+        timed_out: false,
     }
 }
 
@@ -237,6 +209,7 @@ pub fn parse_pytest_output(raw: &str) -> TestResult {
         duration: Duration::default(),
         raw_output: raw.to_string(),
         error: None,
+        timed_out: false,
     }
 }
 
@@ -293,6 +266,7 @@ pub fn parse_flutter_test_output(raw: &str) -> TestResult {
         duration: Duration::default(),
         raw_output: raw.to_string(),
         error: None,
+        timed_out: false,
     }
 }
 
@@ -333,6 +307,7 @@ pub fn parse_jest_output(raw: &str) -> TestResult {
         duration: Duration::default(),
         raw_output: raw.to_string(),
         error: None,
+        timed_out: false,
     }
 }
 
@@ -413,6 +388,7 @@ pub fn parse_cargo_test_output(raw: &str) -> TestResult {
         duration: Duration::default(),
         raw_output: raw.to_string(),
         error: None,
+        timed_out: false,
     }
 }
 

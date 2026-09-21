@@ -8,6 +8,7 @@ pub mod jira;
 pub mod job;
 pub mod mcp;
 pub mod orchestrator;
+pub mod process;
 pub mod prompt;
 pub mod registry;
 pub mod runner;

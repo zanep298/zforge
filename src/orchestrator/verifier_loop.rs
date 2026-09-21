@@ -77,6 +77,7 @@ mod tests {
             passed_tests: if passed { 10 } else { 10 - failed_names.len() },
             failed_tests: failed_names.len(),
             failed_names: failed_names.iter().map(|s| s.to_string()).collect(),
+            timed_out: false,
         }
     }
 

@@ -21,6 +21,9 @@ pub struct VerifyOutcome {
     pub passed_tests: usize,
     pub failed_tests: usize,
     pub failed_names: Vec<String>,
+    /// The test command was killed at its time budget. No verdict about the
+    /// code was reached, so this maps to `Timeout`, not `Failed`.
+    pub timed_out: bool,
 }
 
 impl VerifyOutcome {
@@ -41,6 +44,10 @@ impl VerifyOutcome {
     pub fn to_operation_outcome(&self, task_id: &str) -> OperationOutcome {
         if self.passed {
             OperationOutcome::Success
+        } else if self.timed_out {
+            OperationOutcome::timeout(format!(
+                "test command for {task_id} exceeded its time budget and was stopped"
+            ))
         } else {
             OperationOutcome::failed(self.failure_summary(task_id))
         }
@@ -245,6 +252,7 @@ command: "{}"
         passed_tests: result.passed_tests,
         failed_tests: result.failed_tests,
         failed_names: result.failed_names,
+        timed_out: result.timed_out,
     })
 }
 

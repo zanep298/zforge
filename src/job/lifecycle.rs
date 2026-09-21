@@ -85,6 +85,63 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// How long a cancelled worker and its children get between SIGTERM and
+/// SIGKILL.
+pub const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Stop a job's worker and every process it started.
+///
+/// The worker leads its own process group (`job::spawn`), so `kill(-pid)`
+/// reaches the worker. The agents and test commands it runs each lead a
+/// group of their own (`crate::process`, FIX-006), which a signal to the
+/// worker's group does not reach. The worker forwards SIGTERM to them
+/// itself, but a child that ignores SIGTERM — or a worker that is stuck or
+/// already gone — would leave them running. Their group ids are recorded in
+/// the job directory; they get the same SIGTERM → grace → SIGKILL sequence.
+///
+/// Used by both the CLI and the MCP cancel so the two cannot drift (the MCP
+/// path previously sent SIGTERM only, with no escalation).
+#[cfg(unix)]
+pub fn terminate_job_processes(config: &Config, job_id: &str, worker_pid: u32) {
+    let pgids_file = crate::process::child_pgids_file(&crate::job::store::job_dir(config, job_id));
+    let mut groups: Vec<i32> = vec![worker_pid as i32];
+    groups.extend(crate::process::read_child_pgids(&pgids_file));
+    groups.sort_unstable();
+    groups.dedup();
+
+    let signal_all = |sig: libc::c_int| {
+        for g in &groups {
+            // SAFETY: negative pid addresses the process group, per kill(2).
+            // ESRCH (group already gone) is harmless.
+            unsafe {
+                libc::kill(-g, sig);
+            }
+        }
+    };
+    let any_alive = || {
+        groups
+            .iter()
+            // SAFETY: signal 0 only probes for existence.
+            .any(|g| unsafe { libc::kill(-g, 0) } == 0)
+    };
+
+    signal_all(libc::SIGTERM);
+    let start = std::time::Instant::now();
+    while any_alive() && start.elapsed() < CANCEL_GRACE {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if any_alive() {
+        signal_all(libc::SIGKILL);
+    }
+}
+
+/// Windows: no process groups. Cancel is mark-only until a Job Object
+/// based implementation exists.
+#[cfg(not(unix))]
+pub fn terminate_job_processes(_config: &Config, _job_id: &str, _worker_pid: u32) {
+    eprintln!("warning: cancel on Windows does not yet terminate the worker — mark-only.");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
