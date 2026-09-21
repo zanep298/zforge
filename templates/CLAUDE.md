@@ -62,39 +62,7 @@ follow `task.md` + `spec.md` directly.
 
 ---
 
-{{lang_skills_section}}
-## Workflow Skills
-
-Use these skill files as checklists during each phase:
-
-| Phase | Skill file |
-|-------|-----------|
-| Writing spec | `{{skills_dir}}/clarify-spec.md` |
-| Deriving tests | `{{skills_dir}}/derive-test-cases.md` |
-| Planning | `{{skills_dir}}/implementation-planning.md` |
-| Writing tests | `{{skills_dir}}/write-tests-first.md` |
-| Implementing | `{{skills_dir}}/implement-minimal-patch.md` |
-| Reviewing | `{{skills_dir}}/review-patch.md` |
-
-### Supplementary Skills
-
-| When | Skill file |
-|------|-----------|
-| Diagnosing a bug | `{{skills_dir}}/debug.md` |
-| Security check before merge | `{{skills_dir}}/security-review.md` |
-| Fixing a performance problem | `{{skills_dir}}/performance-optimize.md` |
-| Backend API contract changes | `{{skills_dir}}/backend/api-contracts.md` |
-| Database schema or migration changes | `{{skills_dir}}/backend/database-migrations.md` |
-| Logs, metrics, traces, jobs | `{{skills_dir}}/backend/observability.md` |
-| Queue, cron, worker changes | `{{skills_dir}}/backend/background-jobs.md` |
-| React or route UI changes | `{{skills_dir}}/frontend/react-patterns.md` |
-| Frontend tests | `{{skills_dir}}/frontend/frontend-testing.md` |
-| Accessibility-sensitive UI | `{{skills_dir}}/frontend/accessibility.md` |
-| Figma-to-code UI work | `{{skills_dir}}/frontend/figma-to-ui.md` |
-| Frontend state or data fetching | `{{skills_dir}}/frontend/state-data-fetching.md` |
-
-Load a skill with `/file {{skills_dir}}/<name>.md` before starting that phase.
-
+{{claude_skills_section}}
 ---
 
 ## MCP Tools

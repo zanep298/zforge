@@ -128,6 +128,27 @@ pub fn referenced_scripts(command: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// `claude plugin validate <dir>` output → issues per validated file.
+/// Only files with problems are listed by Claude; an empty result with a
+/// "Validation passed" line means everything in the directory is clean.
+pub fn parse_validate(output: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for line in output.lines() {
+        let t = line.trim();
+        if let Some(path) = t
+            .strip_prefix("Validating skill:")
+            .or_else(|| t.strip_prefix("Validating agent:"))
+        {
+            out.push((path.trim().to_string(), Vec::new()));
+        } else if let Some(issue) = t.strip_prefix('❯') {
+            if let Some((_, issues)) = out.last_mut() {
+                issues.push(issue.trim().to_string());
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +198,15 @@ mod tests {
             referenced_scripts(&cave.command),
             vec![PathBuf::from("/h/.claude/hooks/caveman-activate.js")]
         );
+    }
+
+    #[test]
+    fn parses_validate_issues_per_file() {
+        let out = "Validating components in: /p/.claude/skills\n\nValidating skill: /p/.claude/skills/mine/SKILL.md\n\n⚠ Found 1 warning:\n\n  ❯ frontmatter: No frontmatter block found.\n\nValidating skill: /p/.claude/skills/zforge-x/SKILL.md\n\n  ❯ description: No description in frontmatter.\n\n✔ Validation passed with warnings\n";
+        let v = parse_validate(out);
+        assert_eq!(v.len(), 2);
+        assert!(v[1].0.ends_with("zforge-x/SKILL.md"));
+        assert_eq!(v[1].1, vec!["description: No description in frontmatter."]);
+        assert!(parse_validate("Validating components in: /p\n\n✔ Validation passed\n").is_empty());
     }
 }

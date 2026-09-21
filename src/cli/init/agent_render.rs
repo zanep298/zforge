@@ -40,25 +40,42 @@ fn default_model_for(target: &str) -> &'static str {
 /// Strip every `model:` / `codex_model:` / `opencode_model:` line from the
 /// frontmatter and prepend a single `model: <resolved>` line right after
 /// the opening `---`. Body untouched.
+#[cfg(test)]
 pub fn rewrite_frontmatter_with_model(content: &str, resolved_model: &str) -> String {
+    rewrite_frontmatter(content, resolved_model, "")
+}
+
+/// [`rewrite_frontmatter_with_model`] plus `extra` frontmatter lines (e.g.
+/// Claude's `skills:` block) placed after the `model:` line. Any `skills:`
+/// block already in the template is replaced, not duplicated.
+pub fn rewrite_frontmatter(content: &str, resolved_model: &str, extra: &str) -> String {
     // Locate frontmatter bounds: file must begin with `---\n` and contain a
     // second `---\n` line. Anything else: return content unchanged with a
     // synthetic frontmatter prepended so the file still works.
     let rest = match content.strip_prefix("---\n") {
         Some(r) => r,
         None => {
-            return format!("---\nmodel: {resolved_model}\n---\n{content}");
+            return format!("---\nmodel: {resolved_model}\n{extra}---\n{content}");
         }
     };
     let Some(end_idx) = find_frontmatter_end(rest) else {
-        return format!("---\nmodel: {resolved_model}\n---\n{content}");
+        return format!("---\nmodel: {resolved_model}\n{extra}---\n{content}");
     };
     let frontmatter_body = &rest[..end_idx];
     let body = &rest[end_idx + "---\n".len()..];
 
     let mut filtered = String::with_capacity(frontmatter_body.len());
+    let mut in_skills = false;
     for line in frontmatter_body.lines() {
         let trimmed = line.trim_start();
+        if in_skills && (line.starts_with(' ') || line.starts_with('-')) {
+            continue;
+        }
+        in_skills = false;
+        if trimmed.starts_with("skills:") && !extra.is_empty() {
+            in_skills = true;
+            continue;
+        }
         if trimmed.starts_with("model:")
             || trimmed.starts_with("codex_model:")
             || trimmed.starts_with("opencode_model:")
@@ -72,6 +89,7 @@ pub fn rewrite_frontmatter_with_model(content: &str, resolved_model: &str) -> St
     let mut out = String::with_capacity(content.len());
     out.push_str("---\n");
     out.push_str(&format!("model: {resolved_model}\n"));
+    out.push_str(extra);
     out.push_str(&filtered);
     out.push_str("---\n");
     out.push_str(body);
@@ -140,6 +158,7 @@ pub fn materialize_agents_into(
     dst_dir: &Path,
     models: Option<&ModelsConfig>,
     force: bool,
+    extra_frontmatter: &dyn Fn(&str) -> String,
 ) -> Result<usize> {
     std::fs::create_dir_all(dst_dir).with_context(|| format!("create {}", dst_dir.display()))?;
     let mut count = 0;
@@ -150,7 +169,7 @@ pub fn materialize_agents_into(
             continue;
         };
         let resolved = resolve_model(target, phase, &content, models);
-        let rewritten = rewrite_frontmatter_with_model(&content, &resolved);
+        let rewritten = rewrite_frontmatter(&content, &resolved, &extra_frontmatter(phase));
         let dst = dst_dir.join(&filename);
         if dst.exists() {
             if force {
@@ -254,7 +273,8 @@ text\n"
         let dst = tmp.path().join("dst");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("code-agent.md"), template_with_three_keys()).unwrap();
-        let n = materialize_agents_into("codex", &src, &dst, None, false).unwrap();
+        let n =
+            materialize_agents_into("codex", &src, &dst, None, false, &|_| String::new()).unwrap();
         assert_eq!(n, 1);
         let written = std::fs::read_to_string(dst.join("code-agent.md")).unwrap();
         assert!(written.contains("model: gpt-5-codex"));
@@ -270,7 +290,8 @@ text\n"
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(src.join("code-agent.md"), template_with_three_keys()).unwrap();
         std::fs::write(dst.join("code-agent.md"), "preexisting").unwrap();
-        let n = materialize_agents_into("codex", &src, &dst, None, false).unwrap();
+        let n =
+            materialize_agents_into("codex", &src, &dst, None, false, &|_| String::new()).unwrap();
         assert_eq!(n, 0);
         assert_eq!(
             std::fs::read_to_string(dst.join("code-agent.md")).unwrap(),
@@ -287,10 +308,24 @@ text\n"
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(src.join("code-agent.md"), template_with_three_keys()).unwrap();
         std::fs::write(dst.join("code-agent.md"), "preexisting").unwrap();
-        let n = materialize_agents_into("codex", &src, &dst, None, true).unwrap();
+        let n =
+            materialize_agents_into("codex", &src, &dst, None, true, &|_| String::new()).unwrap();
         assert_eq!(n, 1);
         assert!(std::fs::read_to_string(dst.join("code-agent.md"))
             .unwrap()
             .contains("model: gpt-5-codex"));
+    }
+
+    #[test]
+    fn extra_frontmatter_is_added_after_model_and_replaces_existing_skills() {
+        let tmpl = "---\nname: code-agent\nskills:\n  - old-skill\ndescription: x\n---\nbody\n";
+        let out = rewrite_frontmatter(tmpl, "sonnet", "skills:\n  - zforge-a\n");
+        assert!(
+            out.starts_with("---\nmodel: sonnet\nskills:\n  - zforge-a\n"),
+            "{out}"
+        );
+        assert!(!out.contains("old-skill"));
+        assert!(out.contains("description: x\n"));
+        assert!(out.ends_with("---\nbody\n"));
     }
 }

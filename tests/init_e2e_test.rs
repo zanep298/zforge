@@ -178,15 +178,15 @@ fn assert_all_skill_refs_resolve(env: &Env, file: &str) {
 }
 
 // The backlog repro: shared mode left 20/20 references dangling.
+// (CLAUDE.md now names native skills instead — see the IMP-004 tests.)
 #[test]
 fn shared_mode_skill_references_all_resolve() {
     let env = Env::new(&CLIENTS);
     env.init(&["--agent", "all"]);
-    assert_all_skill_refs_resolve(&env, "CLAUDE.md");
     assert_all_skill_refs_resolve(&env, "AGENTS.md");
     // Shared mode points at the store actually in use ($ZFORGE_HOME).
     assert!(env
-        .read("CLAUDE.md")
+        .read("AGENTS.md")
         .contains(&env.dir("zf").display().to_string()));
 }
 
@@ -194,8 +194,125 @@ fn shared_mode_skill_references_all_resolve() {
 fn local_mode_skill_references_all_resolve() {
     let env = Env::new(&CLIENTS);
     env.init(&["--agent", "all", "--local"]);
-    assert_all_skill_refs_resolve(&env, "CLAUDE.md");
     assert_all_skill_refs_resolve(&env, "AGENTS.md");
+}
+
+// ─── IMP-004: native Claude skills ───────────────────────────────────────────
+
+fn native_skill_names(env: &Env) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(env.project.join(".claude/skills"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+fn frontmatter(text: &str) -> serde_yaml::Value {
+    let fm = text
+        .strip_prefix("---\n")
+        .and_then(|r| r.split("\n---\n").next())
+        .unwrap();
+    serde_yaml::from_str(fm).unwrap()
+}
+
+#[test]
+fn claude_init_installs_native_skills_in_both_modes() {
+    for local in [false, true] {
+        let env = Env::new(&CLIENTS);
+        let mut args = vec!["--agent", "claude"];
+        if local {
+            args.push("--local");
+        }
+        env.init(&args);
+        let names = native_skill_names(&env);
+        assert!(
+            names.contains(&"zforge-clarify-spec".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            names.contains(&"zforge-rust-patterns".to_string()),
+            "language skills: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains("python")),
+            "only this project's language"
+        );
+        for n in &names {
+            let fm = frontmatter(&env.read(&format!(".claude/skills/{n}/SKILL.md")));
+            assert_eq!(fm["name"].as_str(), Some(n.as_str()));
+            assert!(!fm["description"].as_str().unwrap_or("").is_empty(), "{n}");
+            assert_eq!(fm["metadata"]["generated-by"].as_str(), Some("zforge"));
+        }
+        // CLAUDE.md names every one of them.
+        let claude_md = env.read("CLAUDE.md");
+        for n in &names {
+            assert!(
+                claude_md.contains(&format!("`{n}`")),
+                "CLAUDE.md misses {n}"
+            );
+        }
+    }
+}
+
+/// The phase checklists are preloaded into the phase agents.
+#[test]
+fn phase_agents_preload_their_skills() {
+    let env = Env::new(&CLIENTS);
+    env.init(&agent_flag("claude"));
+    let code = frontmatter(&env.read(".claude/agents/code-agent.md"));
+    let skills: Vec<&str> = code["skills"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        skills,
+        vec![
+            "zforge-write-tests-first",
+            "zforge-implement-minimal-patch",
+            "zforge-rust-patterns",
+            "zforge-rust-testing"
+        ]
+    );
+    for s in skills {
+        assert!(env
+            .project
+            .join(format!(".claude/skills/{s}/SKILL.md"))
+            .is_file());
+    }
+    let spec = frontmatter(&env.read(".claude/agents/spec-agent.md"));
+    assert_eq!(spec["skills"][0].as_str(), Some("zforge-clarify-spec"));
+}
+
+/// Stale zforge skills go; the user's own skills stay.
+#[test]
+fn refresh_removes_stale_zforge_skills_only() {
+    let env = Env::new(&CLIENTS);
+    env.init(&agent_flag("claude"));
+    let skills = env.project.join(".claude/skills");
+    std::fs::create_dir_all(skills.join("zforge-retired")).unwrap();
+    std::fs::write(skills.join("zforge-retired/SKILL.md"), "old").unwrap();
+    std::fs::create_dir_all(skills.join("my-own")).unwrap();
+    std::fs::write(skills.join("my-own/SKILL.md"), "mine").unwrap();
+
+    env.init(&agent_flag("claude"));
+
+    assert!(!skills.join("zforge-retired").exists());
+    assert_eq!(
+        std::fs::read_to_string(skills.join("my-own/SKILL.md")).unwrap(),
+        "mine"
+    );
+}
+
+/// Codex / OpenCode setups do not get Claude skills.
+#[test]
+fn native_skills_are_claude_only() {
+    let env = Env::new(&CLIENTS);
+    env.init(&agent_flag("codex"));
+    assert!(!env.project.join(".claude/skills").exists());
 }
 
 #[test]

@@ -11,7 +11,7 @@ use super::report::{Check, Level};
 use crate::config::Config;
 use crate::fs::reader::MarkdownFile;
 use crate::process::run_bounded;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -131,84 +131,152 @@ pub fn agents(ctx: &Ctx<'_>) -> Check {
                 if md.get_str("model").map(str::trim).unwrap_or("").is_empty() {
                     problems.push(format!("{name}.md: no model"));
                 }
+                for skill in md.get_strings("skills") {
+                    let f = ctx
+                        .root
+                        .join(".claude/skills")
+                        .join(&skill)
+                        .join("SKILL.md");
+                    if !f.is_file() {
+                        problems.push(format!("{name}.md preloads missing skill `{skill}`"));
+                    }
+                }
             }
         }
     }
     let total = crate::cli::mcp_register::PHASES.len();
-    if problems.is_empty() {
-        Check::new(
+    if !problems.is_empty() {
+        return Check::new("agents", true, Level::Broken, problems.join("; "))
+            .fix("zforge init --agent claude --force");
+    }
+    // Claude's own validator on the definitions.
+    match claude_validate(ctx, ".claude/agents", |_| true) {
+        Validation::Clean => Check::new(
+            "agents",
+            true,
+            Level::Recognized,
+            format!(
+                "{total}/{total} phase definitions valid, preloaded skills present; \
+                 `claude plugin validate` accepts them"
+            ),
+        )
+        .not_checked("which definition a session picks is only visible inside a session"),
+        Validation::Issues(issues) => Check::new("agents", true, Level::Broken, issues.join("; "))
+            .fix("zforge init --agent claude --force"),
+        Validation::Unavailable(why) => Check::new(
             "agents",
             true,
             Level::Configured,
-            format!("{total}/{total} phase definitions valid (dispatched with --agent)"),
+            format!("{total}/{total} phase definitions valid, preloaded skills present"),
         )
-        .not_checked("Claude Code has no non-interactive command that lists subagent definitions")
+        .not_checked(format!("Claude's validator could not run: {why}")),
+    }
+}
+
+enum Validation {
+    Clean,
+    Issues(Vec<String>),
+    Unavailable(String),
+}
+
+/// `claude plugin validate <rel>`, keeping only issues in files `relevant`
+/// accepts (so the user's own skills do not fail zforge's checks).
+fn claude_validate(ctx: &Ctx<'_>, rel: &str, relevant: impl Fn(&str) -> bool) -> Validation {
+    let Some((code, out)) = run(
+        ctx,
+        "claude",
+        &["plugin", "validate", rel],
+        None,
+        QUICK_TIMEOUT,
+    ) else {
+        return Validation::Unavailable("cannot run `claude plugin validate`".into());
+    };
+    // Only a completed validation counts: an older `claude` without the
+    // subcommand, or one that printed nothing, is not a clean result.
+    if !out.contains("Validation passed") {
+        return Validation::Unavailable(format!("exit {code}: {}", out.trim()));
+    }
+    let issues: Vec<String> = super::claude_config::parse_validate(&out)
+        .into_iter()
+        .filter(|(path, issues)| relevant(path) && !issues.is_empty())
+        .map(|(path, issues)| {
+            let file = std::path::Path::new(&path)
+                .components()
+                .rev()
+                .take(2)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<std::path::PathBuf>();
+            format!("{}: {}", file.display(), issues.join(", "))
+        })
+        .collect();
+    if issues.is_empty() {
+        Validation::Clean
     } else {
-        Check::new("agents", true, Level::Broken, problems.join("; "))
-            .fix("zforge init --agent claude --force")
+        Validation::Issues(issues)
     }
 }
 
 pub fn skills(ctx: &Ctx<'_>) -> Check {
-    let Ok(claude_md) = std::fs::read_to_string(ctx.root.join("CLAUDE.md")) else {
+    let language = &ctx.config.project.language;
+    let catalog = crate::cli::init::claude_skills::catalog(language);
+    let dir = ctx.root.join(".claude").join("skills");
+    let mut problems = Vec::new();
+    for s in &catalog {
+        match MarkdownFile::read(&dir.join(&s.name).join("SKILL.md")) {
+            Err(_) => problems.push(format!("{} missing", s.name)),
+            Ok(md) => {
+                if md.get_str("name") != Some(s.name.as_str()) {
+                    problems.push(format!("{}: frontmatter name mismatch", s.name));
+                }
+                if md
+                    .get_str("description")
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+                {
+                    problems.push(format!("{}: no description", s.name));
+                }
+            }
+        }
+    }
+    let total = catalog.len();
+    if !problems.is_empty() {
+        let level = if problems.len() == total {
+            Level::Missing
+        } else {
+            Level::Broken
+        };
         return Check::new(
             "skills",
             false,
-            Level::Missing,
-            "no CLAUDE.md in this project",
-        )
-        .fix("zforge init --agent claude");
-    };
-    let refs = skill_refs(&claude_md);
-    let missing: Vec<&String> = refs
-        .iter()
-        .filter(|r| {
-            let p = Path::new(r.as_str());
-            !(if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                ctx.root.join(p)
-            })
-            .is_file()
-        })
-        .collect();
-    let base = if missing.is_empty() {
-        Check::new(
-            "skills",
-            false,
-            Level::Configured,
+            level,
             format!(
-                "{}/{} checklists referenced by CLAUDE.md exist",
-                refs.len(),
-                refs.len()
+                "{} of {total} zforge skills: {}",
+                problems.len(),
+                problems.join("; ")
             ),
         )
-    } else {
-        Check::new(
+        .fix("zforge init --agent claude --force");
+    }
+    let prefix = format!("/{}", crate::cli::init::claude_skills::PREFIX);
+    let base = format!("{total}/{total} zforge skills in .claude/skills/ ({language})");
+    match claude_validate(ctx, ".claude/skills", |p| p.contains(&prefix)) {
+        Validation::Clean => Check::new(
             "skills",
             false,
-            Level::Broken,
-            format!(
-                "{} of {} referenced checklists missing: {:?}",
-                missing.len(),
-                refs.len(),
-                missing
-            ),
+            Level::Recognized,
+            format!("{base}; `claude plugin validate` accepts them"),
         )
-        .fix("zforge init --agent claude --force")
-    };
-    base.not_checked(
-        "native skill discovery (.claude/skills/*/SKILL.md) is not implemented yet (IMP-004)",
-    )
-}
-
-/// Skill files named in backticks in an instruction file.
-fn skill_refs(text: &str) -> Vec<String> {
-    regex::Regex::new(r"`([^`\s]*skills/[^`\s]+\.md)`")
-        .expect("static regex")
-        .captures_iter(text)
-        .map(|c| c[1].to_string())
-        .collect()
+        .not_checked(
+            "whether the model invokes a non-preloaded skill on its own (needs a model run)",
+        ),
+        Validation::Issues(issues) => Check::new("skills", false, Level::Broken, issues.join("; "))
+            .fix("zforge init --agent claude --force"),
+        Validation::Unavailable(why) => Check::new("skills", false, Level::Configured, base)
+            .not_checked(format!("Claude's validator could not run: {why}")),
+    }
 }
 
 pub fn zforge_mcp(ctx: &Ctx<'_>) -> Check {

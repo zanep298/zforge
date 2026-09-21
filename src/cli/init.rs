@@ -273,9 +273,11 @@ pub fn run(opts: InitOptions) -> Result<()> {
 
     let lang_skills_section =
         build_lang_skills_section(&vars.language, &lang_skills, &store_paths.skills_ref);
+    let claude_skills_section = claude_skills::claude_md_section(&vars.language);
     let vars_with_lang = VarsExt {
         vars: &vars,
         lang_skills_section: &lang_skills_section,
+        claude_skills_section: &claude_skills_section,
     };
 
     let tasks_dir = zforge_dir.join("tasks");
@@ -423,6 +425,7 @@ fn scaffold_claude(
     // models.yaml when present, falling back to template frontmatter).
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
+    let language = vars_with_lang.vars.language.clone();
     let (agent_count, target_label) = materialize_agents_for(
         "claude",
         cwd,
@@ -430,12 +433,29 @@ fn scaffold_claude(
         &claude_agents_dir,
         global_store,
         force,
+        &|phase| claude_skills::agent_frontmatter(phase, &language),
     )?;
     println!(
         "{} .claude/agents/ — {} files (model resolved per claude) ← {}",
         label(agent_count > 0),
         agent_count,
         target_label
+    );
+
+    // .claude/skills/ — native skills (IMP-004)
+    let skills = claude_skills::write(cwd, vars_with_lang.vars, force)?;
+    stats.record(skills.written > 0);
+    println!(
+        "{} .claude/skills/ — {} zforge skills ({} written, {} kept){}",
+        label(skills.written > 0),
+        skills.total,
+        skills.written,
+        skills.kept,
+        if skills.removed.is_empty() {
+            String::new()
+        } else {
+            format!("; removed stale: {}", skills.removed.join(", "))
+        }
     );
 
     // .claude/rules/
@@ -505,6 +525,7 @@ fn scaffold_codex(
         &codex_agents_dir,
         global_store,
         force,
+        &|_| String::new(),
     )?;
     println!(
         "{} .codex/agents/ — {} files (model resolved per codex) ← {}",
@@ -586,6 +607,7 @@ fn scaffold_opencode(
         &opencode_agents_dir,
         global_store,
         force,
+        &|_| String::new(),
     )?;
     println!(
         "{} .opencode/agents/ — {} files (model resolved per opencode) ← {}",
@@ -653,6 +675,7 @@ use detect::detect_project;
 use lang_skills::{build_lang_skills_section, lang_skill_templates};
 
 mod agent_render;
+pub(crate) mod claude_skills;
 mod config_file;
 mod detect;
 mod lang_skills;
@@ -678,10 +701,13 @@ pub(crate) fn apply_vars(template: &str, vars: &Vars) -> String {
 struct VarsExt<'a> {
     vars: &'a Vars,
     lang_skills_section: &'a str,
+    claude_skills_section: &'a str,
 }
 
 fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
-    apply_vars(template, v.vars).replace("{{lang_skills_section}}", v.lang_skills_section)
+    apply_vars(template, v.vars)
+        .replace("{{lang_skills_section}}", v.lang_skills_section)
+        .replace("{{claude_skills_section}}", v.claude_skills_section)
 }
 
 /// Render per-target agent files into `dst_dir` from the appropriate source
@@ -699,6 +725,7 @@ fn materialize_agents_for(
     dst_dir: &Path,
     global_store: Option<&Path>,
     force: bool,
+    extra_frontmatter: &dyn Fn(&str) -> String,
 ) -> Result<(usize, String)> {
     let models = crate::config::load_models_from_root(cwd);
     let (src_dir, label): (PathBuf, String) = if let Some(global) = global_store {
@@ -720,6 +747,7 @@ fn materialize_agents_for(
         dst_dir,
         models.as_ref(),
         force,
+        extra_frontmatter,
     )?;
     Ok((count, label))
 }
@@ -784,9 +812,11 @@ mod tests {
         let ext = VarsExt {
             vars: &vars,
             lang_skills_section: "",
+            claude_skills_section: "",
         };
+        // CLAUDE.md names native skills instead (IMP-004); see
+        // `claude_md_names_native_skills_not_files`.
         for (name, tmpl) in [
-            ("CLAUDE.md", include_str!("../../templates/CLAUDE.md")),
             ("AGENTS.md", include_str!("../../templates/AGENTS.md")),
             (
                 "zforge-readme.md",
@@ -805,12 +835,34 @@ mod tests {
         }
     }
 
+    // IMP-004: Claude reads skills natively, so CLAUDE.md lists skill names
+    // (generated from the catalog) rather than file paths.
+    #[test]
+    fn claude_md_names_native_skills_not_files() {
+        let vars = sample_vars();
+        let section = claude_skills::claude_md_section("rust");
+        let ext = VarsExt {
+            vars: &vars,
+            lang_skills_section: "",
+            claude_skills_section: &section,
+        };
+        let rendered = apply_vars_ext(include_str!("../../templates/CLAUDE.md"), &ext);
+        assert!(!rendered.contains("{{"), "unsubstituted placeholder");
+        assert!(
+            !rendered.contains("skills/clarify-spec.md"),
+            "no file paths"
+        );
+        assert!(rendered.contains("`zforge-clarify-spec`"));
+        assert!(rendered.contains("`zforge-rust-patterns`"));
+    }
+
     #[test]
     fn agents_md_template_renders_project_vars() {
         let vars = sample_vars();
         let ext = VarsExt {
             vars: &vars,
             lang_skills_section: "",
+            claude_skills_section: "",
         };
         let rendered = apply_vars_ext(include_str!("../../templates/AGENTS.md"), &ext);
         assert!(rendered.starts_with("# demo\n"));
@@ -850,8 +902,16 @@ mod tests {
         ).unwrap();
 
         let codex_agents = root.join(".codex").join("agents");
-        let (count, _label) =
-            materialize_agents_for("codex", root, &zforge_dir, &codex_agents, None, false).unwrap();
+        let (count, _label) = materialize_agents_for(
+            "codex",
+            root,
+            &zforge_dir,
+            &codex_agents,
+            None,
+            false,
+            &|_| String::new(),
+        )
+        .unwrap();
         assert_eq!(count, 1);
         let written = std::fs::read_to_string(codex_agents.join("code-agent.md")).unwrap();
         assert!(written.contains("model: gpt-5-codex"));
@@ -875,8 +935,16 @@ mod tests {
         std::fs::create_dir_all(&codex_agents).unwrap();
         std::fs::write(codex_agents.join("spec-agent.md"), "preexisting\n").unwrap();
 
-        let (count, _) =
-            materialize_agents_for("codex", root, &zforge_dir, &codex_agents, None, false).unwrap();
+        let (count, _) = materialize_agents_for(
+            "codex",
+            root,
+            &zforge_dir,
+            &codex_agents,
+            None,
+            false,
+            &|_| String::new(),
+        )
+        .unwrap();
         assert_eq!(count, 0);
         assert_eq!(
             std::fs::read_to_string(codex_agents.join("spec-agent.md"))

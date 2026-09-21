@@ -39,6 +39,11 @@ if [ "$1" = "mcp" ] && [ "$2" = "get" ]; then
   [ -f "$f" ] && { cat "$f"; exit 0; }
   echo "No MCP server named \"$3\"."; exit 1
 fi
+if [ "$1" = "plugin" ] && [ "$2" = "validate" ]; then
+  f="$MCP_DIR/validate-$(basename "$3").txt"
+  [ -f "$f" ] && { cat "$f"; exit 0; }
+  echo "Validating components in: $3"; echo; echo "✔ Validation passed"; exit 0
+fi
 exit 0"#,
         );
         env.stub(
@@ -156,8 +161,8 @@ fn healthy_claude_setup() {
     assert_eq!(code, 0);
     assert_eq!(level(&c, "claude"), "working");
     assert_eq!(level(&c, "runner"), "configured");
-    assert_eq!(level(&c, "agents"), "configured");
-    assert_eq!(level(&c, "skills"), "configured");
+    assert_eq!(level(&c, "agents"), "recognized");
+    assert_eq!(level(&c, "skills"), "recognized");
     assert_eq!(level(&c, "zforge mcp"), "working");
     assert_eq!(level(&c, "codegraph mcp"), "working");
     assert_eq!(level(&c, "rtk hook"), "working");
@@ -166,11 +171,11 @@ fn healthy_claude_setup() {
     assert!(c["agents"]["not_checked"]
         .as_str()
         .unwrap()
-        .contains("subagent"));
+        .contains("inside a session"));
     assert!(c["skills"]["not_checked"]
         .as_str()
         .unwrap()
-        .contains("IMP-004"));
+        .contains("model run"));
 }
 
 #[test]
@@ -337,4 +342,65 @@ fn text_report_names_fixes() {
         text.contains("fix: zforge mcp register --agent claude"),
         "{text}"
     );
+}
+
+/// IMP-004: native skills. Claude's validator is authoritative for zforge's
+/// skills; the user's own skills in the same directory are not zforge's
+/// business.
+#[test]
+fn native_skill_checks() {
+    let env = Env::new();
+    let skills = env.project.join(".claude/skills");
+    assert!(skills.join("zforge-clarify-spec/SKILL.md").is_file());
+
+    std::fs::write(
+        env.dir("mcp").join("validate-skills.txt"),
+        format!(
+            "Validating components in: x\n\nValidating skill: {}/mine/SKILL.md\n\n  ❯ frontmatter: No frontmatter block found.\n\n✔ Validation passed with warnings\n",
+            skills.display()
+        ),
+    )
+    .unwrap();
+    let (_, c) = env.doctor();
+    assert_eq!(
+        level(&c, "skills"),
+        "recognized",
+        "user skills do not count against zforge"
+    );
+
+    std::fs::write(
+        env.dir("mcp").join("validate-skills.txt"),
+        format!(
+            "Validating skill: {}/zforge-debug/SKILL.md\n\n  ❯ description: No description in frontmatter.\n\n✔ Validation passed with warnings\n",
+            skills.display()
+        ),
+    )
+    .unwrap();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "skills"), "broken");
+    assert!(c["skills"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("zforge-debug"));
+
+    std::fs::remove_dir_all(skills.join("zforge-review-patch")).unwrap();
+    let (code, c) = env.doctor();
+    assert_eq!(level(&c, "skills"), "broken");
+    assert_eq!(
+        level(&c, "agents"),
+        "broken",
+        "review-agent preloads the missing skill"
+    );
+    assert_eq!(code, 1);
+}
+
+/// A `claude` that cannot validate is not a clean validation.
+#[test]
+fn a_validator_that_does_not_run_does_not_count_as_recognized() {
+    let env = Env::new();
+    std::fs::write(env.dir("mcp").join("validate-skills.txt"), "").unwrap();
+    std::fs::write(env.dir("mcp").join("validate-agents.txt"), "").unwrap();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "skills"), "configured");
+    assert_eq!(level(&c, "agents"), "configured");
 }
