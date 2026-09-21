@@ -86,12 +86,13 @@ fn try_fingerprint(root: &Path) -> Result<String, String> {
 struct TempIndex(std::path::PathBuf);
 
 impl TempIndex {
+    /// Unique per process *and* per call. A timestamp alone was not: clock
+    /// resolution let two threads fingerprinting at once pick the same file,
+    /// and git then failed on the other's index lock.
     fn new() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        Self(std::env::temp_dir().join(format!("zforge-index-{}-{nanos}", std::process::id())))
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!("zforge-index-{}-{seq}", std::process::id())))
     }
 
     fn path(&self) -> &Path {
@@ -240,6 +241,32 @@ mod tests {
 
         write(&svc, "lib.rs", "fn s() { changed() }\n");
         assert_ne!(fingerprint(&svc), before);
+    }
+
+    // Invariant guard: every temp index gets its own path. (The clock-based
+    // name this replaced only collided between threads at the same instant,
+    // which neither this nor the concurrent test reproduces reliably.)
+    #[test]
+    fn temp_indexes_are_distinct() {
+        let a = TempIndex::new();
+        let b = TempIndex::new();
+        assert_ne!(a.path(), b.path());
+    }
+
+    // Several fingerprints at once in one process must not share an index.
+    #[test]
+    fn concurrent_fingerprints_do_not_collide() {
+        let r = Repo::new();
+        let expected = r.fp();
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let root = r.root.clone();
+                std::thread::spawn(move || fingerprint(&root))
+            })
+            .collect();
+        for h in handles {
+            assert_eq!(h.join().unwrap(), Candidate::Git(expected.clone()));
+        }
     }
 
     #[test]
