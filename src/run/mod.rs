@@ -7,6 +7,7 @@
 
 pub mod reconcile;
 pub mod record;
+pub mod worktree;
 
 use std::path::{Path, PathBuf};
 

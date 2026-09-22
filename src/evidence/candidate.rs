@@ -117,7 +117,7 @@ impl Drop for TempIndex {
 /// they would point every call at that repository instead of `root`, so
 /// they are removed; `GIT_INDEX_FILE` is set again when a throwaway index
 /// is in use.
-const REPO_LOCAL_GIT_ENV: [&str; 15] = [
+pub(crate) const REPO_LOCAL_GIT_ENV: [&str; 15] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
     "GIT_CONFIG_PARAMETERS",
