@@ -14,3 +14,4 @@ pub mod prompt;
 pub mod registry;
 pub mod runner;
 pub mod state;
+pub mod trace;
