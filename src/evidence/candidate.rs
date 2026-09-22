@@ -13,10 +13,12 @@
 //! after verification, and counting them would invalidate every report the
 //! moment it is written. When the project is a subdirectory of the
 //! repository, only that subtree is fingerprinted, so commits elsewhere in a
-//! monorepo do not invalidate it.
+//! monorepo do not invalidate it. Code a tree hash cannot see — inside a
+//! checked-out submodule, or behind a symlink out of the project — is
+//! folded in by [`super::linked`].
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 /// Directories excluded from the fingerprint, relative to the project root.
 const EXCLUDED: [&str; 2] = [".zforge", ".codegraph"];
@@ -73,12 +75,14 @@ fn try_fingerprint(root: &Path) -> Result<String, String> {
     git(root, idx, &rm)?;
 
     let tree = stdout(git(root, idx, &["write-tree"])?);
-    if prefix.is_empty() {
-        return Ok(tree);
-    }
-    // Project in a subdirectory: its own subtree.
-    let spec = format!("{tree}:{}", prefix.trim_end_matches('/'));
-    Ok(stdout(git(root, None, &["rev-parse", &spec])?))
+    let code_tree = if prefix.is_empty() {
+        tree
+    } else {
+        // Project in a subdirectory: its own subtree.
+        let spec = format!("{tree}:{}", prefix.trim_end_matches('/'));
+        stdout(git(root, None, &["rev-parse", &spec])?)
+    };
+    super::linked::with_linked_inputs(root, idx, code_tree, try_fingerprint)
 }
 
 /// Path for a throwaway index; git creates the file, the guard removes it
@@ -131,7 +135,21 @@ const REPO_LOCAL_GIT_ENV: [&str; 15] = [
     "GIT_COMMON_DIR",
 ];
 
-fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<Output, String> {
+pub(super) fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<Output, String> {
+    run_git(root, index, args, None)
+}
+
+/// [`git`] with `input` on stdin (`hash-object --stdin`, `--stdin-paths`).
+pub(super) fn git_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<Output, String> {
+    run_git(root, None, args, Some(input))
+}
+
+fn run_git(
+    root: &Path,
+    index: Option<&Path>,
+    args: &[&str],
+    input: Option<&[u8]>,
+) -> Result<Output, String> {
     let mut cmd = Command::new("git");
     cmd.args(args).current_dir(root);
     for var in REPO_LOCAL_GIT_ENV {
@@ -140,9 +158,32 @@ fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<Output, Strin
     if let Some(idx) = index {
         cmd.env("GIT_INDEX_FILE", idx);
     }
-    let out = cmd
-        .output()
-        .map_err(|e| format!("git not available: {e}"))?;
+    let out = match input {
+        None => cmd.output(),
+        Some(bytes) => {
+            use std::io::Write;
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            cmd.spawn().and_then(|mut child| {
+                // Written from a thread: `--stdin-paths` answers each line
+                // as it goes, so for a long listing git's stdout would fill
+                // while we were still writing its stdin.
+                let mut stdin = child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| std::io::Error::other("git stdin was not piped"))?;
+                let bytes = bytes.to_vec();
+                let writer = std::thread::spawn(move || stdin.write_all(&bytes));
+                let out = child.wait_with_output()?;
+                writer
+                    .join()
+                    .map_err(|_| std::io::Error::other("stdin writer panicked"))??;
+                Ok(out)
+            })
+        }
+    }
+    .map_err(|e| format!("git not available: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "`git {}` failed: {}",
@@ -153,7 +194,7 @@ fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<Output, Strin
     Ok(out)
 }
 
-fn stdout(out: Output) -> String {
+pub(super) fn stdout(out: Output) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 

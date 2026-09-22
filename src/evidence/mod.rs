@@ -7,6 +7,7 @@
 
 pub mod candidate;
 pub mod history;
+mod linked;
 
 pub use candidate::{fingerprint, Candidate};
 

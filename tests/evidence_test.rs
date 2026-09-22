@@ -17,11 +17,51 @@ impl Project {
     /// Git repo with committed code and task T1 at Coded.
     fn git(test_command: &str) -> Self {
         let p = Self::plain(test_command);
-        p.git_cmd(&["init", "-q", "."]);
-        p.git_cmd(&["config", "user.email", "t@t"]);
-        p.git_cmd(&["config", "user.name", "t"]);
+        p.init_git();
+        p
+    }
+
+    /// Commit everything in the project as a new repository.
+    fn init_git(&self) {
+        self.git_cmd(&["init", "-q", "."]);
+        self.git_cmd(&["config", "user.email", "t@t"]);
+        self.git_cmd(&["config", "user.name", "t"]);
+        self.git_cmd(&["add", "-A"]);
+        self.git_cmd(&["commit", "-qm", "init"]);
+    }
+
+    /// Git project with a checked-out submodule at `sub/` holding `dep.rs`.
+    fn with_submodule() -> Self {
+        let p = Self::git("sh -c 'exit 0'");
+        let upstream = p.root.join(".upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        std::fs::write(upstream.join("dep.rs"), "fn d() {}\n").unwrap();
+        for args in [
+            &["init", "-q", "."][..],
+            &["config", "user.email", "t@t"],
+            &["config", "user.name", "t"],
+            &["add", "-A"],
+            &["commit", "-qm", "dep"],
+        ] {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&upstream)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        }
+        std::fs::write(p.root.join(".gitignore"), ".upstream/\n").unwrap();
+        p.git_cmd(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            upstream.to_str().unwrap(),
+            "sub",
+        ]);
         p.git_cmd(&["add", "-A"]);
-        p.git_cmd(&["commit", "-qm", "init"]);
+        p.git_cmd(&["commit", "-qm", "submodule"]);
         p
     }
 
@@ -313,5 +353,87 @@ fn inherited_git_environment_does_not_redirect_the_fingerprint() {
     assert!(
         p.state().contains("state: Verified"),
         "review must not advance"
+    );
+}
+
+/// A tracked symlink is fingerprinted by its target *string*; when it points
+/// outside the project, edits to the file it names went unnoticed.
+#[test]
+fn edits_behind_a_symlink_out_of_the_project_invalidate_it() {
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("shared.rs"), "fn s() {}\n").unwrap();
+    let p = Project::plain("sh -c 'exit 0'");
+    std::os::unix::fs::symlink(outside.path().join("shared.rs"), p.root.join("shared.rs")).unwrap();
+    p.init_git();
+
+    p.verify();
+    std::fs::write(outside.path().join("shared.rs"), "fn s() { changed() }\n").unwrap();
+
+    let out = p.review_done();
+    assert!(!out.status.success(), "stale evidence must not be accepted");
+    assert!(
+        err(&out).contains("code changed after it was verified"),
+        "{}",
+        err(&out)
+    );
+}
+
+/// A submodule is recorded as its commit; uncommitted edits inside it went
+/// unnoticed.
+#[test]
+fn uncommitted_edits_in_a_submodule_invalidate_it() {
+    let p = Project::with_submodule();
+    p.verify();
+    std::fs::write(p.root.join("sub/dep.rs"), "fn d() { changed() }\n").unwrap();
+
+    let out = p.review_done();
+    assert!(!out.status.success(), "stale evidence must not be accepted");
+    assert!(
+        err(&out).contains("code changed after it was verified"),
+        "{}",
+        err(&out)
+    );
+}
+
+/// The extra inputs are stable: an untouched project with a submodule and an
+/// outside symlink still reviews.
+#[test]
+fn a_project_with_a_submodule_reviews_when_nothing_changed() {
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("shared.rs"), "fn s() {}\n").unwrap();
+    let p = Project::with_submodule();
+    std::os::unix::fs::symlink(outside.path().join("shared.rs"), p.root.join("shared.rs")).unwrap();
+    p.git_cmd(&["add", "shared.rs"]);
+    p.git_cmd(&["commit", "-qm", "link"]);
+
+    p.verify();
+    let out = p.review_done();
+    assert!(out.status.success(), "{}", err(&out));
+}
+
+/// A symlinked directory outside the project is covered file by file — and
+/// a large one does not stall the fingerprint (git answers `--stdin-paths`
+/// while its input is still being written).
+#[test]
+fn edits_in_a_large_symlinked_directory_invalidate_it() {
+    let outside = tempfile::tempdir().unwrap();
+    let vendor = outside.path().join("vendor");
+    std::fs::create_dir_all(&vendor).unwrap();
+    for i in 0..3000 {
+        std::fs::write(vendor.join(format!("f{i}.rs")), format!("fn f{i}() {{}}\n")).unwrap();
+    }
+    let p = Project::plain("sh -c 'exit 0'");
+    std::os::unix::fs::symlink(&vendor, p.root.join("vendor")).unwrap();
+    p.init_git();
+
+    p.verify();
+    std::fs::write(vendor.join("f1234.rs"), "fn changed() {}\n").unwrap();
+
+    let out = p.review_done();
+    assert!(!out.status.success(), "stale evidence must not be accepted");
+    assert!(
+        err(&out).contains("code changed after it was verified"),
+        "{}",
+        err(&out)
     );
 }
