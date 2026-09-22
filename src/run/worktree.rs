@@ -186,8 +186,17 @@ pub fn list(project_root: &Path) -> Result<Vec<Worktree>> {
 }
 
 /// Add [`IGNORE_LINE`] to the project's `.gitignore` once, creating the
-/// file if needed and leaving the rest of it as it was.
+/// file if needed and leaving the rest of it as it was — unless git already
+/// ignores the worktrees (e.g. `.zforge/` is ignored), in which case the
+/// user's checkout is left exactly as it was.
 pub fn ensure_ignored(project_root: &Path) -> Result<()> {
+    let probe = format!("{WORKTREES_DIR}/RUN-000/x");
+    if git(project_root, &["check-ignore", "-q", &probe])?
+        .status
+        .success()
+    {
+        return Ok(());
+    }
     let path = project_root.join(".gitignore");
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -340,6 +349,18 @@ mod tests {
         assert!(!w.path.exists());
         assert!(branch_exists(&r.root, &w.branch).unwrap());
         assert!(list(&r.root).unwrap().is_empty());
+    }
+
+    /// Already ignored by the project: `.gitignore` is not touched.
+    #[test]
+    fn an_already_ignored_location_leaves_gitignore_alone() {
+        let r = Repo::new();
+        std::fs::write(r.root.join(".gitignore"), ".zforge/\n").unwrap();
+        create(&r.root, "RUN-001", "TASK-002", &r.head()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(r.root.join(".gitignore")).unwrap(),
+            ".zforge/\n"
+        );
     }
 
     /// AC-05.

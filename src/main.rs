@@ -198,6 +198,15 @@ enum Commands {
         #[command(subcommand)]
         cmd: crate::cli::intake::IntakeCmd,
     },
+    /// v1.5 Mốc B: execute one handed-over leaf task in its own worktree,
+    /// with the handover's budget and iteration limit. Foreground; Ctrl-C
+    /// records the run as cancelled.
+    Run {
+        /// `HANDOVER-001`, or `<INTAKE>/HANDOVER-001` when ambiguous.
+        handover: String,
+        #[arg(long)]
+        task: String,
+    },
     /// v1.5: check whether an intake's accepted files are ready to hand
     /// over (§6.2). Writes `readiness.md`; exits 1 when not ready.
     Readiness {
@@ -438,6 +447,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Git { cmd } => cli::git::run(cmd),
         Commands::Trace { task_id, json } => cli::trace::run(&task_id, json),
         Commands::Intake { cmd } => cli::intake::run(cmd),
+        Commands::Run { handover, task } => cli::run::run(&handover, &task),
         Commands::Knowledge {
             cmd: KnowledgeCmd::Index { json },
         } => cli::intake::knowledge_index(json),

@@ -17,6 +17,7 @@ pub mod plan;
 pub mod project;
 pub mod retry;
 pub mod review;
+pub mod run;
 pub mod ship;
 pub mod spec;
 pub mod state_sync;

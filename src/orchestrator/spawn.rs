@@ -29,9 +29,32 @@ pub struct SpawnOutcome {
 /// (MCP servers, tool subprocesses) that previously survived the kill and
 /// kept the output pipes open, so the "timeout" waited as long as they did.
 pub fn spawn_agent(spec: &AgentSpec, prompt: &str, timeout_secs: u64) -> Result<SpawnOutcome> {
+    spawn(spec, prompt, timeout_secs, None)
+}
+
+/// [`spawn_agent`] with the agent's working directory set explicitly — a
+/// Mốc B run's worktree — instead of inherited from zforge's own cwd.
+pub fn spawn_agent_in(
+    spec: &AgentSpec,
+    prompt: &str,
+    timeout_secs: u64,
+    work_dir: &std::path::Path,
+) -> Result<SpawnOutcome> {
+    spawn(spec, prompt, timeout_secs, Some(work_dir))
+}
+
+fn spawn(
+    spec: &AgentSpec,
+    prompt: &str,
+    timeout_secs: u64,
+    work_dir: Option<&std::path::Path>,
+) -> Result<SpawnOutcome> {
     let started = Instant::now();
     let mut cmd = Command::new(&spec.command);
     cmd.args(&spec.args);
+    if let Some(dir) = work_dir {
+        cmd.current_dir(dir);
+    }
 
     let out = run_bounded(
         cmd,

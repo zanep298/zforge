@@ -1,0 +1,380 @@
+#![cfg(unix)]
+//! Mốc B `zforge run` end to end (MOC-B TASK-004).
+//!
+//! A real git project with a bug (`add` subtracts), an intake accepted and
+//! handed over through the library, and the real binary. `claude` is a stub
+//! that works in its cwd — fixing `lib.sh` or not — and replays a real Claude
+//! Code stream, whose `result` reports $0.20.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
+
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/claude/stream_code_agent.jsonl"
+);
+const BUG: &str = "add() { echo $(( $1 - $2 )); }\n";
+const FIX: &str = "add() { echo $(( $1 + $2 )); }\n";
+
+fn task(id: &str, deps: &str) -> String {
+    format!(
+        "---\nid: {id}\nparent: F\nrequirements: [REQ-001]\ndepends_on: [{deps}]\n---\n\n# {id}\n\n\
+         ## Mục tiêu\nadd trả về tổng.\n## Input\nlib.sh.\n## Output\nadd đúng.\n## Ràng buộc\nChỉ sửa lib.sh.\n\
+         ## Tự chủ\nTự chọn cách sửa.\n## Acceptance và kiểm chứng\n- AC-01: sh test.sh pass\n## Bàn giao\nLocal.\n\
+         ## Cần amendment khi\nPhải sửa test.\n## Câu hỏi còn mở\n"
+    )
+}
+
+struct Project {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+    home: PathBuf,
+    marks: PathBuf,
+}
+
+impl Project {
+    /// `budget` and `iterations` go into the handover's policy.
+    fn new(budget: f64, iterations: u32) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap().join("proj");
+        let home = dir.path().canonicalize().unwrap().join("zf");
+        let marks = dir.path().canonicalize().unwrap().join("marks");
+        for d in [&root, &home, &marks] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(root.join("lib.sh"), BUG).unwrap();
+        std::fs::write(
+            root.join("test.sh"),
+            "#!/bin/sh\n. ./lib.sh\n[ \"$(add 2 3)\" = 5 ] || { echo 'FAIL add_small'; exit 1; }\necho ok\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".gitignore"), ".zforge/\n").unwrap();
+        std::fs::create_dir_all(root.join(".zforge")).unwrap();
+        std::fs::write(
+            root.join(".zforge/config.yaml"),
+            format!(
+                "project:\n  name: t\n  language: shell\n  test_command: \"sh test.sh\"\n\
+                 execution:\n  budget_usd: {budget}\n  max_iterations: {iterations}\n"
+            ),
+        )
+        .unwrap();
+        let p = Self {
+            _dir: dir,
+            root,
+            home,
+            marks,
+        };
+        p.git(&["init", "-q", "-b", "main", "."]);
+        p.git(&["add", "-A"]);
+        p.git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+        p.hand_over();
+        p
+    }
+
+    fn git(&self, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&self.root)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn hand_over(&self) {
+        use zforge::intake::{handover, readiness, review};
+        let i = review::create(&self.root, "F").unwrap();
+        let d = &i.dir;
+        std::fs::write(
+            d.join("01-outcome.md"),
+            "# F\n\n## Yêu cầu\n\n- REQ-001: add trả về tổng\n\n## Câu hỏi còn mở\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("02-behavior.md"),
+            "# B\n\n## Tình huống\nREQ-001: add 2 3 = 5.\n\n## Câu hỏi còn mở\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("03-solution.md"),
+            "# S\n\n## Luồng\nSửa phép tính.\n\n## Câu hỏi còn mở\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("04-breakdown.md"), "# K\n\n## Task\nTASK-001, TASK-002\n\n## Kiểm chứng tích hợp\nsh test.sh\n\n## Câu hỏi còn mở\n").unwrap();
+        std::fs::write(d.join("tasks/TASK-001.md"), task("TASK-001", "")).unwrap();
+        std::fs::write(d.join("tasks/TASK-002.md"), task("TASK-002", "TASK-001")).unwrap();
+        for f in i.files() {
+            review::review(&i, &f).unwrap();
+            review::accept(&i, &f, None).unwrap();
+        }
+        let config = zforge::config::load_from(&self.root.join(".zforge/config.yaml")).unwrap();
+        let r = readiness::check(&i, &self.root, &[], &config.execution).unwrap();
+        assert!(r.ready, "{:?}", r.checks);
+        handover::create(&i, &self.root, &[], &config, &r.files, None).unwrap();
+    }
+
+    /// Register `claude` as a stub: records its cwd, then runs `body`.
+    fn stub(&self, body: &str) {
+        let script = self.home.join("claude-stub");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncat > /dev/null\npwd >> {marks}/cwd\necho \"$@\" >> {marks}/args\n{body}\n",
+                marks = self.marks.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            self.home.join("registry.yaml"),
+            format!(
+                "agents:\n  claude:\n    command: {}\n    args: [\"-p\", \"--output-format\", \"stream-json\", \"--verbose\"]\n\
+                 fallback_policy:\n  max_retries: 0\n  cooldown_seconds: 0\n",
+                script.display()
+            ),
+        )
+        .unwrap();
+    }
+
+    fn cmd(&self, args: &[&str]) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_zforge"));
+        c.args(args)
+            .current_dir(&self.root)
+            .env("ZFORGE_HOME", &self.home)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        c
+    }
+
+    fn zforge(&self, args: &[&str]) -> Output {
+        self.cmd(args).output().unwrap()
+    }
+
+    fn run_dir(&self, id: &str) -> PathBuf {
+        self.root.join(".zforge/runs").join(id)
+    }
+
+    fn events(&self, id: &str) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.run_dir(id).join("events.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    fn count(&self, id: &str, event: &str) -> usize {
+        self.events(id)
+            .iter()
+            .filter(|e| e["event"] == event)
+            .count()
+    }
+
+    fn last(&self, id: &str) -> serde_json::Value {
+        self.events(id).last().cloned().unwrap()
+    }
+}
+
+fn err(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn fix_and_report() -> String {
+    format!(
+        "printf '{}' > lib.sh\ncat {FIXTURE}",
+        FIX.trim_end().replace('%', "%%") + "\\n"
+    )
+}
+
+/// AC-01 and AC-04.
+#[test]
+fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
+    let p = Project::new(3.0, 3);
+    p.stub(&fix_and_report());
+    let status_before = p.git(&["status", "--porcelain"]);
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("RUN-001 verified"));
+
+    let worktree = p.root.join(".zforge/worktrees/RUN-001");
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "verified");
+    let candidate = zforge::evidence::fingerprint(&worktree);
+    assert_eq!(
+        last["candidate"].as_str(),
+        candidate.hash(),
+        "evidence is the worktree's tree"
+    );
+    assert_eq!(p.count("RUN-001", "attempt"), 1);
+    assert!((p.events("RUN-001")[1]["cost_usd"].as_f64().unwrap() - 0.2003).abs() < 0.001);
+
+    // The work happened in the worktree, not in the user's checkout.
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("lib.sh")).unwrap(),
+        FIX
+    );
+    assert_eq!(std::fs::read_to_string(p.root.join("lib.sh")).unwrap(), BUG);
+    assert_eq!(
+        std::fs::read_to_string(p.marks.join("cwd")).unwrap().trim(),
+        worktree.display().to_string()
+    );
+    assert_eq!(
+        p.git(&["status", "--porcelain"]),
+        status_before,
+        "checkout unchanged"
+    );
+    assert_eq!(p.git(&["branch", "--show-current"]).trim(), "main");
+    assert!(p
+        .git(&["branch", "--list", "zforge/TASK-001/RUN-001"])
+        .contains("RUN-001"));
+
+    // AC-04: the agent got the budget, headless, in the worktree.
+    let args = std::fs::read_to_string(p.marks.join("args")).unwrap();
+    assert!(args.contains("--max-budget-usd 3.00"), "{args}");
+    assert!(args.contains("--dangerously-skip-permissions"), "{args}");
+    let trace: serde_json::Value = serde_json::from_str(
+        std::fs::read_to_string(p.run_dir("RUN-001").join("trace.jsonl"))
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(trace["command"].to_string().contains("--max-budget-usd"));
+    let state =
+        std::fs::read_to_string(p.run_dir("RUN-001").join("task/RUN-001/.state.yaml")).unwrap();
+    assert!(
+        state.contains("flow: Contract") && state.contains("state: Verified"),
+        "{state}"
+    );
+}
+
+/// AC-02.
+#[test]
+fn a_run_that_never_passes_fails_after_its_verifications() {
+    let p = Project::new(5.0, 2);
+    p.stub(&format!("cat {FIXTURE}"));
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "failed");
+    assert!(
+        last["reason"]
+            .as_str()
+            .unwrap()
+            .contains("verifier budget exhausted"),
+        "{last}"
+    );
+    assert_eq!(p.count("RUN-001", "verify_started"), 2);
+    assert_eq!(p.count("RUN-001", "verify_failed"), 2);
+    assert_eq!(p.count("RUN-001", "attempt"), 2);
+    assert!(
+        p.root.join(".zforge/worktrees/RUN-001").is_dir(),
+        "kept for inspection"
+    );
+}
+
+/// AC-03 and AC-06: the budget is shared by every run of the task in the
+/// handover.
+#[test]
+fn a_run_stops_at_its_budget_and_the_next_one_is_refused() {
+    let p = Project::new(0.3, 3);
+    p.stub(&format!("cat {FIXTURE}"));
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "blocked", "{:?}", p.events("RUN-001"));
+    assert!(last["reason"].as_str().unwrap().starts_with("budget:"));
+    assert_eq!(
+        p.count("RUN-001", "attempt"),
+        2,
+        "no agent call after the budget ran out"
+    );
+    let args = std::fs::read_to_string(p.marks.join("args")).unwrap();
+    assert!(
+        args.lines()
+            .nth(1)
+            .unwrap()
+            .contains("--max-budget-usd 0.10"),
+        "second call gets what is left: {args}"
+    );
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains("budget of TASK-001 in HANDOVER-001 is used up"),
+        "{}",
+        err(&out)
+    );
+    assert!(!p.run_dir("RUN-002").exists());
+}
+
+/// Foreground Ctrl-C: the agent is stopped and the run recorded cancelled.
+#[test]
+fn an_interrupted_foreground_run_is_recorded_as_cancelled() {
+    let p = Project::new(3.0, 3);
+    p.stub("sleep 30");
+    let child = p
+        .cmd(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !p.marks.join("cwd").exists() {
+        assert!(Instant::now() < deadline, "agent never started");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // SAFETY: signalling a child we spawned.
+    unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
+    let out = child.wait_with_output().unwrap();
+
+    assert_eq!(out.status.code(), Some(130), "{}", err(&out));
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "cancelled");
+    assert!(last["reason"].as_str().unwrap().contains("signal 2"));
+}
+
+/// Refusals before anything is created: dependent task, unknown runner.
+#[test]
+fn refusals_create_no_run() {
+    let p = Project::new(3.0, 3);
+    p.stub(&format!("cat {FIXTURE}"));
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains("running dependent tasks comes with Mốc C"),
+        "{}",
+        err(&out)
+    );
+    assert!(!p.root.join(".zforge/runs").join("RUN-001").exists());
+
+    std::fs::write(p.home.join("registry.yaml"), "agents: {}\n").unwrap();
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "failed");
+    assert!(
+        last["reason"]
+            .as_str()
+            .unwrap()
+            .contains("leaf tasks run on Claude"),
+        "{last}"
+    );
+    assert!(!Path::new(&p.root.join(".zforge/worktrees/RUN-001")).exists());
+}

@@ -213,8 +213,25 @@ mod group {
     use super::CHILD_PGIDS_FILE_ENV;
     use std::os::unix::process::CommandExt;
     use std::process::Command;
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::sync::{Mutex, Once};
+
+    // Set by `catch_interrupts`: the handler records the signal instead of
+    // re-raising it, so the caller can record the interruption and exit.
+    static CATCH: AtomicBool = AtomicBool::new(false);
+    static CAUGHT: AtomicI32 = AtomicI32::new(0);
+
+    pub fn catch_interrupts() {
+        CATCH.store(true, Ordering::SeqCst);
+        INSTALL.call_once(install_forwarding);
+    }
+
+    pub fn take_interrupt() -> Option<i32> {
+        match CAUGHT.swap(0, Ordering::SeqCst) {
+            0 => None,
+            sig => Some(sig),
+        }
+    }
 
     pub enum Signal {
         Term,
@@ -381,6 +398,13 @@ mod group {
         }
         signal_active(libc::SIGKILL);
 
+        // A caller that catches interrupts records its own end; the children
+        // are already stopped. (Atomic store: async-signal-safe.)
+        if CATCH.load(Ordering::SeqCst) {
+            CAUGHT.store(sig, Ordering::SeqCst);
+            return;
+        }
+
         // Then die the way we would have without the handler, of *this*
         // signal. Forwarded signals that arrived meanwhile are pending
         // (blocked by `sa_mask`); ignoring them discards them, so none can
@@ -435,6 +459,23 @@ mod group {
     pub fn register(_pgid: u32) -> Registration {
         Registration
     }
+    pub fn catch_interrupts() {}
+    pub fn take_interrupt() -> Option<i32> {
+        None
+    }
+}
+
+/// From now on SIGINT/SIGTERM/SIGHUP stop every running child tree as
+/// before, but do not end the process: the signal is recorded for
+/// [`take_interrupt`], so a long-running command can record how it ended
+/// (a Mốc B run writes `cancelled`) and exit on its own.
+pub fn catch_interrupts() {
+    group::catch_interrupts();
+}
+
+/// The signal caught since the last call, if any (see [`catch_interrupts`]).
+pub fn take_interrupt() -> Option<i32> {
+    group::take_interrupt()
 }
 
 /// Process groups recorded in a `CHILD_PGIDS_FILE_ENV` file.

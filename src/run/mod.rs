@@ -6,6 +6,7 @@
 //! `progress.md` are generated from the log and carry no authority.
 
 pub mod contract;
+pub mod execute;
 pub mod reconcile;
 pub mod record;
 pub mod worktree;

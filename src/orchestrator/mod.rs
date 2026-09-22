@@ -11,7 +11,7 @@ pub mod history;
 pub mod model_args;
 pub mod run;
 pub mod spawn;
-mod trace_record;
+pub(crate) mod trace_record;
 pub mod verifier_loop;
 
 pub use run::{run_phase, run_phase_with_lock};
