@@ -331,6 +331,16 @@ fn a_fully_accepted_intake_is_ready_and_hands_over_what_was_accepted() {
         err.to_string().contains("changed after they were shown"),
         "{err}"
     );
+
+    // Tasks and later stages accepted before that revision may rest on the
+    // old solution.
+    let (_, r) = p.readiness(&[]);
+    let warnings = r["warnings"].to_string();
+    assert!(
+        warnings.contains("tasks/TASK-001.md was accepted before 03-solution.md revision 2"),
+        "{warnings}"
+    );
+    assert!(warnings.contains("04-breakdown.md was accepted before 03-solution.md revision 2"));
 }
 
 #[test]

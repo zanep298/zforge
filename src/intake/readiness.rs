@@ -217,6 +217,9 @@ pub fn check(
         },
     );
 
+    b.warnings
+        .extend(accepted_before_upstream(intake, &pinned, &metas)?);
+
     let ready = b.checks.iter().all(|c| c.ok);
     Ok(Readiness {
         intake: intake.id.clone(),
@@ -227,6 +230,64 @@ pub fn check(
         files: pinned,
         ready,
     })
+}
+
+/// Files accepted before a file they build on got a newer accepted
+/// revision: the later stages and tasks may rest on the old contract.
+/// Stages build on the stages before them; a task on every stage and on
+/// the tasks it depends on.
+fn accepted_before_upstream(
+    intake: &Intake,
+    pinned: &[Pinned],
+    metas: &BTreeMap<String, TaskMeta>,
+) -> Result<Vec<String>> {
+    let log = record::read(intake)?;
+    let accepted_at = |p: &Pinned| {
+        log.iter()
+            .filter(|d| {
+                d.file == p.file
+                    && d.revision == p.revision
+                    && d.decision == record::DecisionKind::Accepted
+            })
+            .map(|d| d.at)
+            .last()
+    };
+    let by_file: BTreeMap<&str, &Pinned> = pinned.iter().map(|p| (p.file.as_str(), p)).collect();
+    let mut warnings = Vec::new();
+    for p in pinned {
+        let upstream: Vec<String> = match task_id(&p.file) {
+            Some(t) => STAGES
+                .iter()
+                .map(|s| s.to_string())
+                .chain(
+                    metas
+                        .get(&t)
+                        .map(|m| m.depends_on.clone())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|d| format!("tasks/{d}.md")),
+                )
+                .collect(),
+            None => STAGES
+                .iter()
+                .take_while(|s| **s != p.file)
+                .map(|s| s.to_string())
+                .collect(),
+        };
+        let Some(mine) = accepted_at(p) else { continue };
+        for up in upstream {
+            let Some(u) = by_file.get(up.as_str()) else {
+                continue;
+            };
+            if accepted_at(u).is_some_and(|t| t > mine) {
+                warnings.push(format!(
+                    "{} was accepted before {} revision {}; check it still holds",
+                    p.file, u.file, u.revision
+                ));
+            }
+        }
+    }
+    Ok(warnings)
 }
 
 fn task_id(file: &str) -> Option<String> {
