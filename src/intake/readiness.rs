@@ -244,13 +244,13 @@ fn accepted_before_upstream(
     let log = record::read(intake)?;
     let accepted_at = |p: &Pinned| {
         log.iter()
-            .filter(|d| {
+            .rev()
+            .find(|d| {
                 d.file == p.file
                     && d.revision == p.revision
                     && d.decision == record::DecisionKind::Accepted
             })
             .map(|d| d.at)
-            .last()
     };
     let by_file: BTreeMap<&str, &Pinned> = pinned.iter().map(|p| (p.file.as_str(), p)).collect();
     let mut warnings = Vec::new();
