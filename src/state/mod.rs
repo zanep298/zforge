@@ -324,6 +324,18 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// MOC-B TASK-003 AC-04: adding `Flow::Contract` must not change how a
+    /// state file written before flows existed is read.
+    #[test]
+    fn a_state_file_without_a_flow_reads_as_full() {
+        let yaml =
+            "task_id: T1\nstate: Coded\nupdated_at: \"2026-01-01T00:00:00+00:00\"\nhistory: []\n";
+        let ts: TaskState = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(ts.flow, Flow::Full);
+        assert_eq!(ts.state, State::Coded);
+    }
+
     use super::*;
     use tempfile::TempDir;
 

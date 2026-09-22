@@ -5,6 +5,7 @@
 //! only source of truth for the run's state ([`record`]). Views such as
 //! `progress.md` are generated from the log and carry no authority.
 
+pub mod contract;
 pub mod reconcile;
 pub mod record;
 pub mod worktree;

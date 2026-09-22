@@ -15,6 +15,11 @@ pub enum Flow {
     Fixbug,
     Spike,
     Docs,
+    /// v1.5 leaf task run from a handover (MOC-B): the accepted contract
+    /// replaces spec, testspec and plan, so it goes straight to code and
+    /// verify. Created by the runtime only — `parse` does not accept it,
+    /// since a task imported by hand would have no contract to work from.
+    Contract,
 }
 
 impl Flow {
@@ -34,6 +39,7 @@ impl Flow {
             Flow::Fixbug => "fixbug",
             Flow::Spike => "spike",
             Flow::Docs => "docs",
+            Flow::Contract => "contract",
         }
     }
 
@@ -54,6 +60,7 @@ impl Flow {
             Flow::Fixbug => &[Imported, SpecDone, TestspecDone, Coded, Verified],
             Flow::Spike => &[Imported, SpecDone, Coded],
             Flow::Docs => &[Imported, Coded],
+            Flow::Contract => &[Imported, Coded, Verified],
         }
     }
 
@@ -106,6 +113,24 @@ pub fn dispatch_command(target: &State, task_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MOC-B TASK-003 AC-04.
+    #[test]
+    fn contract_flow_goes_straight_to_code_and_verify() {
+        let f = Flow::Contract;
+        assert_eq!(
+            f.states(),
+            &[State::Imported, State::Coded, State::Verified]
+        );
+        assert_eq!(f.next_after(&State::Imported), Some(&State::Coded));
+        assert_eq!(f.next_after(&State::Coded), Some(&State::Verified));
+        assert_eq!(f.next_after(&State::Verified), None);
+        assert!(!f.contains(&State::SpecDone));
+        assert_eq!(f.as_str(), "contract");
+        assert!(Flow::parse("contract").is_err(), "runtime-only flow");
+        let yaml = serde_yaml::to_string(&f).unwrap();
+        assert_eq!(serde_yaml::from_str::<Flow>(&yaml).unwrap(), f);
+    }
 
     #[test]
     fn parse_recognises_aliases() {
