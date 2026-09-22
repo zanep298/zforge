@@ -35,6 +35,17 @@ pub fn current_status(
     project_root: &Path,
     configured_command: &str,
 ) -> EvidenceStatus {
+    status_against(verify_md, &fingerprint(project_root), configured_command)
+}
+
+/// [`current_status`] against an already-taken fingerprint of the code, for
+/// callers judging many reports against the same tree (`doctor`): each
+/// fingerprint is several git runs over the whole working tree.
+pub fn status_against(
+    verify_md: &Path,
+    current: &Candidate,
+    configured_command: &str,
+) -> EvidenceStatus {
     let invalid = |reason: String| EvidenceStatus::Invalid { reason };
     let Ok(report) = MarkdownFile::read(verify_md) else {
         return invalid("no verification report (verify.md); run verify".into());
@@ -58,7 +69,7 @@ pub fn current_status(
     };
     let recorded = recorded.as_str().map(str::to_string);
 
-    match (recorded, fingerprint(project_root)) {
+    match (recorded, current.clone()) {
         (Some(was), Candidate::Git(now)) if was == now => EvidenceStatus::Current,
         (Some(was), Candidate::Git(now)) => invalid(format!(
             "the code changed after it was verified (verified {}, now {}); run verify again",

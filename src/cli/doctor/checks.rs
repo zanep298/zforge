@@ -467,6 +467,9 @@ pub fn evidence(ctx: &Ctx<'_>) -> Check {
     };
     let mut verified = 0;
     let mut stale = Vec::new();
+    // One fingerprint for all tasks: the tree is the same for each, and
+    // taking it is several git runs. Taken only if a task needs it.
+    let current = std::cell::OnceCell::new();
     for e in entries.flatten() {
         let id = e.file_name().to_string_lossy().into_owned();
         let Ok(ts) = crate::state::TaskState::load(&tasks_dir, &id) else {
@@ -476,9 +479,9 @@ pub fn evidence(ctx: &Ctx<'_>) -> Check {
             continue;
         }
         verified += 1;
-        let status = crate::evidence::current_status(
+        let status = crate::evidence::status_against(
             &tasks_dir.join(&id).join("verify.md"),
-            &ctx.root,
+            current.get_or_init(|| crate::evidence::fingerprint(&ctx.root)),
             &ctx.config.project.test_command,
         );
         if let crate::evidence::EvidenceStatus::Invalid { reason } = status {
