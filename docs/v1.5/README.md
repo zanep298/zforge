@@ -57,6 +57,7 @@ benchmark một task); IMP-001/IMP-003 đạt phần cần cho các fix. Workflo
 | Tài liệu | Nội dung |
 |---|---|
 | [Backlog sửa lỗi](./bug-fixes.md) | 17 nhóm lỗi runtime và init/dispatch, cộng 9 lỗi từ review nhánh sửa lỗi; mức ưu tiên, bằng chứng, vị trí code, hướng sửa và tiêu chí nghiệm thu — tất cả đã sửa |
+| [Đề xuất quyết định §14](./decisions.md) | 6 quyết định triển khai còn mở: phương án, đề xuất và điểm cần chốt — chưa có hiệu lực |
 | [Kế hoạch cải tiến](./improvements.md) | 6 nhóm cải tiến về operation, persistence, CI, native skills/agents/MCP, readiness tool và trace/benchmark; mỗi mục ghi tiến độ và phần chưa làm |
 
 Ưu tiên kết quả/gate chính xác, state/lock/timeout an toàn và init đúng client.

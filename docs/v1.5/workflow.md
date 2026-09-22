@@ -492,6 +492,8 @@ hoặc yêu cầu đo thời gian hoạt động của người dùng.
 - Mức tái sử dụng code v1 và quy tắc tương thích, nếu có.
 - Cách phát hiện semantic drift, hiệu lực của knowledge và cập nhật reference.
 
+Đề xuất cho từng mục, kèm điểm cần người dùng chọn: [decisions.md](./decisions.md).
+
 Các mục này cần được chốt trong intake triển khai v1.5. Tên v1.5 không ngụ ý
 phải xây toàn bộ nền tảng v2 hoặc kế thừa tự động các ADR của hướng đó.
 
