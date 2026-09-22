@@ -268,5 +268,8 @@ lại nội dung (§9.2). Embedding hay tìm kiếm ngữ nghĩa để sau, khi 
    IMP-006 trên một leaf task (D3, D5) — đây là Mốc B.
 4. `knowledge/index.md` + drift cơ học (D6); drift ngữ nghĩa trong prompt intake.
 
+Tiến độ 22/09/2026: bước 1, 2 xong; bước 4 có index và drift cơ học cho file
+(cảnh báo file chốt trước revision cấp trên); bước 3 chưa làm.
+
 Mốc A có thể bắt đầu ngay sau khi D1, D2, D4 được chốt; D3, D5 cần trước Mốc B; D6
 trước khi dùng knowledge cho intake thứ hai.

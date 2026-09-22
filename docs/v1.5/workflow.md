@@ -431,6 +431,21 @@ trải nghiệm intake ở Mốc A có thể tiếp tục song song. Việc dùn
 
 Mốc này chứng minh trải nghiệm intake, chưa tuyên bố có execution tự chủ.
 
+**Tiến độ (22/09/2026, `src/intake/`, `src/cli/intake.rs`):**
+
+| Hạng mục | Đã có |
+|---|---|
+| Template, định danh | `zforge intake new <ID>` sinh 4 stage; `zforge intake task <ID> TASK-xxx` sinh leaf task (frontmatter `id/parent/requirements/depends_on` + 8 section §5.6). `REQ-001` định nghĩa trong 01-outcome, `AC-01` trong task, câu hỏi mở `- [ ]` |
+| Review và quyết định | `zforge intake review` chụp snapshot, ghi hash, in diff với revision đã chốt; `accept` / `revise --note` chỉ chạy với TTY + gõ xác nhận (D1), chỉ cho đúng hash đang review (D2). Nhật ký append-only + snapshot trong `.records/`; trạng thái suy ra, không lưu trong file. `.claude/settings.json` deny các lệnh này với Claude |
+| Revise, diff, reference cũ, task thiếu requirement | Linter: REQ phải được định nghĩa, task phải trỏ tới REQ có thật, section/AC bắt buộc. Readiness cảnh báo file được chốt trước revision mới của file cấp trên |
+| Readiness, manifest, knowledge | `zforge readiness` (§6.2, trên bản đã chốt) ghi `readiness.md`; `zforge handover` (TTY) ghi `HANDOVER-nnn.json` với file/revision/hash, thứ tự task, baseline + HEAD + fingerprint, policy, ranh giới bàn giao; `zforge knowledge index` sinh index từ bản đã chốt, tách trạng thái quyết định (active/superseded) và triển khai (not_implemented/handed_over) |
+| Agent intake | Skill native `zforge-intake`: thứ tự stage, nội dung từng file, gửi review và không bao giờ tự chốt |
+
+Chưa làm: **thử trên một feature thật** với người dùng (tiêu chí cuối của mốc);
+MCP cho intake (D4: CLI trước); change request (§8, `changes/`) mới có thư mục,
+chưa có lệnh; ID của quyết định bắt buộc trong knowledge đang theo vị trí
+(`03-solution.md#2`), đổi thứ tự sẽ đổi ID.
+
 ### Mốc B — Thực thi một task theo hợp đồng
 
 - Bổ sung workspace/execution boundary, quyền, budget và persistence đủ tin cậy.

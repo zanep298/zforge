@@ -52,7 +52,9 @@ quay lại intake; các phần độc lập có thể tiếp tục.
 Hai lượt review runtime và init/tool ngày 16–18/09/2026 được đưa vào backlog
 v1.5. Toàn bộ FIX-001 → FIX-026 đã sửa, kèm regression test. Cải tiến đã làm
 cho Claude Code (client chính): IMP-002, IMP-004, IMP-005, IMP-006 (trace +
-benchmark một task); IMP-001/IMP-003 đạt phần cần cho các fix. Workflow intake (Mốc A trở đi) chưa được implement.
+benchmark một task); IMP-001/IMP-003 đạt phần cần cho các fix. Mốc A (intake) đã có: tạo, review, chốt qua TTY, readiness, handover manifest,
+knowledge index ([tiến độ](./workflow.md#mốc-a--intake-và-knowledge-có-thể-sử-dụng));
+chưa thử trên feature thật. Mốc B, C chưa làm.
 
 | Tài liệu | Nội dung |
 |---|---|
