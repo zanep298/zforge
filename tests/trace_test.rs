@@ -209,3 +209,36 @@ fn plain_text_output_is_recorded_as_untraceable() {
     assert!(t.get("observed").is_none());
     assert!(t["unavailable"].as_str().unwrap().contains("stream-json"));
 }
+
+/// `zforge trace` joins the phase runs with verification and evidence.
+#[test]
+fn trace_command_follows_the_task_from_run_to_evidence() {
+    let p = Project::new();
+    p.stub_claude(&format!("cat {FIXTURE}"));
+    assert!(p.zforge(&["code", "T1"]).status.success());
+
+    let out = p.zforge(&["trace", "T1"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    for want in [
+        "T1 — Add docs",
+        "code · attempt 1 · claude",
+        "agent code-agent",
+        "mcp: codegraph connected",
+        "verification",
+        "not run",
+        "evidence: invalid",
+    ] {
+        assert!(text.contains(want), "missing {want:?} in:\n{text}");
+    }
+
+    let out = p.zforge(&["trace", "T1", "--json"]);
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["phases"][0]["observed"]["client_version"], "2.1.278");
+    assert_eq!(v["evidence"]["status"], "invalid");
+}

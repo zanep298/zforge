@@ -182,6 +182,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Follow a task from requirement to verified code: per phase, the
+    /// runner, agent, model, skills and tools each run actually used (as the
+    /// client reported them), problems found, and which candidate passed.
+    Trace {
+        task_id: String,
+        /// Machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
     /// INTERNAL: background worker entry point — invoked by `ship --async`.
     /// Do not call directly.
     #[command(hide = true)]
@@ -388,6 +397,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Job { cmd } => cli::job::run(cmd),
         Commands::Cost { cmd } => cli::cost::run(cmd),
         Commands::Git { cmd } => cli::git::run(cmd),
+        Commands::Trace { task_id, json } => cli::trace::run(&task_id, json),
         // Handled by `dispatch` because they carry a verdict.
         Commands::Verify { .. }
         | Commands::Ship { .. }

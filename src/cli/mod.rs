@@ -22,5 +22,6 @@ pub mod state_sync;
 pub mod status;
 pub mod task;
 pub mod testspec;
+pub mod trace;
 pub mod update;
 pub mod verify;
