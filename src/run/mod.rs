@@ -1,0 +1,16 @@
+//! v1.5 Mốc B: executing a handed-over leaf task (intake MOC-B, decision D3).
+//!
+//! Each run lives in `.zforge/runs/RUN-nnn/`: `run.yaml`, written once when
+//! the run is created, and `events.jsonl`, the append-only log that is the
+//! only source of truth for the run's state ([`record`]). Views such as
+//! `progress.md` are generated from the log and carry no authority.
+
+pub mod reconcile;
+pub mod record;
+
+use std::path::{Path, PathBuf};
+
+/// `<project>/.zforge/runs`.
+pub fn runs_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".zforge").join("runs")
+}

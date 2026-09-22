@@ -13,6 +13,7 @@ pub mod orchestrator;
 pub mod process;
 pub mod prompt;
 pub mod registry;
+pub mod run;
 pub mod runner;
 pub mod state;
 pub mod trace;
