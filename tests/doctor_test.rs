@@ -95,6 +95,24 @@ exit 0"#,
         self.project.canonicalize().unwrap().display().to_string()
     }
 
+    /// Write Claude's global state file with these per-project trust flags.
+    fn trust(&self, entries: &[(&Path, bool)]) {
+        let projects: serde_json::Map<String, Value> = entries
+            .iter()
+            .map(|(p, ok)| {
+                (
+                    p.canonicalize().unwrap().display().to_string(),
+                    serde_json::json!({ "hasTrustDialogAccepted": ok }),
+                )
+            })
+            .collect();
+        std::fs::write(
+            self.dir("claude").join(".claude.json"),
+            serde_json::json!({ "projects": projects }).to_string(),
+        )
+        .unwrap();
+    }
+
     fn user_settings(&self, json: &str) {
         std::fs::write(self.dir("claude").join("settings.json"), json).unwrap();
     }
@@ -403,4 +421,46 @@ fn a_validator_that_does_not_run_does_not_count_as_recognized() {
     let (_, c) = env.doctor();
     assert_eq!(level(&c, "skills"), "configured");
     assert_eq!(level(&c, "agents"), "configured");
+}
+
+/// Found by the benchmark: in an untrusted workspace `claude -p` ignores the
+/// project's `permissions.allow`, so zforge's allowlist does nothing for
+/// runs without a TTY. Trust set on a parent directory covers the project
+/// (checked against Claude Code 2.1.278).
+#[test]
+fn workspace_trust_levels() {
+    let env = Env::new();
+
+    let (code, c) = env.doctor();
+    assert_eq!(
+        level(&c, "workspace trust"),
+        "missing",
+        "no Claude state yet"
+    );
+    assert_eq!(
+        code, 0,
+        "trust is optional: headless runs bypass permissions"
+    );
+
+    env.trust(&[(&env.project, true)]);
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "workspace trust"), "configured");
+
+    env.trust(&[(env.root.path(), true)]);
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "workspace trust"), "configured");
+    assert!(c["workspace trust"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("parent"));
+
+    env.trust(&[(&env.project, false), (&env.dir("home"), true)]);
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "workspace trust"), "broken");
+    let fix = c["workspace trust"]["fix"].as_str().unwrap();
+    assert!(fix.contains("trust dialog"), "{fix}");
+    assert!(c["workspace trust"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("permissions.allow"));
 }

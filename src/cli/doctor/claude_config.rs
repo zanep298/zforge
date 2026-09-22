@@ -70,6 +70,37 @@ pub fn settings_files(project_root: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Claude Code's global state file, which records per-project trust:
+/// `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`.
+pub fn state_file() -> Option<PathBuf> {
+    match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir).join(".claude.json")),
+        None => dirs::home_dir().map(|h| h.join(".claude.json")),
+    }
+}
+
+/// The directory whose accepted trust dialog covers `project_root` — the
+/// project itself or its nearest parent with `hasTrustDialogAccepted` —
+/// or `None`. Keys are canonical paths. A parent's trust covers its
+/// subdirectories: Claude Code 2.1.278 printed no untrusted warning in a
+/// subdirectory without an entry of its own. That an explicit `false` on
+/// the subdirectory does not override the parent is assumed, not observed.
+pub fn trusted_by(state: &Value, project_root: &Path) -> Option<PathBuf> {
+    let projects = state.get("projects")?.as_object()?;
+    let root = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    root.ancestors()
+        .find(|dir| {
+            projects
+                .get(&dir.display().to_string())
+                .and_then(|p| p.get("hasTrustDialogAccepted"))
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .map(Path::to_path_buf)
+}
+
 /// Every hook command across `files` (missing or unparsable files skipped).
 pub fn hooks(files: &[PathBuf]) -> Vec<Hook> {
     files
@@ -151,6 +182,39 @@ pub fn parse_validate(output: &str) -> Vec<(String, Vec<String>)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn trust_is_found_on_the_project_or_its_nearest_trusted_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().canonicalize().unwrap();
+        let project = parent.join("a").join("b");
+        std::fs::create_dir_all(&project).unwrap();
+        let state = |entries: &[(&Path, bool)]| {
+            let projects: serde_json::Map<String, Value> = entries
+                .iter()
+                .map(|(p, ok)| {
+                    (
+                        p.display().to_string(),
+                        serde_json::json!({ "hasTrustDialogAccepted": ok }),
+                    )
+                })
+                .collect();
+            serde_json::json!({ "projects": projects })
+        };
+
+        assert_eq!(
+            trusted_by(&state(&[(&project, true)]), &project),
+            Some(project.clone())
+        );
+        assert_eq!(
+            trusted_by(&state(&[(&project, false), (&parent, true)]), &project),
+            Some(parent.clone()),
+            "an explicit false on the project does not hide a trusted parent"
+        );
+        assert_eq!(trusted_by(&state(&[(&project, false)]), &project), None);
+        assert_eq!(trusted_by(&serde_json::json!({}), &project), None);
+    }
+
     use super::*;
 
     #[test]

@@ -6,7 +6,9 @@
 //! calls no model. What cannot be confirmed non-interactively is stated in
 //! `not_checked` rather than assumed.
 
-use super::claude_config::{hooks, parse_mcp_get, referenced_scripts, settings_files, McpStatus};
+use super::claude_config::{
+    hooks, parse_mcp_get, referenced_scripts, settings_files, state_file, trusted_by, McpStatus,
+};
 use super::report::{Check, Level};
 use crate::config::Config;
 use crate::fs::reader::MarkdownFile;
@@ -458,6 +460,64 @@ pub fn caveman_hook(ctx: &Ctx<'_>) -> Check {
         format!("registered on {} with scripts present", events.join(", ")),
     )
     .not_checked("hook invocation (its effect is on the model's output)")
+}
+
+/// Whether Claude trusts the project directory. In an untrusted workspace
+/// `claude -p` ignores the project's `permissions.allow` — zforge's
+/// allowlist in `.claude/settings.json` — so an agent run without a TTY
+/// (MCP, CI, piped) has its tool calls refused. Headless jobs bypass
+/// permissions and are unaffected, so this is optional. zforge never
+/// accepts the dialog on the user's behalf.
+pub fn workspace_trust(ctx: &Ctx<'_>) -> Check {
+    const NAME: &str = "workspace trust";
+    let fix = format!(
+        "run `claude` once in {} and accept the trust dialog",
+        ctx.root.display()
+    );
+    let consequence = "untrusted: `claude -p` ignores this project's permissions.allow, \
+                       so non-interactive runs have tool calls refused";
+    let Some(path) = state_file() else {
+        return Check::new(
+            NAME,
+            false,
+            Level::Missing,
+            "cannot locate Claude's state file",
+        )
+        .fix(fix);
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Check::new(
+            NAME,
+            false,
+            Level::Missing,
+            format!(
+                "{} not found — Claude has not run here yet; {consequence}",
+                path.display()
+            ),
+        )
+        .fix(fix);
+    };
+    let Ok(state) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Check::new(
+            NAME,
+            false,
+            Level::Broken,
+            format!("{} is not valid JSON", path.display()),
+        );
+    };
+    match trusted_by(&state, &ctx.root) {
+        Some(dir) if dir == ctx.root.canonicalize().unwrap_or_else(|_| ctx.root.clone()) => {
+            Check::new(NAME, false, Level::Configured, "project directory trusted")
+        }
+        Some(dir) => Check::new(
+            NAME,
+            false,
+            Level::Configured,
+            format!("trusted through parent directory {}", dir.display()),
+        ),
+        None => Check::new(NAME, false, Level::Broken, consequence).fix(fix),
+    }
+    .not_checked("that a run honours the allowlist (needs a model call)")
 }
 
 pub fn evidence(ctx: &Ctx<'_>) -> Check {

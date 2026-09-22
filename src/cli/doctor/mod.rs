@@ -39,6 +39,7 @@ pub fn run(json: bool) -> Result<OperationOutcome> {
             checks::codegraph_mcp(&ctx),
             checks::rtk_hook(&ctx),
             checks::caveman_hook(&ctx),
+            checks::workspace_trust(&ctx),
             checks::evidence(&ctx),
         ],
     };
