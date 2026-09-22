@@ -7,8 +7,10 @@
 
 pub mod contract;
 pub mod execute;
+pub mod ops;
 pub mod reconcile;
 pub mod record;
+pub mod view;
 pub mod worktree;
 
 use std::path::{Path, PathBuf};

@@ -221,7 +221,12 @@ fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
         "evidence is the worktree's tree"
     );
     assert_eq!(p.count("RUN-001", "attempt"), 1);
-    assert!((p.events("RUN-001")[1]["cost_usd"].as_f64().unwrap() - 0.2003).abs() < 0.001);
+    let attempt = p
+        .events("RUN-001")
+        .into_iter()
+        .find(|e| e["event"] == "attempt")
+        .unwrap();
+    assert!((attempt["cost_usd"].as_f64().unwrap() - 0.2003).abs() < 0.001);
 
     // The work happened in the worktree, not in the user's checkout.
     assert_eq!(
@@ -377,4 +382,245 @@ fn refusals_create_no_run() {
         "{last}"
     );
     assert!(!Path::new(&p.root.join(".zforge/worktrees/RUN-001")).exists());
+}
+
+// ─── TASK-005: status, list, background, cancel, retry, clean ───────────────
+
+impl Project {
+    fn wait_for(&self, id: &str, event: &str) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while self.count(id, event) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "{id} never reached `{event}`: {:?}",
+                self.events(id)
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn pid_file(&self, name: &str) -> i32 {
+        let path = self.marks.join(name);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+            {
+                return pid;
+            }
+            assert!(Instant::now() < deadline, "{name} never written");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+fn alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only probes.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+fn dies_within(pid: i32, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    while alive(pid) {
+        if Instant::now() > deadline {
+            // SAFETY: do not leak it into the rest of the suite.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
+/// Agent that replaces the suite with a slow one recording its pid, so a
+/// test can act while the run is verifying.
+fn slow_suite(marks: &Path) -> String {
+    format!(
+        "printf '#!/bin/sh\\necho $$ > {m}/test.pid\\nsleep 30\\n' > test.sh\ncat {FIXTURE}",
+        m = marks.display()
+    )
+}
+
+/// AC-01: what `run status` and `run list` show.
+#[test]
+fn status_and_list_show_the_run() {
+    let p = Project::new(3.0, 3);
+    p.stub(&fix_and_report());
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+
+    let out = p.zforge(&["run", "status", "RUN-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    for want in [
+        "RUN-001 — TASK-001 of F/HANDOVER-001: verified",
+        "branch zforge/TASK-001/RUN-001",
+        "budget $3.00, spent $0.20; 1 attempt(s), 1 verification(s)",
+        "attempt 1 started (up to $3.00)",
+        "attempt 1 finished, exit 0, $0.20",
+        "verified — candidate",
+        "agent calls",
+        "code · attempt 1 · claude",
+    ] {
+        assert!(text.contains(want), "missing {want:?} in:\n{text}");
+    }
+    let v: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "status", "RUN-001", "--json"]).stdout).unwrap();
+    assert_eq!(v["state"]["status"], "verified");
+    assert_eq!(v["traces"].as_array().unwrap().len(), 1);
+    assert!(p.run_dir("RUN-001").join("result.md").is_file());
+    assert!(p.run_dir("RUN-001").join("progress.md").is_file());
+
+    let list = String::from_utf8_lossy(
+        &p.zforge(&["run", "list", "--handover", "HANDOVER-001"])
+            .stdout,
+    )
+    .into_owned();
+    assert!(
+        list.contains("RUN-001") && list.contains("verified"),
+        "{list}"
+    );
+    let none = String::from_utf8_lossy(
+        &p.zforge(&["run", "list", "--handover", "HANDOVER-009"])
+            .stdout,
+    )
+    .into_owned();
+    assert!(none.contains("no runs yet"), "{none}");
+}
+
+/// AC-02: a background run whose worker dies is interrupted; retry makes a
+/// new run with what is left of the budget.
+#[test]
+fn a_dead_background_worker_is_interrupted_and_retry_starts_over() {
+    let p = Project::new(3.0, 3);
+    p.stub(&slow_suite(&p.marks));
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--async"]);
+    assert!(out.status.success(), "{}", err(&out));
+    p.wait_for("RUN-001", "verify_started");
+    let test_pid = p.pid_file("test.pid");
+
+    let worker: i32 = std::fs::read_to_string(p.run_dir("RUN-001").join("launch.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: killing the worker we started; SIGKILL cannot be caught.
+    unsafe { libc::kill(worker, libc::SIGKILL) };
+    assert!(dies_within(worker, Duration::from_secs(5)));
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "status", "RUN-001", "--json"]).stdout).unwrap();
+    assert_eq!(v["state"]["status"], "failed");
+    assert!(v["state"]["reason"]
+        .as_str()
+        .unwrap()
+        .starts_with("interrupted"));
+    // Recording the interruption also stops what the dead worker left
+    // running — its test suite here, an agent still spending money there.
+    assert!(
+        dies_within(test_pid, Duration::from_secs(10)),
+        "the dead worker's test process was left running"
+    );
+    assert!(
+        p.zforge(&["run", "cancel", "RUN-001"]).status.code() != Some(0),
+        "already final"
+    );
+
+    let out = p.zforge(&["run", "retry", "RUN-001", "--async"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let meta: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(p.run_dir("RUN-002").join("run.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["retry_of"], "RUN-001");
+    let budget = meta["budget_usd"].as_f64().unwrap();
+    assert!((budget - (3.0 - 0.2003)).abs() < 0.001, "{budget}");
+    p.wait_for("RUN-002", "started");
+    assert!(p.zforge(&["run", "cancel", "RUN-002"]).status.success());
+}
+
+/// AC-03: cancelling a background run stops its test process and records it.
+#[test]
+fn cancel_stops_a_background_run_while_it_verifies() {
+    let p = Project::new(3.0, 3);
+    p.stub(&slow_suite(&p.marks));
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--async"])
+        .status
+        .success());
+    p.wait_for("RUN-001", "verify_started");
+    let test_pid = p.pid_file("test.pid");
+
+    let out = p.zforge(&["run", "cancel", "RUN-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        dies_within(test_pid, Duration::from_secs(10)),
+        "test process survived the cancel"
+    );
+    assert_eq!(p.last("RUN-001")["event"], "cancelled");
+}
+
+/// AC-03: cancelling while the agent runs stops the agent.
+#[test]
+fn cancel_stops_a_background_run_while_the_agent_works() {
+    let p = Project::new(3.0, 3);
+    p.stub(&format!(
+        "echo $$ > {}/agent.pid\nsleep 30",
+        p.marks.display()
+    ));
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--async"])
+        .status
+        .success());
+    let agent = p.pid_file("agent.pid");
+
+    let out = p.zforge(&["run", "cancel", "RUN-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        dies_within(agent, Duration::from_secs(10)),
+        "agent survived the cancel"
+    );
+    let state: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "status", "RUN-001", "--json"]).stdout).unwrap();
+    assert_eq!(state["state"]["status"], "cancelled");
+    assert_eq!(
+        state["state"]["cost_usd"], 3.0,
+        "the call in flight counts its allotment"
+    );
+}
+
+/// AC-04: clean refuses a live run, and keeps the branch — with the
+/// worktree's uncommitted work committed to it.
+#[test]
+fn clean_removes_a_finished_worktree_and_keeps_the_work() {
+    let p = Project::new(3.0, 3);
+    p.stub(&slow_suite(&p.marks));
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--async"])
+        .status
+        .success());
+    p.wait_for("RUN-001", "verify_started");
+
+    let out = p.zforge(&["run", "clean", "RUN-001"]);
+    assert!(!out.status.success());
+    assert!(err(&out).contains("still verifying"), "{}", err(&out));
+
+    assert!(p.zforge(&["run", "cancel", "RUN-001"]).status.success());
+    let out = p.zforge(&["run", "clean", "RUN-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("uncommitted work saved"));
+    assert!(!p.root.join(".zforge/worktrees/RUN-001").exists());
+    let log = p.git(&["log", "--format=%s", "-1", "zforge/TASK-001/RUN-001"]);
+    assert!(log.contains("zforge: uncommitted work of RUN-001"), "{log}");
+    let saved = p.git(&["show", "zforge/TASK-001/RUN-001:test.sh"]);
+    assert!(
+        saved.contains("sleep 30"),
+        "the agent's change is on the branch"
+    );
+
+    let out = p.zforge(&["run", "clean", "RUN-001"]);
+    assert!(err(&out).contains("already cleaned"), "{}", err(&out));
 }

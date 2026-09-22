@@ -195,8 +195,16 @@ pub const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 #[cfg(unix)]
 pub fn terminate_job_processes(config: &Config, job_id: &str, worker_pid: u32) {
     let pgids_file = crate::process::child_pgids_file(&crate::job::store::job_dir(config, job_id));
+    terminate_process_groups(worker_pid, &pgids_file);
+}
+
+/// SIGTERM the worker's process group and every child group recorded in
+/// `pgids_file`, wait up to [`CANCEL_GRACE`], SIGKILL what is left. Shared
+/// by job cancel and `zforge run cancel`.
+#[cfg(unix)]
+pub fn terminate_process_groups(worker_pid: u32, pgids_file: &std::path::Path) {
     let mut groups: Vec<i32> = vec![worker_pid as i32];
-    groups.extend(crate::process::read_child_pgids(&pgids_file));
+    groups.extend(crate::process::read_child_pgids(pgids_file));
     groups.sort_unstable();
     groups.dedup();
 
@@ -230,6 +238,11 @@ pub fn terminate_job_processes(config: &Config, job_id: &str, worker_pid: u32) {
 /// based implementation exists.
 #[cfg(not(unix))]
 pub fn terminate_job_processes(_config: &Config, _job_id: &str, _worker_pid: u32) {
+    eprintln!("warning: cancel on Windows does not yet terminate the worker — mark-only.");
+}
+
+#[cfg(not(unix))]
+pub fn terminate_process_groups(_worker_pid: u32, _pgids_file: &std::path::Path) {
     eprintln!("warning: cancel on Windows does not yet terminate the worker — mark-only.");
 }
 

@@ -58,6 +58,14 @@ pub enum RunEvent {
         at: DateTime<Utc>,
         pid: u32,
     },
+    /// An agent invocation is about to start with `allotted_usd` of budget.
+    /// Until its `attempt` event arrives the whole allotment counts as spent:
+    /// a run killed mid-call may have spent all of it.
+    AttemptStarted {
+        at: DateTime<Utc>,
+        n: u32,
+        allotted_usd: f64,
+    },
     /// One agent invocation finished. `cost_usd` is what the client
     /// reported; when it reported nothing the whole `allotted_usd` counts as
     /// spent (MOC-B 03-solution).
@@ -104,6 +112,7 @@ impl RunEvent {
     pub fn at(&self) -> DateTime<Utc> {
         match self {
             Self::Started { at, .. }
+            | Self::AttemptStarted { at, .. }
             | Self::Attempt { at, .. }
             | Self::VerifyStarted { at }
             | Self::Verified { at, .. }
@@ -117,6 +126,7 @@ impl RunEvent {
     fn name(&self) -> &'static str {
         match self {
             Self::Started { .. } => "started",
+            Self::AttemptStarted { .. } => "attempt_started",
             Self::Attempt { .. } => "attempt",
             Self::VerifyStarted { .. } => "verify_started",
             Self::Verified { .. } => "verified",
@@ -173,9 +183,13 @@ pub struct RunState {
     pub pid: Option<u32>,
     pub attempts: u32,
     pub verifications: u32,
-    /// Spent so far: reported costs, and the allotment of any attempt that
-    /// reported none.
+    /// Spent so far: reported costs, the allotment of any attempt that
+    /// reported none, and the allotment of an attempt still in flight.
     pub cost_usd: f64,
+    /// Allotment of the attempt started but not finished, already counted in
+    /// `cost_usd`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_flight_usd: Option<f64>,
     /// Candidate of the latest verification, passed or failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_candidate: Option<String>,
@@ -190,6 +204,7 @@ impl Default for RunState {
             attempts: 0,
             verifications: 0,
             cost_usd: 0.0,
+            in_flight_usd: None,
             last_candidate: None,
         }
     }
@@ -218,6 +233,13 @@ impl RunState {
                 next.status = Running;
                 next.pid = Some(*pid);
             }
+            RunEvent::AttemptStarted { allotted_usd, .. } => {
+                if self.status != Running || self.in_flight_usd.is_some() {
+                    return refuse();
+                }
+                next.in_flight_usd = Some(*allotted_usd);
+                next.cost_usd += allotted_usd;
+            }
             RunEvent::Attempt {
                 allotted_usd,
                 cost_usd,
@@ -226,6 +248,8 @@ impl RunState {
                 if self.status != Running {
                     return refuse();
                 }
+                // The in-flight allotment is replaced by what was reported.
+                next.cost_usd -= next.in_flight_usd.take().unwrap_or(0.0);
                 next.attempts += 1;
                 next.cost_usd += cost_usd.unwrap_or(*allotted_usd);
             }
@@ -499,6 +523,53 @@ pub(crate) mod tests {
         assert_eq!(s.cost_usd, 1.25, "missing cost counts the whole allotment");
         assert_eq!(s.last_candidate.as_deref(), Some("c2"));
         assert_eq!(RunState::replay(&events).unwrap(), s);
+    }
+
+    /// An attempt killed mid-call counts its whole allotment; a finished
+    /// one counts what it reported.
+    #[test]
+    fn an_attempt_in_flight_counts_its_whole_allotment() {
+        let s = RunState::default()
+            .apply(&RunEvent::Started { at: now(), pid: 1 })
+            .unwrap()
+            .apply(&RunEvent::AttemptStarted {
+                at: now(),
+                n: 1,
+                allotted_usd: 2.5,
+            })
+            .unwrap();
+        assert_eq!((s.cost_usd, s.in_flight_usd), (2.5, Some(2.5)));
+        assert!(
+            s.apply(&RunEvent::AttemptStarted {
+                at: now(),
+                n: 2,
+                allotted_usd: 1.0
+            })
+            .is_err(),
+            "one attempt at a time"
+        );
+
+        let done = s
+            .apply(&RunEvent::Attempt {
+                at: now(),
+                n: 1,
+                exit_code: 0,
+                allotted_usd: 2.5,
+                cost_usd: Some(0.2),
+            })
+            .unwrap();
+        assert_eq!((done.cost_usd, done.in_flight_usd), (0.2, None));
+
+        let killed = s
+            .apply(&RunEvent::Failed {
+                at: now(),
+                reason: "interrupted".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            killed.cost_usd, 2.5,
+            "the budget it could have spent is gone"
+        );
     }
 
     /// AC-01: illegal events are refused, and final states stay final.

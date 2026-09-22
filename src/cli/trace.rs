@@ -139,6 +139,13 @@ pub fn render(r: &TraceReport) -> String {
     out
 }
 
+/// One phase attempt as text, for other commands' reports.
+pub fn render_phase_text(p: &PhaseTrace) -> String {
+    let mut out = String::new();
+    render_phase(&mut out, p);
+    out
+}
+
 fn render_phase(out: &mut String, p: &PhaseTrace) {
     let _ = writeln!(out, "{} · attempt {} · {}", p.phase, p.attempt, p.runner);
     match &p.observed {

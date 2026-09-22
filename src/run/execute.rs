@@ -191,6 +191,11 @@ fn work(
         let prompt = contract.prompt(feedback.as_deref(), &change_request);
         let (spec, named) = agent_spec(base, project_root, &work_dir, left);
         eprintln!("{}: attempt {n} (up to ${left:.2})", run.id);
+        run.append(&RunEvent::AttemptStarted {
+            at: Utc::now(),
+            n,
+            allotted_usd: left,
+        })?;
         let out = spawn::spawn_agent_in(&spec, &prompt, timeout_secs, &work_dir)?;
 
         let trace = crate::trace::from_invocation(crate::trace::Invocation {
