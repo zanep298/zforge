@@ -26,6 +26,10 @@ pub struct Config {
     pub review: ReviewConfig,
     #[serde(default)]
     pub runner: RunnerConfig,
+    #[serde(default)]
+    pub knowledge: KnowledgeConfig,
+    #[serde(default)]
+    pub execution: ExecutionConfig,
 
     #[serde(skip)]
     pub config_file: PathBuf,
@@ -37,6 +41,50 @@ pub struct Config {
 pub struct RunnerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
+}
+
+/// v1.5 knowledge (decision D6): the branch "integrated" is judged
+/// against. Each handover manifest records it with the commit it was made on.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct KnowledgeConfig {
+    #[serde(default = "default_baseline")]
+    pub baseline: String,
+}
+
+impl Default for KnowledgeConfig {
+    fn default() -> Self {
+        Self {
+            baseline: default_baseline(),
+        }
+    }
+}
+
+fn default_baseline() -> String {
+    "main".into()
+}
+
+/// v1.5 execution policy written into each handover manifest (workflow
+/// §6.3): the retry limit and the spend a run may not exceed. A missing
+/// budget is reported by readiness, never assumed.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExecutionConfig {
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_usd: Option<f64>,
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            max_iterations: default_max_iterations(),
+            budget_usd: None,
+        }
+    }
+}
+
+fn default_max_iterations() -> u32 {
+    3
 }
 
 /// Runner used when neither the task nor `runner.default` names one — only

@@ -95,7 +95,7 @@ pub struct Reviewed {
     pub diff: Option<String>,
 }
 
-fn lock(intake: &Intake) -> Result<crate::state::TaskLockGuard> {
+pub(crate) fn lock(intake: &Intake) -> Result<crate::state::TaskLockGuard> {
     let parent = intake
         .dir
         .parent()

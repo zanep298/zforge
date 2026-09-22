@@ -207,3 +207,69 @@ fn status(i: &Intake, json: bool) -> Result<()> {
     }
     Ok(())
 }
+
+/// `zforge readiness <ID>`: check what a handover would pin (§6.2), write
+/// the `readiness.md` view, fail when not ready.
+pub fn readiness(id: &str, tasks: &[String], json: bool) -> Result<()> {
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let root = config.project_root();
+    let i = Intake::open(&root, id)?;
+    let r = crate::intake::readiness::check(&i, &root, tasks, &config.execution)?;
+    let view = crate::intake::readiness::render(&r);
+    crate::state::write_atomic(&i.dir.join("readiness.md"), view.as_bytes())?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&r)?);
+    } else {
+        print!("{view}");
+    }
+    if !r.ready {
+        bail!("{id} is not ready to hand over");
+    }
+    Ok(())
+}
+
+/// `zforge handover <ID>`: the user hands the accepted contract over (§6.3).
+/// Interactive terminal only, like `intake accept`.
+pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        bail!(
+            "`zforge handover` records the user's decision and needs an interactive terminal; \
+             it cannot be run by an agent or from a script"
+        );
+    }
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let root = config.project_root();
+    let i = Intake::open(&root, id)?;
+    let r = crate::intake::readiness::check(&i, &root, tasks, &config.execution)?;
+    if !r.ready {
+        print!("{}", crate::intake::readiness::render(&r));
+        bail!("{id} is not ready to hand over");
+    }
+    println!("{} {id}: {}", "HANDOVER".bold(), r.tasks.join(" → "));
+    for f in &r.files {
+        println!(
+            "  {} rev {} ({})",
+            f.file,
+            f.revision,
+            hash::short(&f.sha256)
+        );
+    }
+    println!(
+        "  baseline {}, at most {} verifier iteration(s), budget ${:.2} per run",
+        config.knowledge.baseline,
+        config.execution.max_iterations,
+        config.execution.budget_usd.unwrap_or_default()
+    );
+    println!("  delivery: {}", crate::intake::handover::DELIVERY);
+    print!("Type `handover` to confirm: ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    if answer.trim() != "handover" {
+        bail!("not confirmed; nothing recorded");
+    }
+    let by = std::env::var("USER").ok().filter(|u| !u.is_empty());
+    let m = crate::intake::handover::create(&i, &root, tasks, &config, &r.files, by)?;
+    println!("{} {} recorded", "✓".green(), m.id);
+    Ok(())
+}

@@ -188,6 +188,24 @@ enum Commands {
         #[command(subcommand)]
         cmd: crate::cli::intake::IntakeCmd,
     },
+    /// v1.5: check whether an intake's accepted files are ready to hand
+    /// over (§6.2). Writes `readiness.md`; exits 1 when not ready.
+    Readiness {
+        id: String,
+        /// Limit the handover to these tasks (default: all).
+        #[arg(long = "task")]
+        tasks: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// v1.5: hand the accepted contract over as a manifest (§6.3).
+    /// Interactive terminal only.
+    Handover {
+        id: String,
+        /// Limit the handover to these tasks (default: all).
+        #[arg(long = "task")]
+        tasks: Vec<String>,
+    },
     /// Follow a task from requirement to verified code: per phase, the
     /// runner, agent, model, skills and tools each run actually used (as the
     /// client reported them), problems found, and which candidate passed.
@@ -405,6 +423,8 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Git { cmd } => cli::git::run(cmd),
         Commands::Trace { task_id, json } => cli::trace::run(&task_id, json),
         Commands::Intake { cmd } => cli::intake::run(cmd),
+        Commands::Readiness { id, tasks, json } => cli::intake::readiness(&id, &tasks, json),
+        Commands::Handover { id, tasks } => cli::intake::handover(&id, &tasks),
         // Handled by `dispatch` because they carry a verdict.
         Commands::Verify { .. }
         | Commands::Ship { .. }

@@ -186,3 +186,196 @@ fn tasks_are_linted_against_the_outcome() {
     assert!(!out.status.success());
     assert!(stderr(&out).contains("is not an intake file"));
 }
+
+// ─── readiness and handover (§6.2, §6.3) ────────────────────────────────────
+
+const BEHAVIOR: &str =
+    "# F-1 — Behavior\n\n## Tình huống\nREQ-001: status=open trả task open.\n\n## Câu hỏi còn mở\n";
+const SOLUTION: &str =
+    "# F-1 — Solution\n\n## Luồng xử lý\nLọc trong listing.\n\n## Câu hỏi còn mở\n";
+const BREAKDOWN: &str = "# F-1 — Breakdown\n\n## Task và dependency\nTASK-001 rồi TASK-002.\n\n## Kiểm chứng tích hợp\nChạy toàn bộ test listing trên cùng tree.\n\n## Câu hỏi còn mở\n";
+
+fn task(id: &str, reqs: &str, deps: &str) -> String {
+    format!(
+        "---\nid: {id}\nparent: F-1\nrequirements: [{reqs}]\ndepends_on: [{deps}]\n---\n\n# {id}\n\n\
+         ## Mục tiêu\nLọc.\n## Input\nAPI.\n## Output\nDanh sách.\n## Ràng buộc\nGiữ shape.\n\
+         ## Tự chủ\nTự chọn hàm.\n## Acceptance và kiểm chứng\n- AC-01: lọc đúng\n## Bàn giao\nLocal.\n\
+         ## Cần amendment khi\nĐổi shape.\n## Câu hỏi còn mở\n"
+    )
+}
+
+impl Project {
+    /// Everything written, reviewed and accepted, in a git repo with a
+    /// budget configured.
+    fn ready_intake(&self) -> zforge::intake::Intake {
+        std::fs::write(
+            self.root.join(".zforge/config.yaml"),
+            "project:\n  name: t\n  language: rust\n  test_command: \"true\"\nexecution:\n  budget_usd: 2.5\n",
+        )
+        .unwrap();
+        for args in [
+            &["init", "-q", "."][..],
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        ] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&self.root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        self.ok(&["intake", "new", "F-1"]);
+        let d = self.intake_dir();
+        std::fs::write(
+            d.join("01-outcome.md"),
+            OUTCOME.replace("- [ ] trạng thái", "- [x] trạng thái"),
+        )
+        .unwrap();
+        std::fs::write(d.join("02-behavior.md"), BEHAVIOR).unwrap();
+        std::fs::write(d.join("03-solution.md"), SOLUTION).unwrap();
+        std::fs::write(d.join("04-breakdown.md"), BREAKDOWN).unwrap();
+        std::fs::write(d.join("tasks/TASK-001.md"), task("TASK-001", "REQ-001", "")).unwrap();
+        std::fs::write(
+            d.join("tasks/TASK-002.md"),
+            task("TASK-002", "REQ-001", "TASK-001"),
+        )
+        .unwrap();
+        let intake = zforge::intake::Intake::open(&self.root, "F-1").unwrap();
+        for f in intake.files() {
+            self.accept(&f);
+        }
+        intake
+    }
+
+    fn accept(&self, file: &str) {
+        self.ok(&["intake", "review", "F-1", file]);
+        let intake = zforge::intake::Intake::open(&self.root, "F-1").unwrap();
+        zforge::intake::review::accept(&intake, file, None).unwrap();
+    }
+
+    fn readiness(&self, extra: &[&str]) -> (bool, serde_json::Value) {
+        let mut args = vec!["readiness", "F-1", "--json"];
+        args.extend_from_slice(extra);
+        let out = self.zforge(&args);
+        (
+            out.status.success(),
+            serde_json::from_slice(&out.stdout).unwrap(),
+        )
+    }
+}
+
+fn failing(report: &serde_json::Value) -> Vec<String> {
+    report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["ok"] == false)
+        .flat_map(|c| {
+            c["problems"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn a_fully_accepted_intake_is_ready_and_hands_over_what_was_accepted() {
+    let p = Project::new();
+    let intake = p.ready_intake();
+
+    let (ok, r) = p.readiness(&[]);
+    assert!(ok, "{:?}", failing(&r));
+    assert_eq!(r["tasks"], serde_json::json!(["TASK-001", "TASK-002"]));
+    assert_eq!(r["files"].as_array().unwrap().len(), 6);
+    assert!(p.intake_dir().join("readiness.md").is_file());
+
+    // The handover itself needs a human at a terminal.
+    let out = p.zforge(&["handover", "F-1"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("needs an interactive terminal"));
+
+    let config = zforge::config::load_from(&p.root.join(".zforge/config.yaml")).unwrap();
+    let pinned: Vec<zforge::intake::readiness::Pinned> =
+        serde_json::from_value(r["files"].clone()).unwrap();
+    let m =
+        zforge::intake::handover::create(&intake, &p.root, &[], &config, &pinned, None).unwrap();
+    assert_eq!(m.id, "HANDOVER-001");
+    assert_eq!(m.tasks, ["TASK-001", "TASK-002"]);
+    assert_eq!(m.baseline.branch, "main");
+    assert_eq!(m.baseline.commit.len(), 40);
+    assert_eq!(m.policy.budget_usd, 2.5);
+    assert_eq!(m.files, pinned);
+
+    // Accepting a new revision after readiness was shown: refused.
+    std::fs::write(
+        p.intake_dir().join("03-solution.md"),
+        SOLUTION.replace("listing", "listing module"),
+    )
+    .unwrap();
+    p.accept("03-solution.md");
+    let err = zforge::intake::handover::create(&intake, &p.root, &[], &config, &pinned, None)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("changed after they were shown"),
+        "{err}"
+    );
+}
+
+#[test]
+fn readiness_names_each_reason_it_is_not_ready() {
+    let p = Project::new();
+    p.ready_intake();
+
+    // A draft over an accepted file, an open question, an uncovered
+    // requirement and a dependency outside the scope.
+    let d = p.intake_dir();
+    std::fs::write(
+        d.join("02-behavior.md"),
+        format!("{BEHAVIOR}- [ ] còn lỗi?\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        d.join("01-outcome.md"),
+        OUTCOME
+            .replace("- [ ] trạng thái", "- [x] trạng thái")
+            .replace(
+                "- REQ-001: lọc theo trạng thái\n",
+                "- REQ-001: lọc theo trạng thái\n- REQ-002: giữ thứ tự\n",
+            )
+            + "- [ ] phân quyền?\n",
+    )
+    .unwrap();
+    p.accept("01-outcome.md");
+
+    let (ok, r) = p.readiness(&[]);
+    assert!(!ok);
+    let problems = failing(&r).join("\n");
+    for want in [
+        "02-behavior.md has changes after accepted revision 1 (draft)",
+        "01-outcome.md: phân quyền?",
+        "REQ-002 has no task",
+    ] {
+        assert!(problems.contains(want), "missing {want:?} in:\n{problems}");
+    }
+
+    let (_, r) = p.readiness(&["--task", "TASK-002"]);
+    assert!(failing(&r)
+        .join("\n")
+        .contains("TASK-002 depends on TASK-001, which is outside the handover scope"));
+
+    std::fs::write(p.root.join(".zforge/config.yaml"), "project:\n  name: t\n").unwrap();
+    let (_, r) = p.readiness(&[]);
+    assert!(failing(&r).join("\n").contains("no budget"));
+}
