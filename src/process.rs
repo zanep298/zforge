@@ -319,17 +319,34 @@ mod group {
 
     const FORWARDED: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
+    /// `sigaction` rather than `signal`: `sa_mask` blocks all forwarded
+    /// signals while the handler runs, so a second one (Ctrl-C, then the
+    /// terminal closing) waits instead of starting a second forwarding pass
+    /// on top of the first.
     fn install_forwarding() {
-        for sig in FORWARDED {
-            // SAFETY: installing a handler that only calls async-signal-safe
-            // functions (kill, signal, raise) and reads lock-free atomics.
-            unsafe {
-                let handler: extern "C" fn(libc::c_int) = forward;
-                let prev = libc::signal(sig, handler as libc::sighandler_t);
+        // SAFETY: plain libc calls on locally owned, zero-initialized
+        // `sigaction` structs; the handler only calls async-signal-safe
+        // functions (kill, nanosleep, sigaction, raise) and reads lock-free
+        // atomics.
+        unsafe {
+            let mut mask: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut mask);
+            for sig in FORWARDED {
+                libc::sigaddset(&mut mask, sig);
+            }
+            for sig in FORWARDED {
+                let mut prev: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(sig, std::ptr::null(), &mut prev);
                 // Respect an inherited "ignore" (e.g. nohup'd SIGHUP).
-                if prev == libc::SIG_IGN {
-                    libc::signal(sig, libc::SIG_IGN);
+                if prev.sa_sigaction == libc::SIG_IGN {
+                    continue;
                 }
+                let handler: extern "C" fn(libc::c_int) = forward;
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler as libc::sighandler_t;
+                action.sa_mask = mask;
+                action.sa_flags = libc::SA_RESTART;
+                libc::sigaction(sig, &action, std::ptr::null_mut());
             }
         }
     }
@@ -344,7 +361,8 @@ mod group {
     /// shared process group had before, now closed.
     ///
     /// Only async-signal-safe calls: kill, nanosleep, signal, raise, and
-    /// lock-free atomic loads.
+    /// lock-free atomic loads. Runs with every forwarded signal blocked
+    /// (see [`install_forwarding`]), so it never re-enters.
     extern "C" fn forward(sig: libc::c_int) {
         signal_active(sig);
 
@@ -363,9 +381,17 @@ mod group {
         }
         signal_active(libc::SIGKILL);
 
-        // Then die the way we would have without the handler.
+        // Then die the way we would have without the handler, of *this*
+        // signal. Forwarded signals that arrived meanwhile are pending
+        // (blocked by `sa_mask`); ignoring them discards them, so none can
+        // win the race to be delivered first once the handler returns.
         // SAFETY: signal(2) and raise(3) are async-signal-safe.
         unsafe {
+            for other in FORWARDED {
+                if other != sig {
+                    libc::signal(other, libc::SIG_IGN);
+                }
+            }
             libc::signal(sig, libc::SIG_DFL);
             libc::raise(sig);
         }

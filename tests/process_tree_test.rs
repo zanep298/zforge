@@ -285,6 +285,41 @@ fn sigint_to_zforge_reaches_the_test_process_tree() {
     assert_dies_within(grandchild, Duration::from_secs(3));
 }
 
+/// A second signal while the first is being forwarded (Ctrl-C, then the
+/// terminal closing) must not start a second forwarding pass on top of the
+/// first: zforge dies of the signal it got first, after one escalation.
+/// The grandchild ignores SIGINT and SIGTERM, so the first pass runs its
+/// full grace period and the second signal lands inside it.
+#[test]
+fn a_second_signal_during_forwarding_does_not_reenter_it() {
+    let scratch = tempfile::tempdir().unwrap();
+    let pidfile = scratch.path().join("gc.pid");
+    let script = write_script(scratch.path(), &grandchild_script(&pidfile, true));
+    let p = Project::new(&script.display().to_string(), "Coded");
+
+    let child = p
+        .cmd(&["verify", "T1", "--timeout", "600"])
+        .spawn()
+        .unwrap();
+    let grandchild = wait_for_pid(&pidfile);
+
+    let pid = child.id() as i32;
+    // SAFETY: signalling a child process we spawned.
+    unsafe { libc::kill(pid, libc::SIGINT) };
+    std::thread::sleep(Duration::from_millis(300));
+    // SAFETY: as above.
+    unsafe { libc::kill(pid, libc::SIGTERM) };
+    let out = wait_with_limit(child, Duration::from_secs(10));
+
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        out.status.signal(),
+        Some(libc::SIGINT),
+        "zforge must die of the first signal, not the one that arrived mid-forwarding"
+    );
+    assert_dies_within(grandchild, Duration::from_secs(3));
+}
+
 // ─── cancel ──────────────────────────────────────────────────────────────────
 
 fn start_async_ship_with_agent(ignore_term: bool) -> (Project, tempfile::TempDir, i32, String) {
