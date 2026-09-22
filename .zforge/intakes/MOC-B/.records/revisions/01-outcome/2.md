@@ -1,0 +1,90 @@
+# MOC-B — Outcome
+
+## Vấn đề
+
+Mốc A cho phép người dùng chốt một hợp đồng và bàn giao nó (`zforge handover`
+ghi `HANDOVER-nnn.json`), nhưng chưa có gì thực thi hợp đồng đó. Muốn một agent
+làm task, hiện chỉ có pipeline v1 (`zforge ship`), vốn:
+
+- đọc spec/plan trong `.zforge/tasks/`, không đọc bản đã chốt trong manifest;
+- chạy ngay trên working tree của người dùng, nên một lần chạy hỏng không bỏ đi
+  được và không tách được khỏi việc người dùng đang làm;
+- không có record nào cho biết lần chạy nào dùng hợp đồng nào, tốn bao nhiêu,
+  dừng vì sao.
+
+## Người sử dụng
+
+- **Người sở hữu sản phẩm** (người dùng zforge): bàn giao một leaf task rồi để
+  agent tự làm. Chỉ cần quay lại khi có kết quả, khi hết budget, hoặc khi hợp
+  đồng cần sửa.
+- **Agent implementation** (Claude Code chạy headless): nhận hợp đồng, sửa code,
+  chạy kiểm chứng, tự sửa trong phạm vi hợp đồng.
+- **Người review** (thường cũng là người sở hữu): đọc kết quả và truy vết được
+  từ yêu cầu tới code đã kiểm chứng.
+
+## Kết quả mong muốn
+
+Một leaf task trong manifest được thực thi từ đầu tới cuối mà không cần người
+dùng can thiệp: agent làm việc trong một worktree riêng, theo đúng bản hợp đồng
+đã chốt, trong giới hạn lượt thử và budget đã giao. Kết quả là một branch local
+cùng báo cáo kiểm chứng gắn với đúng tree đã test. Mọi lần chạy, kể cả lần hỏng,
+bị ngắt hay bị hủy, đều để lại record đọc được.
+
+## Yêu cầu
+
+- REQ-001: Chạy một leaf task từ một handover manifest; hợp đồng lấy từ snapshot đã chốt mà manifest pin (file, revision, hash), không bao giờ từ file đang sửa; snapshot không khớp hash thì từ chối chạy.
+- REQ-002: Mỗi lần chạy có một git worktree riêng trên branch `zforge/<task>/<run>`, tạo từ commit baseline ghi trong manifest; worktree được giữ lại khi chạy hỏng để người dùng xem.
+- REQ-003: Mỗi lần chạy có record riêng; nhật ký sự kiện append-only là nguồn sự thật về trạng thái (theo máy trạng thái công việc §6.1); các view tiến độ và kết quả được sinh lại từ nhật ký và không có thẩm quyền.
+- REQ-004: Thực thi bằng vòng code → verify → sửa theo phản hồi, dùng lại pipeline v1 qua một flow mới cho leaf task, với số vòng tối đa lấy từ manifest.
+- REQ-005: Kết quả `verified` chỉ được ghi khi test pass trên tree của worktree và fingerprint tree đó được ghi cùng; mỗi lần gọi agent để lại trace (IMP-006) gắn vào lần chạy.
+- REQ-006: Tổng chi phí của mọi lần chạy của một task trong một handover không vượt budget trong manifest; chạm budget thì lần chạy dừng ở `blocked` với lý do, không tự tăng budget và không hạ tiêu chí.
+- REQ-007: Lần chạy bị ngắt (process chết, máy tắt) được nhận ra và ghi `failed` với lý do `interrupted`; chạy lại là một lần chạy mới, pin cùng manifest, có lịch sử rõ ràng.
+- REQ-008: Người dùng xem được trạng thái, liệt kê, hủy và chạy lại các lần chạy; hủy dừng mọi process của lần chạy đó.
+- REQ-009: Task có `depends_on` không được chạy ở mốc này; lần chạy bị từ chối với lý do rõ ràng (ghép output giữa các task thuộc Mốc C).
+- REQ-010: Khi agent kết luận hợp đồng phải sửa, nó ghi một change request vào `changes/` và lần chạy dừng ở `blocked` với lý do amendment; agent không sửa được file hợp đồng đã chốt mà lần chạy đang dùng.
+- REQ-011: Sau khi một lần chạy `verified`, knowledge index ghi requirement của task đó là `verified`, kèm lần chạy và candidate; không bao giờ suy ra từ lời agent.
+
+## Phải giữ nguyên
+
+- Toàn bộ lệnh và hành vi v1 (`ship`, `verify`, `.zforge/tasks/`, job, MCP).
+- Nguyên tắc D1: chỉ con người ở terminal mới chốt được; thực thi không tạo ra
+  quyết định nào của người dùng.
+- Không push, không merge, không động vào branch baseline.
+- Working tree của người dùng không bị lần chạy sửa.
+
+## Ngoài phạm vi
+
+- Nhiều task phụ thuộc nhau và ghép output giữa các task (Mốc C).
+- Chạy song song nhiều task.
+- Container hay sandbox mạnh hơn git worktree.
+- Lệnh chốt change request; ở mốc này, sửa hợp đồng đi qua intake bình thường
+  rồi handover mới.
+- Codex và OpenCode làm runner cho leaf task (Claude trước).
+- Tích hợp vào baseline và trạng thái `integrated` của knowledge.
+
+## Dấu hiệu thành công
+
+- Benchmark IMP-006 chạy được: một leaf task thật đi từ manifest tới `verified`
+  trên branch riêng, working tree của người dùng không đổi, trace và evidence
+  khớp nhau.
+- Kill process giữa chừng, rồi `zforge run status`: thấy `failed (interrupted)`.
+  Chạy lại tạo một lần chạy mới.
+- Budget nhỏ hơn chi phí thật: lần chạy dừng `blocked (budget)`, không vượt.
+- Sửa file hợp đồng trong lúc chạy không ảnh hưởng lần chạy đó.
+
+## Nguồn và knowledge liên quan
+
+- `docs/v1.5/workflow.md` §6.1 (trạng thái công việc), §6.3 (manifest), §7
+  (thực thi tự chủ), §8 (thay đổi hợp đồng), §12 Mốc B.
+- `docs/v1.5/decisions.md`: D3 (worktree, nhật ký sự kiện, interrupted), D5
+  (`Flow::Contract`), D6 (baseline).
+- Đã có: `src/intake/handover.rs`, `src/evidence/`, `src/trace/`, `src/job/`,
+  `src/orchestrator/verifier_loop.rs`, `src/process.rs`.
+- Knowledge index: chưa có mục nào được chốt; đây là intake đầu tiên.
+
+## Câu hỏi còn mở
+
+- [x] Worktree đặt ở đâu? — **trong repo, `.zforge/worktrees/<RUN>`, thêm vào `.gitignore`** (ghi ở 03-solution)
+- [x] Chạy foreground hay nền mặc định? — **foreground mặc định, `--async` qua job** (ghi ở 03-solution)
+- [x] Budget cho từng lần chạy hay tổng? — **tổng cho mọi lần chạy của một task trong một handover** (ghi ở 02-behavior)
+- [x] Có commit `.zforge/intakes/` vào git không? — **có**; runtime chỉ đọc `.records/` của checkout chính (ghi ở 03-solution)

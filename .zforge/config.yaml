@@ -1,0 +1,12 @@
+# Minimal config so the zforge repo can hold its own v1.5 intakes.
+# Not produced by `zforge init`: no agents, skills or hooks are set up here.
+project:
+  name: "zforge"
+  language: "rust"
+  test_command: "cargo test"
+  root_dir: "."
+knowledge:
+  baseline: "main"
+execution:
+  max_iterations: 3
+  budget_usd: 3.0

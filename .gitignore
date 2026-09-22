@@ -1,4 +1,9 @@
 /target
 .claude
 .idea
-.zforge
+# zforge runtime state stays local; intakes (with their decision records)
+# and the config are product documents and are committed (v1.5 decision).
+.zforge/*
+!.zforge/config.yaml
+!.zforge/intakes/
+.zforge/intakes/**/.task.lock

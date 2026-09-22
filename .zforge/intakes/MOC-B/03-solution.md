@@ -1,0 +1,110 @@
+# MOC-B — Solution
+
+## Luồng xử lý
+
+```text
+zforge run HANDOVER-001 --task TASK-002
+  → nạp manifest, kiểm hash của mọi snapshot được pin          (REQ-001)
+  → từ chối nếu task có depends_on                             (REQ-009)
+  → tạo RUN-nnn: run.yaml + event `created`                    (REQ-003)
+  → git worktree add -b zforge/TASK-002/RUN-nnn <dir> <commit> (REQ-002)
+  → task v1 tạm, flow Contract, trong thư mục runtime của run   (REQ-004)
+  → verifier loop: code (agent) → verify (tests) → phản hồi
+       mỗi lần gọi agent: trace + event `attempt`, cộng chi phí (REQ-005, REQ-006)
+       mỗi lần verify: event `verified`/`verify_failed` + candidate của worktree
+  → event kết thúc: verified | failed | blocked | cancelled
+  → sinh lại progress.md/result.md; knowledge index             (REQ-011)
+```
+
+## Component và interface
+
+- `src/run/` (mới)
+  - `record.rs` — `run.yaml` (ghi một lần khi tạo: id, handover, task, manifest
+    sha256, worktree, branch, baseline commit, budget, retry_of) và
+    `events.jsonl` (append-only, fsync). `state()` phát lại sự kiện để ra trạng
+    thái §6.1, chi phí đã dùng và lần verify gần nhất.
+  - `worktree.rs` — tạo, xóa và liệt kê worktree/branch qua `git worktree`.
+  - `contract.rs` — đọc manifest, kiểm hash, dựng context prompt từ snapshot.
+  - `execute.rs` — một lần chạy: chuẩn bị, verifier loop, ghi sự kiện.
+  - `reconcile.rs` — `running` mà worker đã chết thì thành `failed(interrupted)`.
+- `src/state/flow.rs` — thêm `Flow::Contract` (Imported → Coded → Verified).
+- `templates/contract.tmpl` — prompt code cho leaf task: hợp đồng đã pin được
+  chèn nguyên văn, cùng phần "Verifier Feedback" như `code.tmpl`, và chỉ dẫn ghi
+  `changes/CHANGE-nnn.md` khi cần amendment.
+- CLI `src/cli/run.rs`: `zforge run <HANDOVER> --task <T> [--async]`,
+  `run status <RUN> [--json]`, `run list`, `run cancel <RUN>`,
+  `run retry <RUN>`, `run clean <RUN>` (xóa worktree của lần chạy đã kết thúc).
+- `src/intake/knowledge.rs` — `Implementation::Verified { run, candidate }` đọc
+  từ record của run.
+
+## Quyết định bắt buộc
+
+- Hợp đồng của lần chạy chỉ lấy từ `.records/revisions/` của checkout chính,
+  qua manifest và kèm kiểm hash. Không đọc file hợp đồng trong worktree hay
+  working tree.
+- Một lần chạy = một worktree + một branch `zforge/<task>/<run>` từ commit
+  baseline của manifest; zforge không push, không merge.
+- `events.jsonl` là nguồn sự thật duy nhất về trạng thái; `run.yaml` ghi một lần;
+  `progress.md`/`result.md` là view sinh lại.
+- Tách rõ hai thư mục: **project root** (checkout chính: config, `.records/`,
+  `.zforge/runs/`, registry override) và **work dir** (worktree: cwd của agent,
+  cwd của lệnh test, gốc để fingerprint). Hiện orchestrator và verify dựa vào cwd
+  của process và `config.project_root()`: agent kế thừa cwd, test chạy ở
+  `env::current_dir()`, fingerprint lấy `project_root`. Phải truyền work dir một
+  cách tường minh thay vì đổi cwd của process.
+- Budget: mỗi lần gọi agent nhận `--max-budget-usd` bằng phần còn lại; chi phí
+  thực lấy từ `result.cost_usd` của trace. Thiếu số liệu chi phí thì tính là đã
+  dùng hết phần được cấp, không tính là 0.
+- Chỉ Claude là runner cho leaf task ở mốc này; runner khác bị từ chối rõ ràng.
+- Worktree đặt ở `.zforge/worktrees/<RUN>` trong project; `.zforge/worktrees/`
+  được thêm vào `.gitignore` của project khi tạo worktree đầu tiên. Nằm trong
+  thư mục đã trust nên Claude không bỏ allowlist của project.
+- `zforge run` chạy foreground mặc định; `--async` chạy nền qua `job`.
+- Budget của manifest là tổng cho mọi lần chạy của một task trong handover đó;
+  phần còn lại = budget − tổng chi phí mọi RUN của cặp (handover, task), đọc từ
+  sự kiện của các run đó.
+- `.zforge/intakes/` (cả `.records/`) được commit vào git như tài liệu sản phẩm.
+  Worktree vì vậy có bản sao của hợp đồng; runtime không đọc bản đó, và sửa nó
+  không ảnh hưởng lần chạy (REQ-001).
+
+## Gợi ý triển khai
+
+- Task v1 tạm (`TaskState` với `Flow::Contract`) đặt dưới
+  `.zforge/runs/RUN-nnn/task/`, để dùng lại `ship::run_locked` và
+  `verifier_loop` mà không trộn vào `.zforge/tasks/` của người dùng.
+- Lần chạy nền dùng lại `job`: một `JobKind::Run` để `cancel` và `reconcile`
+  có sẵn.
+- PID của worker ghi vào event `started`, không vào `run.yaml`, để `run.yaml`
+  giữ tính ghi một lần.
+- `run clean` chỉ xóa worktree; giữ branch để người dùng tự quyết.
+
+## Phương án đã cân nhắc
+
+- **Đổi cwd của process sang worktree** (ít sửa code nhất): bị loại, vì
+  `config::load` đi ngược từ cwd lên và sẽ tìm thấy `.zforge/` trong worktree
+  (bản sao được commit), dẫn tới đọc sai records, registry override và lock.
+- **Chạy trên working tree** (như v1): bị loại theo D3.
+- **Pipeline riêng không qua v1**: bị loại theo D5, vì phải viết lại verifier
+  loop, fallback và cost đã có test.
+- **Lưu trạng thái run trong `.state.yaml`**: bị loại, vì một file ghi đè không
+  cho lịch sử và không có điểm commit cho nhiều artifact (IMP-002).
+
+## Giả định và bằng chứng
+
+- `git worktree add -b <branch> <path> <commit>` có sẵn từ git 2.5; `git` là
+  điều kiện readiness từ Mốc A.
+- `claude --max-budget-usd` giới hạn một lần gọi. Đã thấy trong benchmark
+  IMP-006: 3 phase, tổng $0.53 với trần $0.40 mỗi lần, không vượt.
+- `trace::claude` đọc được `result.cost_usd`; benchmark cho thấy trường này có
+  mặt ở mọi lần chạy thành công. Lần chạy bị cắt ngang có thể không có, và đó là
+  lý do cho quy tắc "thiếu số liệu = đã dùng hết".
+- Trust của thư mục cha phủ thư mục con không có entry riêng (đã thấy với
+  2.1.278), nên worktree trong `.zforge/worktrees/` thừa hưởng trust của
+  project. Chưa kiểm với một worktree git thật; TASK-008 kiểm. Chạy headless bỏ
+  qua kiểm tra quyền, nên dù sao cũng không chặn lần chạy.
+
+## Câu hỏi còn mở
+
+- [x] Vị trí worktree — **`.zforge/worktrees/<RUN>` trong repo** (ghi ở Quyết định bắt buộc)
+- [x] Foreground hay nền — **foreground mặc định, `--async` qua job**
+- [x] Commit `.zforge/intakes/` — **có**; runtime chỉ đọc `.records/` của checkout chính
