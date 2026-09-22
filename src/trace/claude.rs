@@ -17,6 +17,9 @@ use serde_json::Value;
 /// Stderr lines Claude prints when it drops configuration for the run.
 const WARNING_MARKERS: [&str; 2] = ["Ignoring ", "has not been trusted"];
 
+/// `permissionMode` of a run with `--dangerously-skip-permissions`.
+const BYPASS_MODE: &str = "bypassPermissions";
+
 /// What a trace cannot show for Claude.
 pub const NOT_OBSERVABLE: [&str; 1] = [
     "whether the phase agent's `skills:` were preloaded — Claude reports the skill catalog, not what it injected",
@@ -219,8 +222,13 @@ fn compare(expected: &Expected, observed: &Observed, catalog: &Catalog) -> Vec<F
         }
     }
 
-    for warning in &observed.warnings {
-        findings.push(Finding::new(Infrastructure, warning.clone()));
+    // Dropped configuration matters only when permissions are enforced;
+    // under `bypassPermissions` (headless runs) the warning stays in
+    // `observed.warnings` but changes nothing the run could do.
+    if observed.permission_mode.as_deref() != Some(BYPASS_MODE) {
+        for warning in &observed.warnings {
+            findings.push(Finding::new(Infrastructure, warning.clone()));
+        }
     }
     if !observed.permission_denials.is_empty() {
         findings.push(Finding::new(
@@ -378,6 +386,27 @@ mod tests {
         assert!(messages(&a)
             .iter()
             .any(|m| m.starts_with("Ignoring 17 permissions.allow")));
+    }
+
+    /// Seen in the benchmark: headless runs bypass permissions, so the
+    /// dropped allowlist changes nothing — keep the warning, no finding.
+    #[test]
+    fn a_dropped_allowlist_under_bypass_is_only_a_warning() {
+        let stream = STREAM.replacen(
+            r#""permissionMode": "default""#,
+            r#""permissionMode": "bypassPermissions""#,
+            1,
+        );
+        assert_ne!(stream, STREAM, "fixture layout changed");
+        let stderr = "Ignoring 17 permissions.allow entries from .claude/settings.json: \
+                      this workspace has not been trusted.\n";
+        let a = analyze(&stream, stderr, &expected());
+        assert_eq!(a.observed.as_ref().unwrap().warnings.len(), 1);
+        assert!(
+            !messages(&a).iter().any(|m| m.starts_with("Ignoring")),
+            "{:?}",
+            messages(&a)
+        );
     }
 
     #[test]

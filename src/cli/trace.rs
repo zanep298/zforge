@@ -81,10 +81,14 @@ pub fn run(task_id: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// First Markdown heading of `task.md`.
+/// `title` from `task.md`'s frontmatter (how `task import` writes it), or
+/// its first Markdown heading.
 fn title(task_md: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(task_md)
-        .ok()?
+    let md = crate::fs::reader::MarkdownFile::read(task_md).ok()?;
+    if let Some(t) = md.get_str("title").filter(|t| !t.trim().is_empty()) {
+        return Some(t.trim().to_string());
+    }
+    md.body
         .lines()
         .find_map(|l| l.strip_prefix("# ").map(|t| t.trim().to_string()))
 }
@@ -292,6 +296,17 @@ mod tests {
         ] {
             assert!(text.contains(want), "missing {want:?} in:\n{text}");
         }
+    }
+
+    #[test]
+    fn title_comes_from_frontmatter_or_the_first_heading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fm = tmp.path().join("a.md");
+        std::fs::write(&fm, "---\ntitle: Fix add\ndomain: calc\n---\n\n# Task\n").unwrap();
+        assert_eq!(title(&fm).as_deref(), Some("Fix add"));
+        let heading = tmp.path().join("b.md");
+        std::fs::write(&heading, "# Add docs\n").unwrap();
+        assert_eq!(title(&heading).as_deref(), Some("Add docs"));
     }
 
     #[test]
