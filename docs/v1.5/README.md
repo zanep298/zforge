@@ -51,8 +51,8 @@ quay lại intake; các phần độc lập có thể tiếp tục.
 
 Hai lượt review runtime và init/tool ngày 16–18/09/2026 được đưa vào backlog
 v1.5. Toàn bộ FIX-001 → FIX-026 đã sửa, kèm regression test. Cải tiến đã làm
-cho Claude Code (client chính): IMP-002, IMP-004, IMP-005; IMP-001/IMP-003 đạt
-phần cần cho các fix. Workflow intake (Mốc A trở đi) chưa được implement.
+cho Claude Code (client chính): IMP-002, IMP-004, IMP-005, IMP-006 (trace +
+benchmark một task); IMP-001/IMP-003 đạt phần cần cho các fix. Workflow intake (Mốc A trở đi) chưa được implement.
 
 | Tài liệu | Nội dung |
 |---|---|

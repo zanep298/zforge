@@ -266,6 +266,53 @@ Benchmark một task nhỏ từ init đến bàn giao, với contract và budget
 được giao, chạy verification, sửa lỗi có kiểm soát và xuất kết quả. Bổ sung trường
 hợp thiếu skill/server, test fail và interruption để xác nhận không báo pass giả.
 
+**Tiến độ (Claude Code):**
+- Claude chạy với `-p --output-format stream-json --verbose` (default registry;
+  hai default cũ `-p`, `-p --output-format json` được migrate). Mỗi lần spawn
+  ghi một dòng vào `<task>/trace.jsonl` (`src/trace/`), tách *expected* (named
+  agent, model, skill preload của agent, CodeGraph khi project có index) khỏi
+  *observed* (client version, model, session, trạng thái MCP, lời gọi
+  tool/Skill/subagent — cả của subagent —, permission bị từ chối, cảnh báo
+  stderr về config bị bỏ, `result`). So khớp hai phần sinh *findings* chia ba
+  loại: infrastructure / agent choice / run. Phần Claude không báo được ghi vào
+  `not_observable`: stream chỉ có catalog skill, không cho biết `skills:` có
+  được preload vào agent hay không. Runner khác và lần chạy interactive có bản
+  ghi `unavailable`, không có bản ghi rỗng kiểu "ổn".
+- `zforge trace <ID> [--json]`: task → từng phase/attempt → runner/agent/model
+  (cấu hình và thực tế)/skill/MCP/tool/kết quả/findings → từng lần verify với
+  candidate → evidence còn khớp code hay không.
+- Ca lỗi chạy trong CI bằng stub phát lại stream thật của Claude 2.1.278
+  (`tests/fixtures/claude/`, đã làm sạch): thiếu agent/skill/server, server
+  không connected, model khác, bị từ chối quyền, allowlist bị bỏ, chạy bị cắt
+  ngang, output không phải stream (`trace_test`, unit `trace::claude`).
+- Benchmark thật: `cargo test --test bench_claude_test -- --ignored --nocapture`.
+  Kịch bản cố định (project shell, `add` bị trừ, flow Fixbug, spec → testspec →
+  ship tối đa 2 vòng verify), haiku, `--max-budget-usd 0.40` mỗi spawn. Đạt khi
+  mọi phase có trace và kết thúc, không có finding infrastructure, verify cuối
+  pass trên candidate đang có. Lượt đạt ngày 22/09/2026: 3 phase, $0.53, verify
+  pass, evidence current.
+
+Benchmark tìm ra ngay hai lỗi, đã sửa kèm regression: (1) mọi stream-json có
+`rate_limit_event`, nên pattern fallback `rate.?limit` khớp với mọi lần chạy
+thành công và phase bị fail — giờ stream được đối chiếu trên lỗi của `result`,
+không trên framing (`fallback::scan_text`); (2) cảnh báo "Ignoring N
+permissions.allow … not trusted" bị tính là lỗi dù chạy headless bypass quyền.
+
+Quan sát từ lượt đạt, chưa xử lý:
+- Không phase nào gọi CodeGraph dù đã connected (agent choice). Project shell
+  có thể không được CodeGraph index; cần kịch bản ngôn ngữ được hỗ trợ.
+- Workspace chưa trust thì `claude -p` bỏ toàn bộ allowlist của project. Chạy
+  foreground không TTY (MCP, CI) sẽ bị từ chối Bash; `doctor` nên kiểm tra
+  `hasTrustDialogAccepted`.
+- Project không nhận ra ngôn ngữ bị init gán `rust` (có chủ đích từ trước:
+  `empty_dir_falls_back_to_rust`), nên phase code preload skill Rust cho
+  project shell.
+- Verify báo `0 tests` với output shell: runner không đếm được test, pass chỉ
+  dựa trên exit code.
+
+Chưa làm: Codex/OpenCode; kịch bản benchmark thứ hai (ngôn ngữ CodeGraph hỗ
+trợ, feature nhiều file); benchmark ca lỗi với model thật (đang dùng stub).
+
 **Nghiệm thu:** người review truy vết được requirement → phase → runner/skill/tool
 → thay đổi → kiểm chứng trên candidate. Tách lỗi hạ tầng/tool, lỗi lựa chọn của
 agent và lỗi sản phẩm. Ghi model/version, budget, scenario và giới hạn suy rộng;
