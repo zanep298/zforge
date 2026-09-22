@@ -1,6 +1,6 @@
 # v1.5 — Backlog sửa lỗi runtime và init
 
-**Trạng thái: backlog từ review, chưa triển khai các bản sửa trong tài liệu này.**
+**Trạng thái: FIX-001 → FIX-017 đã sửa, mỗi mục có regression test. Review nhánh sửa lỗi ngày 21–22/09/2026 tìm thêm FIX-018 → FIX-026, cũng đã sửa ([xem cuối tài liệu](#review-nhánh-sửa-lỗi-2122092026)).**
 
 Tài liệu tập hợp 11 nhóm lỗi runtime và 6 nhóm lỗi init/dispatch từ hai lượt
 review. Khoảng trống native skills và native custom agent được đưa vào
@@ -588,6 +588,29 @@ là làm mới file sinh ra. Agent definitions render lại từ models.yaml hi�
 Regression: `tests/init_e2e_test.rs` chạy binary thật, mọi vị trí config (HOME,
 ZFORGE_HOME, CODEX_HOME, XDG_CONFIG_HOME, CLAUDE_CONFIG_DIR) trỏ vào thư mục tạm,
 `PATH` chỉ có stub ghi argv. Trên code cũ 14/15 test fail đúng lý do. Trên code cũ model tùy chỉnh bị ghi đè sau `init --force`.
+
+## Review nhánh sửa lỗi (21–22/09/2026)
+
+Review toàn bộ nhánh `fix/operation-outcome-plumbing` so với `main` (3 reviewer
+song song + chạy full suite). Mỗi finding được đọc lại trong code trước khi nhận.
+Tất cả đã sửa, mỗi mục một commit và regression test.
+
+| ID | Ưu tiên | Vấn đề | Sửa | Regression |
+|---|---|---|---|---|
+| FIX-018 | P1 | `job cancel` khi job còn `queued` chỉ đổi nhãn; worker vẫn chạy ship và ghi đè `cancelled` bằng kết quả của nó | `lifecycle::cancel_job` dùng chung CLI/MCP, lấy `launch.pid` khi chưa có `worker_pid`; trạng thái kết thúc là cuối cùng, `mark_running` từ chối job đã hủy | `background_job_test`: `cancel_stops_a_queued_worker…`, `a_cancelled_job_stays_cancelled` |
+| FIX-019 | P2 | Fingerprint kế thừa `GIT_DIR`/`GIT_WORK_TREE` (chạy từ git hook) → tính trên repo khác, evidence cũ được nhận | Bỏ các biến trong `git rev-parse --local-env-vars` khỏi mọi lệnh git của fingerprint | `evidence_test`: `inherited_git_environment…` |
+| FIX-020 | P2 | Init lại xoá mọi comment trong `config.yaml` (round-trip `serde_yaml`) | Sửa trực tiếp dòng của key được quản lý; parse lại để đối chiếu, layout lạ thì fallback | unit test `config_file` (comment, section thiếu, flow style) |
+| FIX-021 | P2 | `init --force` thay nguyên `.claude/settings.json`, mất permission/hook/env của user (có từ trước nhánh) | Merge: giữ mọi key/entry theo thứ tự, thêm allow của zForge còn thiếu, chỉ bỏ tên CodeGraph < 0.9; `serde_json/preserve_order` | unit `claude_settings`, e2e `refresh_keeps_user_claude_settings` |
+| FIX-022 | P3 | Fingerprint bỏ sót sửa đổi trong submodule đã checkout và nội dung sau symlink trỏ ra ngoài project | `evidence::linked`: fingerprint đệ quy submodule, hash nội dung đích symlink ngoài project; không có hai loại này thì giữ tree hash cũ | `evidence_test`: submodule, symlink file, thư mục 3000 file |
+| FIX-023 | P3 | Signal handler dùng `signal()`: signal thứ hai trong lúc forward chạy chồng handler, zForge chết bởi signal sau | `sigaction` với `sa_mask` chặn cả SIGINT/SIGTERM/SIGHUP; bỏ signal đang chờ trước khi re-raise | `process_tree_test`: `a_second_signal_during_forwarding…` |
+| FIX-024 | P3 | Dọn skill cũ xoá cả skill của user có tên `zforge-*` | Chỉ xoá khi `SKILL.md` có `metadata.generated-by: zforge` | e2e `refresh_removes_stale_zforge_skills_only` |
+| FIX-025 | P3 | `doctor` fingerprint lại cho từng task Verified (mỗi lần ~6 lệnh git) | `evidence::status_against` + một fingerprint lười cho cả lượt | `doctor_test` hiện có |
+| FIX-026 | P3 | Test `verify_timeout…` flaky dưới tải: timeout 3s kill script trước khi ghi pid | Đọc pidfile sau khi zForge thoát; chưa có pid thì chạy lại với 6s, 12s | chính test đó, full suite 2 lượt liên tiếp |
+
+Còn để lại, rủi ro thấp hoặc chỉ là câu chữ: message MCP `ship` luôn ghi "up to N
+iterations"; bảng con `[mcp_servers.codegraph.env]` tự thêm bị bỏ lại khi init lại
+Codex; khoảng tái dùng pgid rất hẹp giữa reap và kill; child đăng ký đúng lúc cancel
+đọc danh sách group; tên index tạm đoán được (tối đa DoS qua `.lock`).
 
 ## Thứ tự triển khai và điều kiện đóng lỗi
 

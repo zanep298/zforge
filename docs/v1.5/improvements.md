@@ -1,6 +1,6 @@
 # v1.5 — Cải tiến độ tin cậy và tích hợp agent/tool
 
-**Trạng thái: kế hoạch đề xuất, chưa phải tính năng đã implement.**
+**Trạng thái: đang triển khai. Claude Code là client làm trước; mỗi mục ghi *Tiến độ* và *Chưa làm*.**
 
 Kế hoạch bổ sung cho [workflow intake và thực thi](./workflow.md), dựa trên
 [backlog lỗi và bằng chứng review](./bug-fixes.md). Mục tiêu là giúp người dùng
@@ -76,11 +76,16 @@ Job startup/recovery phải giữ lịch sử attempt và lý do dừng.
   `review --done` chỉ nhận evidence *hiện hành*: pass + đúng test command đã
   cấu hình + candidate trùng tree hiện tại. Ngoài git: không có fingerprint,
   review vẫn đi tiếp với cảnh báo.
+- Fingerprint không bị điều hướng bởi `GIT_DIR`/`GIT_WORK_TREE` kế thừa (FIX-019),
+  và bao gồm submodule đã checkout cùng nội dung sau symlink trỏ ra ngoài project
+  (`evidence::linked`, FIX-022). Project không có hai loại này giữ tree hash cũ.
 - Lịch sử từng lần verify: `<task>/verify-history.jsonl`.
+- Job: trạng thái kết thúc là cuối cùng; cancel dừng cả worker còn `queued`
+  (FIX-018).
 - Thứ tự ghi: verify.md → history → state. Crash giữa chừng không tạo Verified
   thiếu report (có test: ghi report lỗi → task vẫn Coded).
 
-Regression: `tests/evidence_test.rs` (10, binary thật trong git repo thật) và
+Regression: `tests/evidence_test.rs` (15, binary thật trong git repo thật) và
 unit test `evidence::candidate`. Trên code cũ: review chấp nhận evidence sau khi
 code đã sửa và evidence của command khác.
 
@@ -113,6 +118,14 @@ Tách lớp kiểm tra rõ ràng:
 | Unit và subprocess với stub | Gate, state, argv, budget, failure propagation | Native discovery và hành vi LLM |
 | CLI/tool thật, không gọi model | Parse config, nhận agent/skill/MCP, truy vấn fixture | LLM chọn và dùng đúng capability |
 | Task nhỏ với LLM thật | Hành vi trên scenario và phiên bản được ghi nhận | Bảo đảm đúng trên mọi task/model |
+
+**Tiến độ:** `.github/workflows/ci.yml` chạy fmt, clippy `-D warnings` và test
+trên PR/push; `release.yml` gọi CI và chỉ publish khi pass. Các tình huống tái
+hiện của FIX-001 → FIX-026 là test trong repository (binary thật, stub client).
+
+Chưa làm: CI chưa tách test đã chạy / bị skip / thiếu dependency;
+`real_clients_load_the_codegraph_registration` vẫn `#[ignore]` nên CI không có
+bằng chứng client thật; chưa có lớp "task nhỏ với LLM thật" (IMP-006).
 
 **Nghiệm thu:** CI phân biệt test đã chạy, bị skip và thiếu dependency; không
 tính test real-agent tự return là bằng chứng tích hợp thật. Release chỉ quảng
@@ -216,8 +229,8 @@ Mỗi mục báo mức cao nhất *đã kiểm được*: missing / broken / pre
 |---|---|---|
 | claude | `claude --version` | working |
 | runner | `runner.default` có trong registry, binary trên PATH | configured |
-| agents | 5 định nghĩa phase: có, parse được, `name` khớp, có `model` | configured (Claude không có lệnh liệt kê subagent) |
-| skills | mọi checklist CLAUDE.md tham chiếu tồn tại | configured (native discovery chờ IMP-004) |
+| agents | 5 định nghĩa phase: có, parse được, `name` khớp, có `model`; `claude plugin validate` | recognized (Claude không có lệnh liệt kê subagent) |
+| skills | native `zforge-*` skills có đủ, mọi skill preload tồn tại; `claude plugin validate` | recognized |
 | zforge / codegraph MCP | `claude mcp get`: đăng ký, connected (health check), codegraph ghim đúng project | working |
 | rtk hook | có trong settings (user/project/local) *và* viết lại `git status` thật | working |
 | caveman hook | đã đăng ký, script tồn tại | configured |
@@ -226,10 +239,13 @@ Mỗi mục báo mức cao nhất *đã kiểm được*: missing / broken / pre
 Mục bắt buộc (claude, runner, agents) lỗi → exit 1; mục tuỳ chọn cảnh báo kèm lệnh
 sửa. Chạy thật với claude 2.1.278 / codegraph / rtk trong HOME tạm: init mới báo
 zforge MCP chưa đăng ký và rtk chưa gắn hook; sau khi đăng ký thì cả hai MCP
-connected và rtk working. Regression: `tests/doctor_test.rs` (8, stub `claude`
+connected và rtk working. Regression: `tests/doctor_test.rs` (10, stub `claude`
 trả từng trạng thái MCP, stub `rtk` hoạt động/không hoạt động).
 
-Chưa làm: Codex/OpenCode; mức 5 (trace sử dụng trong task thật) thuộc IMP-006.
+Chưa làm: Codex/OpenCode; CodeGraph mới kiểm qua health check của `claude mcp
+get` — chưa gọi `tools/list`/search đúng root, chưa kiểm sửa fixture được phản
+ánh; Caveman chưa kiểm invocation; mức 5 (trace sử dụng trong task thật) thuộc
+IMP-006.
 
 **Nghiệm thu:** tình huống binary thiếu, config lỗi, server không chạy, sai root,
 native catalog rỗng hoặc hook chưa đăng ký tạo kết quả cụ thể và hướng xử lý;

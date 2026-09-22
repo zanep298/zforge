@@ -50,13 +50,14 @@ quay lại intake; các phần độc lập có thể tiếp tục.
 ## Fix bugs và cải tiến
 
 Hai lượt review runtime và init/tool ngày 16–18/09/2026 được đưa vào backlog
-v1.5. Đây là công việc cần thực hiện, chưa phải các lỗi đã sửa hoặc capability
-đã được triển khai.
+v1.5. Toàn bộ FIX-001 → FIX-026 đã sửa, kèm regression test. Cải tiến đã làm
+cho Claude Code (client chính): IMP-002, IMP-004, IMP-005; IMP-001/IMP-003 đạt
+phần cần cho các fix. Workflow intake (Mốc A trở đi) chưa được implement.
 
 | Tài liệu | Nội dung |
 |---|---|
-| [Backlog sửa lỗi](./bug-fixes.md) | 17 nhóm lỗi runtime và init/dispatch; mức ưu tiên, bằng chứng, vị trí code, hướng sửa và tiêu chí nghiệm thu |
-| [Kế hoạch cải tiến](./improvements.md) | 6 nhóm cải tiến về operation, persistence, CI, native skills/agents/MCP, readiness tool và trace/benchmark |
+| [Backlog sửa lỗi](./bug-fixes.md) | 17 nhóm lỗi runtime và init/dispatch, cộng 9 lỗi từ review nhánh sửa lỗi; mức ưu tiên, bằng chứng, vị trí code, hướng sửa và tiêu chí nghiệm thu — tất cả đã sửa |
+| [Kế hoạch cải tiến](./improvements.md) | 6 nhóm cải tiến về operation, persistence, CI, native skills/agents/MCP, readiness tool và trace/benchmark; mỗi mục ghi tiến độ và phần chưa làm |
 
 Ưu tiên kết quả/gate chính xác, state/lock/timeout an toàn và init đúng client.
 Các lỗi P1 trên đường chạy được chọn phải được xử lý trước khi nghiệm thu thực
