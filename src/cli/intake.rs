@@ -146,6 +146,14 @@ fn decide(i: &Intake, rel: &str, note: Option<&str>) -> Result<()> {
         "✓".green(),
         rev.revision
     );
+    if let Some(root) = i
+        .dir
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    {
+        refresh_knowledge(root);
+    }
     Ok(())
 }
 
@@ -271,5 +279,25 @@ pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
     let by = std::env::var("USER").ok().filter(|u| !u.is_empty());
     let m = crate::intake::handover::create(&i, &root, tasks, &config, &r.files, by)?;
     println!("{} {} recorded", "✓".green(), m.id);
+    refresh_knowledge(&root);
     Ok(())
+}
+
+/// `zforge knowledge index`: regenerate `.zforge/knowledge/index.{md,json}`.
+pub fn knowledge_index(json: bool) -> Result<()> {
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let entries = crate::intake::knowledge::write(&config.project_root())?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        print!("{}", crate::intake::knowledge::render(&entries));
+    }
+    Ok(())
+}
+
+/// Keep the index current after a decision; a failure is reported, not fatal.
+fn refresh_knowledge(root: &std::path::Path) {
+    if let Err(e) = crate::intake::knowledge::write(root) {
+        eprintln!("warning: knowledge index not updated: {e:#}");
+    }
 }

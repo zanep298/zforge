@@ -389,3 +389,67 @@ fn readiness_names_each_reason_it_is_not_ready() {
     let (_, r) = p.readiness(&[]);
     assert!(failing(&r).join("\n").contains("no budget"));
 }
+
+/// §9: the index comes from accepted revisions only, and keeps the
+/// decision and implementation statuses apart.
+#[test]
+fn knowledge_index_follows_accepted_revisions_and_handovers() {
+    let p = Project::new();
+    let intake = p.ready_intake();
+    let index = |p: &Project| -> serde_json::Value {
+        serde_json::from_str(&p.ok(&["knowledge", "index", "--json"])).unwrap()
+    };
+    let entry = |v: &serde_json::Value, id: &str| {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .cloned()
+            .unwrap()
+    };
+
+    let v = index(&p);
+    let req = entry(&v, "REQ-001");
+    assert_eq!(req["decision"], "active");
+    assert_eq!(req["implementation"], "not_implemented");
+    assert_eq!(req["tasks"], serde_json::json!(["TASK-001", "TASK-002"]));
+    assert_eq!(req["source"], "01-outcome.md");
+    assert!(p.root.join(".zforge/knowledge/index.md").is_file());
+
+    let config = zforge::config::load_from(&p.root.join(".zforge/config.yaml")).unwrap();
+    let (_, r) = p.readiness(&[]);
+    let pinned: Vec<zforge::intake::readiness::Pinned> =
+        serde_json::from_value(r["files"].clone()).unwrap();
+    zforge::intake::handover::create(&intake, &p.root, &[], &config, &pinned, None).unwrap();
+    assert_eq!(
+        entry(&index(&p), "REQ-001")["implementation"],
+        "handed_over"
+    );
+
+    // A requirement dropped by a later accepted revision is superseded,
+    // citing the last revision that had it; a draft changes nothing.
+    let outcome = p.intake_dir().join("01-outcome.md");
+    let base = std::fs::read_to_string(&outcome).unwrap();
+    std::fs::write(
+        &outcome,
+        base.replace(
+            "- REQ-001: lọc theo trạng thái\n",
+            "- REQ-001: lọc theo trạng thái\n- REQ-009: tạm\n",
+        ),
+    )
+    .unwrap();
+    p.accept("01-outcome.md");
+    std::fs::write(&outcome, &base).unwrap();
+    p.accept("01-outcome.md");
+    std::fs::write(&outcome, base.replace("lọc theo", "DRAFT")).unwrap();
+
+    let v = index(&p);
+    let dropped = entry(&v, "REQ-009");
+    assert_eq!(dropped["decision"], "superseded");
+    assert_eq!(dropped["revision"], 2);
+    assert_eq!(
+        entry(&v, "REQ-001")["text"],
+        "REQ-001: lọc theo trạng thái",
+        "not the draft"
+    );
+}

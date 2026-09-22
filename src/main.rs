@@ -11,6 +11,16 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Subcommand, Debug)]
+enum KnowledgeCmd {
+    /// Regenerate `.zforge/knowledge/index.md` and `index.json` from the
+    /// accepted revisions of every intake.
+    Index {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold .zforge/ + agent-specific files. Default agent: claude.
@@ -205,6 +215,11 @@ enum Commands {
         /// Limit the handover to these tasks (default: all).
         #[arg(long = "task")]
         tasks: Vec<String>,
+    },
+    /// v1.5 product knowledge built from accepted intakes.
+    Knowledge {
+        #[command(subcommand)]
+        cmd: KnowledgeCmd,
     },
     /// Follow a task from requirement to verified code: per phase, the
     /// runner, agent, model, skills and tools each run actually used (as the
@@ -423,6 +438,9 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Git { cmd } => cli::git::run(cmd),
         Commands::Trace { task_id, json } => cli::trace::run(&task_id, json),
         Commands::Intake { cmd } => cli::intake::run(cmd),
+        Commands::Knowledge {
+            cmd: KnowledgeCmd::Index { json },
+        } => cli::intake::knowledge_index(json),
         Commands::Readiness { id, tasks, json } => cli::intake::readiness(&id, &tasks, json),
         Commands::Handover { id, tasks } => cli::intake::handover(&id, &tasks),
         // Handled by `dispatch` because they carry a verdict.
