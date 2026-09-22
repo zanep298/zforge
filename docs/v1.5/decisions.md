@@ -1,6 +1,18 @@
 # v1.5 — Đề xuất cho các quyết định triển khai còn mở
 
-**Trạng thái: đề xuất chờ người dùng chốt. Chưa quyết định nào có hiệu lực.**
+**Trạng thái: đã chốt ngày 22/09/2026 — người dùng chấp nhận toàn bộ đề xuất.**
+
+| # | Đã chọn |
+|---|---|
+| D1 | Chỉ chốt qua CLI có TTY; không có kênh chốt qua chat |
+| D2 | Leaf task là Markdown + frontmatter nhỏ |
+| D3 | Bắt buộc git + một worktree cho mỗi run ngay từ bản đầu |
+| D4 | CLI trước, MCP sau |
+| D5 | Leaf task chạy qua `Flow::Contract` trên pipeline v1 |
+| D6 | Baseline cố định trong config (`knowledge.baseline`, mặc định `main`); mỗi manifest ghi lại baseline và commit tại lúc bàn giao |
+
+D6 không có phương án được đánh dấu là đề xuất; lựa chọn trên giữ một nguồn cấu
+hình duy nhất và vẫn truy vết được baseline của từng lần bàn giao.
 
 Tài liệu trả lời sáu điểm ở [§14 của workflow](./workflow.md#14-các-quyết-định-triển-khai-còn-mở).
 Mỗi mục gồm bối cảnh, phương án, đề xuất, hệ quả và **điểm cần người dùng chọn**.
@@ -71,7 +83,7 @@ gõ xác nhận (hiện hash rút gọn) mới ghi được `accepted`. Agent ch
 `.claude/settings.json` một luật `deny` cho `Bash(zforge intake accept*)` làm lớp
 thứ hai. MCP không có tool chốt (xem D4).
 
-> **Cần chọn (D1):** chốt chỉ qua CLI có TTY (đề xuất) — hay chấp nhận thêm kênh
+> **Đã chọn: CLI có TTY.** Câu hỏi ban đầu (D1): chốt chỉ qua CLI có TTY (đề xuất) — hay chấp nhận thêm kênh
 > chat nếu người dùng gõ lại mã xác nhận hiện trên màn hình? Kênh thứ hai tiện hơn
 > nhưng agent có thể đọc và gõ lại mã, nên không chứng minh được con người đã chốt.
 
@@ -105,7 +117,7 @@ vì người dùng phải review đúng thứ agent thực thi, và thứ đó n
 **Diff.** Dùng `git diff --no-index` khi có git (đã là điều kiện của D3), không thêm
 crate diff.
 
-> **Cần chọn (D2):** leaf task là Markdown + frontmatter nhỏ (đề xuất), hay YAML
+> **Đã chọn: Markdown + frontmatter.** Câu hỏi ban đầu (D2): leaf task là Markdown + frontmatter nhỏ (đề xuất), hay YAML
 > contract có Markdown sinh ra để đọc? YAML dễ kiểm bằng máy hơn nhưng tạo hai bản
 > mà người dùng phải tin là khớp nhau.
 
@@ -151,7 +163,7 @@ dở dang. Runtime hiện có sẵn: evidence gắn candidate, trace, job + canc
 - **Budget.** Mỗi spawn có `--max-budget-usd`; runtime cộng `cost_usd` từ trace và
   dừng run (`blocked: budget`) khi chạm giới hạn của manifest. Không tự nâng budget.
 
-> **Cần chọn (D3):** bắt buộc git + worktree từ bản đầu (đề xuất), hay cho phép
+> **Đã chọn: git + worktree từ bản đầu.** Câu hỏi ban đầu (D3): bắt buộc git + worktree từ bản đầu (đề xuất), hay cho phép
 > chạy trên working tree hiện tại ở MVP và thêm worktree sau? Bản không có worktree
 > nhanh hơn để có Mốc B nhưng không bỏ được run hỏng và không chạy song song được ở
 > Mốc C.
@@ -185,7 +197,7 @@ MCP cho agent: `intake_status`, `intake_diff`, `readiness`, `run_status`,
 **Không có** `accept`, `handover`, `change_accept` trên MCP. Tool `approve` của v1 giữ
 nguyên cho flow v1, không dùng được cho intake.
 
-> **Cần chọn (D4):** thứ tự làm — CLI trước, MCP sau (đề xuất, vì chốt vốn ở CLI),
+> **Đã chọn: CLI trước.** Câu hỏi ban đầu (D4): thứ tự làm — CLI trước, MCP sau (đề xuất, vì chốt vốn ở CLI),
 > hay làm song song để agent intake dùng được ngay trong chat?
 
 ---
@@ -212,7 +224,7 @@ nguyên cho flow v1, không dùng được cho intake.
 - ADR của v2 không tự áp dụng (theo README v1.5); chỉ lấy lại ý tưởng khi có lý do
   ghi trong tài liệu này.
 
-> **Cần chọn (D5):** leaf task chạy qua `Flow::Contract` trên pipeline v1 (đề xuất,
+> **Đã chọn: `Flow::Contract`.** Câu hỏi ban đầu (D5): leaf task chạy qua `Flow::Contract` trên pipeline v1 (đề xuất,
 > tái dùng nhiều nhất), hay một vòng thực thi riêng trong `run/` gọi thẳng
 > orchestrator? Vòng riêng gọn hơn về khái niệm nhưng phải làm lại phần đã có test.
 
@@ -243,7 +255,7 @@ hợp từ lời agent; tổng hợp làm đổi ý nghĩa phải qua review.
 chốt kèm hai cột trạng thái (quyết định / triển khai). Không sao chép hay diễn giải
 lại nội dung (§9.2). Embedding hay tìm kiếm ngữ nghĩa để sau, khi có nhu cầu thật.
 
-> **Cần chọn (D6):** "integrated" so với nhánh nào — một baseline cố định trong
+> **Đã chọn: baseline trong config, ghi vào manifest.** Câu hỏi ban đầu (D6): "integrated" so với nhánh nào — một baseline cố định trong
 > config (ví dụ `main`), hay baseline ghi riêng trong từng manifest?
 
 ---
