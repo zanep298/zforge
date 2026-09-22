@@ -287,16 +287,28 @@ fn phase_agents_preload_their_skills() {
     assert_eq!(spec["skills"][0].as_str(), Some("zforge-clarify-spec"));
 }
 
-/// Stale zforge skills go; the user's own skills stay.
+/// Stale zforge skills go; the user's own skills stay — including one whose
+/// name happens to start with `zforge-`: only a skill zforge generated
+/// (`metadata.generated-by: zforge`) is ever removed.
 #[test]
 fn refresh_removes_stale_zforge_skills_only() {
     let env = Env::new(&CLIENTS);
     env.init(&agent_flag("claude"));
     let skills = env.project.join(".claude/skills");
     std::fs::create_dir_all(skills.join("zforge-retired")).unwrap();
-    std::fs::write(skills.join("zforge-retired/SKILL.md"), "old").unwrap();
+    std::fs::write(
+        skills.join("zforge-retired/SKILL.md"),
+        "---\nname: zforge-retired\ndescription: old\nmetadata:\n  generated-by: zforge\n---\n\nold\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(skills.join("my-own")).unwrap();
     std::fs::write(skills.join("my-own/SKILL.md"), "mine").unwrap();
+    std::fs::create_dir_all(skills.join("zforge-my-notes")).unwrap();
+    std::fs::write(
+        skills.join("zforge-my-notes/SKILL.md"),
+        "---\nname: zforge-my-notes\ndescription: my notes on zforge\n---\n\nmine\n",
+    )
+    .unwrap();
 
     env.init(&agent_flag("claude"));
 
@@ -304,6 +316,10 @@ fn refresh_removes_stale_zforge_skills_only() {
     assert_eq!(
         std::fs::read_to_string(skills.join("my-own/SKILL.md")).unwrap(),
         "mine"
+    );
+    assert!(
+        skills.join("zforge-my-notes/SKILL.md").exists(),
+        "a user skill named zforge-* must not be deleted"
     );
 }
 

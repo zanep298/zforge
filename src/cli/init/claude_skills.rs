@@ -245,6 +245,31 @@ pub(crate) fn agent_frontmatter(phase: &str, language: &str) -> String {
     s
 }
 
+/// `metadata.generated-by` of every skill zforge writes.
+const GENERATED_BY: &str = "zforge";
+
+/// Whether `dir/SKILL.md` carries zforge's `metadata.generated-by` marker.
+fn is_generated_by_zforge(dir: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(dir.join("SKILL.md")) else {
+        return false;
+    };
+    let Some(frontmatter) = text
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---").map(|(fm, _)| fm))
+    else {
+        return false;
+    };
+    serde_yaml::from_str::<serde_yaml::Value>(frontmatter)
+        .ok()
+        .and_then(|fm| {
+            fm.get("metadata")?
+                .get("generated-by")?
+                .as_str()
+                .map(|v| v == GENERATED_BY)
+        })
+        .unwrap_or(false)
+}
+
 fn render(skill: &NativeSkill, vars: &Vars) -> String {
     let fm = serde_yaml::to_string(&serde_yaml::Mapping::from_iter([
         ("name".into(), skill.name.clone().into()),
@@ -252,7 +277,7 @@ fn render(skill: &NativeSkill, vars: &Vars) -> String {
         (
             "metadata".into(),
             serde_yaml::Value::Mapping(serde_yaml::Mapping::from_iter([
-                ("generated-by".into(), "zforge".into()),
+                ("generated-by".into(), GENERATED_BY.into()),
                 ("source".into(), skill.source.clone().into()),
                 ("version".into(), env!("CARGO_PKG_VERSION").into()),
             ])),
@@ -264,7 +289,9 @@ fn render(skill: &NativeSkill, vars: &Vars) -> String {
 
 /// Write `.claude/skills/zforge-*/SKILL.md` and remove zforge-managed
 /// skills that are no longer in the catalog (e.g. after a language change).
-/// Directories without the `zforge-` prefix are never touched.
+/// A directory is removed only if zforge generated it — `zforge-` prefix
+/// *and* [`GENERATED_BY`] in its frontmatter — so a user skill that merely
+/// shares the prefix is never touched.
 pub(crate) fn write(project_root: &Path, vars: &Vars, force: bool) -> Result<WriteReport> {
     let dir = project_root.join(".claude").join("skills");
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
@@ -274,7 +301,10 @@ pub(crate) fn write(project_root: &Path, vars: &Vars, force: bool) -> Result<Wri
     let mut report = WriteReport::default();
     for entry in std::fs::read_dir(&dir)?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(PREFIX) && !wanted.contains(name.as_str()) && entry.path().is_dir() {
+        if name.starts_with(PREFIX)
+            && !wanted.contains(name.as_str())
+            && is_generated_by_zforge(&entry.path())
+        {
             std::fs::remove_dir_all(entry.path())
                 .with_context(|| format!("remove stale {}", entry.path().display()))?;
             report.removed.push(name);
