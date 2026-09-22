@@ -66,9 +66,124 @@ impl CompiledPolicy {
     }
 }
 
+/// The text a run's retryable patterns are matched against.
+///
+/// Plain-text output (and codex's `ERROR: {json}` line) is matched whole,
+/// stderr first (PR9). A Claude `stream-json` run is not: its event framing
+/// always contains a `rate_limit_event`, and its tool results hold whatever
+/// the agent read, so matching the raw stream made every successful run look
+/// rate-limited. For a stream only stderr and non-JSON lines count, plus —
+/// when the final `result` reports an error — its message, subtype and API
+/// status. A run that finished with a successful result has nothing else to
+/// match.
+pub fn scan_text(stdout: &str, stderr: &str) -> String {
+    let events: Vec<(usize, serde_json::Value)> = stdout
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let v: serde_json::Value = serde_json::from_str(l.trim()).ok()?;
+            v.get("type")?.as_str()?;
+            Some((i, v))
+        })
+        .collect();
+    let is_stream = events.iter().any(|(_, v)| {
+        let kind = v["type"].as_str();
+        kind == Some("result") || (kind == Some("system") && v["subtype"] == "init")
+    });
+    if !is_stream {
+        return format!("{stderr}\n{stdout}");
+    }
+
+    let json_lines: std::collections::HashSet<usize> = events.iter().map(|(i, _)| *i).collect();
+    let mut text = String::from(stderr);
+    for (i, line) in stdout.lines().enumerate() {
+        if !json_lines.contains(&i) {
+            text.push('\n');
+            text.push_str(line);
+        }
+    }
+    if let Some((_, result)) = events.iter().rev().find(|(_, v)| v["type"] == "result") {
+        let failed =
+            result["is_error"].as_bool().unwrap_or(false) || result["subtype"] != "success";
+        if failed {
+            for key in ["subtype", "result", "api_error_status"] {
+                match &result[key] {
+                    serde_json::Value::Null => {}
+                    serde_json::Value::String(s) => {
+                        text.push('\n');
+                        text.push_str(s);
+                    }
+                    other => {
+                        text.push('\n');
+                        text.push_str(&other.to_string());
+                    }
+                }
+            }
+        }
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Shapes from a real `claude -p --output-format stream-json --verbose`
+    /// run: every run carries a `rate_limit_event`, and tool results carry
+    /// whatever the agent read.
+    const INIT: &str = r#"{"type":"system","subtype":"init","session_id":"s"}"#;
+    const RATE_EVENT: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}"#;
+    const TOOL_RESULT: &str = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"// retry on rate limit (429)"}]}}"#;
+    const OK: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"Handled the rate limit case."}"#;
+
+    fn stream(lines: &[&str]) -> String {
+        lines.iter().map(|l| format!("{l}\n")).collect()
+    }
+
+    fn policy() -> CompiledPolicy {
+        CompiledPolicy::compile(&default_policy()).unwrap()
+    }
+
+    /// The benchmark failure: a successful run was treated as rate-limited
+    /// because the stream's own `rate_limit_event` matched the pattern.
+    #[test]
+    fn a_successful_claude_stream_is_not_retryable() {
+        let out = stream(&[INIT, RATE_EVENT, TOOL_RESULT, OK]);
+        let text = scan_text(&out, "");
+        assert!(!text.to_lowercase().contains("rate"), "{text}");
+        assert!(policy().should_fallback(0, &text).is_none());
+    }
+
+    #[test]
+    fn a_failed_claude_stream_is_matched_on_its_error() {
+        let err = r#"{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":429,"result":"API Error: Rate limit reached"}"#;
+        let text = scan_text(&stream(&[INIT, RATE_EVENT, err]), "");
+        assert!(text.contains("Rate limit reached"), "{text}");
+        assert!(text.contains("429"), "{text}");
+        assert!(policy().should_fallback(0, &text).is_some());
+    }
+
+    /// Killed mid-run: no result; whatever plain text and stderr exist are
+    /// still matched, the JSON framing is not.
+    #[test]
+    fn a_stream_without_result_is_matched_on_plain_text_and_stderr() {
+        let out = format!("{}overloaded_error\n", stream(&[INIT, RATE_EVENT]));
+        let text = scan_text(&out, "boom");
+        assert!(
+            text.contains("overloaded_error") && text.contains("boom"),
+            "{text}"
+        );
+        assert!(!text.contains("rate_limit_event"), "{text}");
+    }
+
+    /// Plain-text runners, and codex's `ERROR: {json}` line, are matched on
+    /// everything as before (PR9).
+    #[test]
+    fn non_stream_output_is_scanned_whole() {
+        let codex = r#"ERROR: {"type":"error","status":429,"message":"rate limit"}"#;
+        assert_eq!(scan_text(codex, "e"), format!("e\n{codex}"));
+        assert_eq!(scan_text("rate limited", ""), "\nrate limited");
+    }
 
     fn default_policy() -> FallbackPolicy {
         FallbackPolicy::default()

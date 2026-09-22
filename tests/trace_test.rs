@@ -242,3 +242,34 @@ fn trace_command_follows_the_task_from_run_to_evidence() {
     assert_eq!(v["phases"][0]["observed"]["client_version"], "2.1.278");
     assert_eq!(v["evidence"]["status"], "invalid");
 }
+
+/// Found by the real benchmark: every stream-json run carries a
+/// `rate_limit_event`, which the `rate.?limit` fallback pattern matched, so
+/// each successful claude run was treated as rate-limited and failed.
+#[test]
+fn a_successful_stream_is_not_mistaken_for_a_rate_limit() {
+    let p = Project::new();
+    std::fs::write(
+        p.home.join("rate.jsonl"),
+        "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"rateLimitType\":\"five_hour\"}}\n",
+    )
+    .unwrap();
+    p.stub_claude(&format!(
+        "head -n 1 {FIXTURE}\ncat {}\ntail -n +2 {FIXTURE}",
+        p.home.join("rate.jsonl").display()
+    ));
+    // The default policy, with its rate-limit pattern, not the test's none.
+    let registry = std::fs::read_to_string(p.home.join("registry.yaml")).unwrap();
+    std::fs::write(
+        p.home.join("registry.yaml"),
+        registry.replace("  max_retries: 0\n", "  max_retries: 0\n  retryable_stderr_patterns: [\"(?i)rate.?limit\", \"(?i)overloaded\"]\n"),
+    )
+    .unwrap();
+
+    let out = p.zforge(&["code", "T1"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

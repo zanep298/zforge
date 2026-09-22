@@ -178,10 +178,11 @@ pub fn run_phase_with_lock(
         );
 
         // Real binaries (claude, codex) print failure messages to stdout
-        // — not stderr. Codex also exits 0 even on API errors. Concatenate
-        // both streams so retryable-pattern matching sees the whole picture.
-        // PR9 contract verification documented in docs/v1/agent-contracts.md.
-        let combined_output = format!("{}\n{}", outcome.stderr, outcome.stdout);
+        // — not stderr. Codex also exits 0 even on API errors, so both
+        // streams are matched (PR9, docs/v1/agent-contracts.md). A claude
+        // stream-json run is matched on its error, not its event framing —
+        // see `fallback::scan_text`.
+        let combined_output = super::fallback::scan_text(&outcome.stdout, &outcome.stderr);
         let policy_reason = policy.should_fallback(outcome.exit_code, &combined_output);
 
         // Three outcomes:
