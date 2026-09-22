@@ -8,6 +8,7 @@ pub mod flow_guard;
 pub mod git;
 pub mod init;
 pub mod install;
+pub mod intake;
 pub mod job;
 pub mod mcp_register;
 pub mod outcome;

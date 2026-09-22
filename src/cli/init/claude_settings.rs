@@ -7,7 +7,8 @@
 //! cost every customization in the file. A refresh now merges instead:
 //!
 //! - every key and allow entry already in the file stays, in its order;
-//! - zforge's allow entries that are missing are appended;
+//! - zforge's allow and deny entries that are missing are appended (deny
+//!   keeps agents from running the user's decision commands, D1);
 //! - entries zforge itself used to write and no longer does
 //!   ([`RETIRED_ALLOW`]) are removed — no other entry is ever dropped.
 //!
@@ -37,6 +38,14 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__codegraph__codegraph_impact",
       "mcp__codegraph__codegraph_trace",
       "mcp__codegraph__codegraph_status"
+    ],
+    "deny": [
+      "Bash(zforge intake accept*)",
+      "Bash(zforge intake revise*)",
+      "Bash(zforge handover*)",
+      "Bash(zf intake accept*)",
+      "Bash(zf intake revise*)",
+      "Bash(zf handover*)"
     ]
   }
 }
@@ -86,11 +95,19 @@ pub(crate) fn write_settings(path: &Path, force: bool) -> Result<SettingsWrite> 
 
 fn merge(existing: &Value) -> Result<Value> {
     let template: Value = serde_json::from_str(CLAUDE_SETTINGS_JSON).expect("valid template");
-    let wanted = template["permissions"]["allow"]
-        .as_array()
-        .expect("template has permissions.allow");
-
     let mut merged = existing.clone();
+    for key in ["allow", "deny"] {
+        let wanted = template["permissions"][key]
+            .as_array()
+            .expect("template has permissions.allow and .deny");
+        merge_list(&mut merged, key, wanted)?;
+    }
+    Ok(merged)
+}
+
+/// Append zforge's missing `permissions.<key>` entries; for `allow`, drop
+/// the retired ones first.
+fn merge_list(merged: &mut Value, key: &str, wanted: &[Value]) -> Result<()> {
     let Some(root) = merged.as_object_mut() else {
         bail!("expected a JSON object at the top level");
     };
@@ -100,20 +117,22 @@ fn merge(existing: &Value) -> Result<Value> {
     let Some(permissions) = permissions.as_object_mut() else {
         bail!("`permissions` is not an object");
     };
-    let allow = permissions
-        .entry("allow")
+    let list = permissions
+        .entry(key)
         .or_insert_with(|| Value::Array(Vec::new()));
-    let Some(allow) = allow.as_array_mut() else {
-        bail!("`permissions.allow` is not an array");
+    let Some(list) = list.as_array_mut() else {
+        bail!("`permissions.{key}` is not an array");
     };
 
-    allow.retain(|entry| !entry.as_str().is_some_and(|e| RETIRED_ALLOW.contains(&e)));
+    if key == "allow" {
+        list.retain(|entry| !entry.as_str().is_some_and(|e| RETIRED_ALLOW.contains(&e)));
+    }
     for entry in wanted {
-        if !allow.contains(entry) {
-            allow.push(entry.clone());
+        if !list.contains(entry) {
+            list.push(entry.clone());
         }
     }
-    Ok(merged)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -179,7 +198,15 @@ mod tests {
         let out = read(&path);
         assert_eq!(out["env"], user["env"]);
         assert_eq!(out["hooks"], user["hooks"]);
-        assert_eq!(out["permissions"]["deny"], user["permissions"]["deny"]);
+        let deny = out["permissions"]["deny"].as_array().unwrap();
+        assert_eq!(
+            deny[0], "Bash(rm -rf *)",
+            "user deny rules keep their place"
+        );
+        assert!(
+            deny.contains(&json!("Bash(zforge intake accept*)")),
+            "agents may not record the user's decisions"
+        );
         let allow = out["permissions"]["allow"].as_array().unwrap();
         assert_eq!(allow[0], "Bash(make *)", "user entries keep their place");
         assert_eq!(allow[1], "mcp__zforge__ship");
