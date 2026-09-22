@@ -5,6 +5,7 @@ pub mod embedded;
 pub mod error;
 pub mod evidence;
 pub mod fs;
+pub mod intake;
 pub mod jira;
 pub mod job;
 pub mod mcp;

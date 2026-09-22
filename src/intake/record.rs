@@ -1,0 +1,178 @@
+//! `.records/`: what the runtime saw and what the user decided (D1).
+//!
+//! - `revisions/<file>/<n>.md` — the exact text sent for review as revision
+//!   `n` of that file. Runs read these, never the working file (D2).
+//! - `decisions.jsonl` — append-only log of reviews, acceptances and
+//!   revision requests, each bound to a revision and its hash.
+//!
+//! Nothing here is ever rewritten. The status of a file is derived from the
+//! log ([`super::status`]).
+
+use super::Intake;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionKind {
+    /// Revision sent for review (by anyone).
+    Review,
+    /// Revision accepted by the user at a terminal.
+    Accepted,
+    /// The user asked for changes to the revision under review.
+    NeedsRevision,
+}
+
+impl DecisionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Review => "review",
+            Self::Accepted => "accepted",
+            Self::NeedsRevision => "needs_revision",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Decision {
+    pub at: DateTime<Utc>,
+    /// Intake-relative path, e.g. `01-outcome.md`, `tasks/TASK-001.md`.
+    pub file: String,
+    pub revision: u32,
+    pub sha256: String,
+    pub decision: DecisionKind,
+    /// How the decision was made: `cli` for reviews, `cli-tty` for a human
+    /// at a terminal. Authority rests on the channel, not on a name.
+    pub channel: String,
+    /// Login name of the terminal user, for accepts and revision requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+pub const DECISIONS_FILE: &str = "decisions.jsonl";
+pub const CHANNEL_CLI: &str = "cli";
+pub const CHANNEL_TTY: &str = "cli-tty";
+
+fn log_path(intake: &Intake) -> PathBuf {
+    intake.records_dir().join(DECISIONS_FILE)
+}
+
+pub fn append(intake: &Intake, decision: &Decision) -> Result<()> {
+    let path = log_path(intake);
+    std::fs::create_dir_all(intake.records_dir())?;
+    let mut line = serde_json::to_string(decision)?;
+    line.push('\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    file.write_all(line.as_bytes())?;
+    file.sync_all()
+        .with_context(|| format!("sync {}", path.display()))
+}
+
+/// Every decision, oldest first. A torn last line (crash mid-append) is
+/// skipped: the decision it would have recorded did not happen.
+pub fn read(intake: &Intake) -> Result<Vec<Decision>> {
+    let Ok(text) = std::fs::read_to_string(log_path(intake)) else {
+        return Ok(Vec::new());
+    };
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut decisions = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        match serde_json::from_str(line) {
+            Ok(d) => decisions.push(d),
+            Err(_) if i + 1 == lines.len() => {}
+            Err(e) => anyhow::bail!(
+                "{} line {} is corrupt ({e}); the decision log is append-only — restore it from version control",
+                log_path(intake).display(),
+                i + 1
+            ),
+        }
+    }
+    Ok(decisions)
+}
+
+/// `revisions/<file without .md, '/' as '__'>/<n>.md`.
+pub fn snapshot_path(intake: &Intake, file: &str, revision: u32) -> PathBuf {
+    let key = file.trim_end_matches(".md").replace('/', "__");
+    intake
+        .records_dir()
+        .join("revisions")
+        .join(key)
+        .join(format!("{revision}.md"))
+}
+
+pub fn write_snapshot(intake: &Intake, file: &str, revision: u32, text: &str) -> Result<()> {
+    let path = snapshot_path(intake, file, revision);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::state::write_atomic(&path, text.as_bytes())
+}
+
+pub fn read_snapshot(intake: &Intake, file: &str, revision: u32) -> Result<String> {
+    let path = snapshot_path(intake, file, revision);
+    std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn intake(dir: &std::path::Path) -> Intake {
+        Intake {
+            id: "F".into(),
+            dir: dir.to_path_buf(),
+        }
+    }
+
+    fn decision(rev: u32, kind: DecisionKind) -> Decision {
+        Decision {
+            at: Utc::now(),
+            file: "01-outcome.md".into(),
+            revision: rev,
+            sha256: "h".into(),
+            decision: kind,
+            channel: CHANNEL_CLI.into(),
+            by: None,
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn log_appends_and_skips_only_a_torn_last_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = intake(tmp.path());
+        append(&i, &decision(1, DecisionKind::Review)).unwrap();
+        append(&i, &decision(1, DecisionKind::Accepted)).unwrap();
+        let path = log_path(&i);
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(b"{\"at\":").unwrap();
+        assert_eq!(read(&i).unwrap().len(), 2);
+
+        std::fs::write(&path, "garbage\n{}\n").unwrap();
+        let err = read(&i).unwrap_err().to_string();
+        assert!(err.contains("line 1 is corrupt"), "{err}");
+    }
+
+    #[test]
+    fn snapshots_are_keyed_by_file_and_revision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = intake(tmp.path());
+        write_snapshot(&i, "tasks/TASK-001.md", 2, "text").unwrap();
+        assert!(
+            snapshot_path(&i, "tasks/TASK-001.md", 2).ends_with("revisions/tasks__TASK-001/2.md")
+        );
+        assert_eq!(read_snapshot(&i, "tasks/TASK-001.md", 2).unwrap(), "text");
+    }
+}
