@@ -16,28 +16,35 @@ use std::path::Path;
 /// Codex args: `exec` is the non-interactive subcommand. The orchestrator
 /// auto-appends `--profile zforge_<phase>` at spawn time per phase.
 ///
-/// Claude args: `-p --output-format json` runs print mode with a structured
-/// JSON envelope on stdout. The final `result` object carries a top-level
-/// `usage` block (`input_tokens`, `output_tokens`, `cache_read_input_tokens`,
-/// `cache_creation_input_tokens`) that `cost::usage::parse_claude_usage`
-/// reads for REAL token accounting. Without `--output-format json`, claude
-/// prints plain text, no usage block is emitted, and every CostEntry falls
+/// Claude args: `-p --output-format stream-json --verbose` runs print mode
+/// and emits one JSON event per line: a `system/init` event (version,
+/// model, MCP server status, agent/skill catalogs), every tool call, and a
+/// final `result` carrying the `usage` block that
+/// `cost::usage::parse_claude_usage` reads for REAL token accounting.
+/// `trace::claude` reads the rest into the per-task trace (IMP-006).
+/// Plain `-p` prints text with no usage block, so every CostEntry would fall
 /// back to a byte-length estimate that ignores claude's system prompt,
-/// `/file` context, tool schemas, and multi-turn tool output — badly
-/// under-reporting spend. Keep this flag or cost reports become fiction.
+/// `/file` context, tool schemas and multi-turn tool output; the older
+/// `--output-format json` carried usage but no tool calls. Keep these flags
+/// or cost reports and traces become fiction.
 fn default_agent_specs() -> &'static [(&'static str, &'static str, &'static [&'static str])] {
     &[
-        ("claude", "claude", &["-p", "--output-format", "json"]),
+        (
+            "claude",
+            "claude",
+            &["-p", "--output-format", "stream-json", "--verbose"],
+        ),
         ("codex", "codex", &["exec"]),
         ("opencode", "opencode", &["run"]),
     ]
 }
 
-/// The exact pre-cost-fix claude default (`claude -p`, plain text, no usage
-/// block). Installs carrying this spec are migrated up to the current
-/// JSON-reporting default so cost telemetry becomes accurate. Any other
-/// claude args are treated as user customization and left untouched.
-const STALE_CLAUDE_ARGS: &[&str] = &["-p"];
+/// Earlier claude defaults, exactly as zforge wrote them: plain `-p` (no
+/// usage block) and `-p --output-format json` (usage, no tool calls).
+/// Installs carrying one are migrated to the current default so cost and
+/// trace data become available. Any other claude args are treated as user
+/// customization and left untouched.
+const STALE_CLAUDE_ARGS: [&[&str]; 2] = [&["-p"], &["-p", "--output-format", "json"]];
 
 fn default_specs_map() -> std::collections::BTreeMap<&'static str, AgentSpec> {
     default_agent_specs()
@@ -68,7 +75,9 @@ fn apply_defaults(
         if let Some(existing) = registry.agents.get(*name) {
             if *name == "claude"
                 && existing.command == "claude"
-                && existing.args == STALE_CLAUDE_ARGS
+                && STALE_CLAUDE_ARGS
+                    .iter()
+                    .any(|stale| existing.args == *stale)
             {
                 if let Some(spec) = defaults.get("claude") {
                     registry.agents.insert("claude".to_string(), spec.clone());
@@ -112,20 +121,21 @@ mod migration_tests {
         }
     }
 
+    const CURRENT: [&str; 4] = ["-p", "--output-format", "stream-json", "--verbose"];
+
     #[test]
-    fn upgrades_stale_claude_default_to_json_output() {
-        let mut reg = Registry::default();
-        reg.agents
-            .insert("claude".to_string(), spec("claude", &["-p"]));
+    fn upgrades_every_earlier_claude_default_to_stream_json() {
+        for stale in [&["-p"][..], &["-p", "--output-format", "json"]] {
+            let mut reg = Registry::default();
+            reg.agents
+                .insert("claude".to_string(), spec("claude", stale));
 
-        let (inserted, migrated) = apply_defaults(&mut reg, &["claude"], &default_specs_map());
+            let (inserted, migrated) = apply_defaults(&mut reg, &["claude"], &default_specs_map());
 
-        assert!(inserted.is_empty(), "existing key not re-inserted");
-        assert!(migrated, "stale spec should migrate");
-        assert_eq!(
-            reg.agents["claude"].args,
-            vec!["-p", "--output-format", "json"],
-        );
+            assert!(inserted.is_empty(), "existing key not re-inserted");
+            assert!(migrated, "stale spec {stale:?} should migrate");
+            assert_eq!(reg.agents["claude"].args, CURRENT);
+        }
     }
 
     #[test]
@@ -143,16 +153,13 @@ mod migration_tests {
     }
 
     #[test]
-    fn seeds_missing_agents_with_json_claude_default() {
+    fn seeds_missing_agents_with_stream_json_claude_default() {
         let mut reg = Registry::default();
 
         let (inserted, _) = apply_defaults(&mut reg, &["claude", "codex"], &default_specs_map());
 
         assert_eq!(inserted, vec!["claude", "codex"]);
-        assert_eq!(
-            reg.agents["claude"].args,
-            vec!["-p", "--output-format", "json"],
-        );
+        assert_eq!(reg.agents["claude"].args, CURRENT);
     }
 }
 

@@ -96,6 +96,24 @@ pub fn run_phase_for_task_locked(
             started,
             &result,
         );
+        // The run went to the terminal: say there is no trace for it rather
+        // than leave a gap that reads like "nothing happened".
+        let named = crate::orchestrator::agent_args::named_agent_for(
+            runner,
+            template_name,
+            &config.project_root(),
+        );
+        let expected = crate::trace::Expected {
+            named_agent: match named {
+                crate::orchestrator::agent_args::NamedAgent::Use(name) => Some(name),
+                _ => None,
+            },
+            ..Default::default()
+        };
+        let entry = crate::trace::uncaptured(&ts.task_id, template_name, runner, expected);
+        if let Err(e) = crate::trace::log::append(&config.tasks_dir(), &entry) {
+            eprintln!("warning: trace append failed: {e:#}");
+        }
         return result;
     }
 

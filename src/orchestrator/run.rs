@@ -6,6 +6,7 @@ use crate::cost::{
     usage::{parse_claude_usage, parse_codex_tokens, UsageReport},
 };
 use crate::fs::reader;
+use crate::orchestrator::trace_record;
 use crate::orchestrator::{
     agent_args::{missing_warning, named_agent_for, NamedAgent},
     fallback::CompiledPolicy,
@@ -93,9 +94,13 @@ pub fn run_phase_with_lock(
         .map(|c| c.tasks_dir())
         .unwrap_or_else(|| project_root.join(".zforge").join("tasks"));
 
+    let language = config.as_ref().map(|c| c.project.language.clone());
+
     let mut state = TaskState::load(&tasks_dir, task_id)?;
+    let mut attempt: u32 = 0;
 
     loop {
+        attempt += 1;
         let agent_name = state
             .effective_agent()
             .or(default_agent)
@@ -117,8 +122,9 @@ pub fn run_phase_with_lock(
             models.as_ref(),
         );
 
+        let named = named_agent_for(&agent_name, phase, project_root);
         let spec = with_profile_args(&base_spec, &agent_name, phase);
-        let spec = with_named_agent_args(spec, &agent_name, phase, project_root);
+        let spec = with_named_agent_args(spec, &agent_name, phase, &named);
         let spec = with_model_args(&spec, &agent_name, configured_model.as_deref());
         let spec = with_headless_args(spec, &agent_name, is_headless());
 
@@ -145,6 +151,31 @@ pub fn run_phase_with_lock(
         ) {
             eprintln!("warning: cost log append failed: {e}");
         }
+        trace_record::record(
+            &tasks_dir,
+            crate::trace::Invocation {
+                task_id,
+                phase,
+                attempt,
+                runner: &agent_name,
+                command: std::iter::once(spec.command.clone())
+                    .chain(spec.args.iter().cloned())
+                    .collect(),
+                expected: trace_record::expected_for(
+                    &agent_name,
+                    phase,
+                    project_root,
+                    &named,
+                    resolved_model.as_deref(),
+                    language.as_deref(),
+                ),
+                stdout: &outcome.stdout,
+                stderr: &outcome.stderr,
+                exit_code: outcome.exit_code,
+                timed_out: outcome.timed_out,
+                duration_ms: outcome.duration_ms,
+            },
+        );
 
         // Real binaries (claude, codex) print failure messages to stdout
         // — not stderr. Codex also exits 0 even on API errors. Concatenate
@@ -218,10 +249,10 @@ fn with_named_agent_args(
     mut spec: AgentSpec,
     agent_name: &str,
     phase: &str,
-    project_root: &Path,
+    named: &NamedAgent,
 ) -> AgentSpec {
-    match named_agent_for(agent_name, phase, project_root) {
-        NamedAgent::Missing(file) => eprintln!("{}", missing_warning(agent_name, phase, &file)),
+    match named {
+        NamedAgent::Missing(file) => eprintln!("{}", missing_warning(agent_name, phase, file)),
         named => spec.args.extend(named.args()),
     }
     spec
