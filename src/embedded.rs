@@ -71,6 +71,7 @@ pub const SKILLS: &[(&str, &str)] = &[
         include_str!("../templates/skills/review-patch.md"),
     ),
     ("debug.md", include_str!("../templates/skills/debug.md")),
+    ("intake.md", include_str!("../templates/skills/intake.md")),
     (
         "security-review.md",
         include_str!("../templates/skills/security-review.md"),

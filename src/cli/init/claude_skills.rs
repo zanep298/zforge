@@ -70,6 +70,11 @@ const BASE: &[BaseSkill] = &[
         phases: &[],
     },
     BaseSkill {
+        source: "intake.md",
+        description: "Prepare a zforge v1.5 intake with the user — outcome, behavior, solution, breakdown and leaf task contracts under .zforge/intakes/ — and send each file for review. Use when a request should be clarified and broken down before implementation, or when `zforge intake status` shows files to write or revise.",
+        phases: &[],
+    },
+    BaseSkill {
         source: "security-review.md",
         description: "Find security vulnerabilities in a changeset before merge: injection, authn/authz, secrets, unsafe input handling, dependency risks. Use when a change touches user input, auth, data access or external calls.",
         phases: &[],
