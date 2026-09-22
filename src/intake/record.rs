@@ -12,7 +12,6 @@ use super::Intake;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -63,18 +62,7 @@ fn log_path(intake: &Intake) -> PathBuf {
 }
 
 pub fn append(intake: &Intake, decision: &Decision) -> Result<()> {
-    let path = log_path(intake);
-    std::fs::create_dir_all(intake.records_dir())?;
-    let mut line = serde_json::to_string(decision)?;
-    line.push('\n');
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("open {}", path.display()))?;
-    file.write_all(line.as_bytes())?;
-    file.sync_all()
-        .with_context(|| format!("sync {}", path.display()))
+    crate::fs::writer::append_record_line(&log_path(intake), &serde_json::to_string(decision)?)
 }
 
 /// Every decision, oldest first. A torn last line (crash mid-append) is
@@ -125,6 +113,7 @@ pub fn read_snapshot(intake: &Intake, file: &str, revision: u32) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     fn intake(dir: &std::path::Path) -> Intake {
         Intake {
@@ -174,5 +163,43 @@ mod tests {
             snapshot_path(&i, "tasks/TASK-001.md", 2).ends_with("revisions/tasks__TASK-001/2.md")
         );
         assert_eq!(read_snapshot(&i, "tasks/TASK-001.md", 2).unwrap(), "text");
+    }
+}
+
+#[cfg(test)]
+mod torn_append_tests {
+    use super::*;
+    use std::io::Write;
+
+    /// After a torn write, the next decision must be recorded, not merged
+    /// into the torn line and then skipped as torn itself.
+    #[test]
+    fn a_decision_after_a_torn_line_is_not_lost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = Intake {
+            id: "F".into(),
+            dir: tmp.path().to_path_buf(),
+        };
+        let d = |kind| Decision {
+            at: Utc::now(),
+            file: "01-outcome.md".into(),
+            revision: 1,
+            sha256: "h".into(),
+            decision: kind,
+            channel: CHANNEL_CLI.into(),
+            by: None,
+            note: String::new(),
+        };
+        append(&i, &d(DecisionKind::Review)).unwrap();
+        let path = log_path(&i);
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(b"{\"at\":\"2026").unwrap();
+        append(&i, &d(DecisionKind::Accepted)).unwrap();
+
+        let kinds: Vec<DecisionKind> = read(&i).unwrap().into_iter().map(|d| d.decision).collect();
+        assert_eq!(kinds, [DecisionKind::Review, DecisionKind::Accepted]);
     }
 }
