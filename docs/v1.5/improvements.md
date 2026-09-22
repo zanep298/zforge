@@ -234,12 +234,13 @@ Mỗi mục báo mức cao nhất *đã kiểm được*: missing / broken / pre
 | zforge / codegraph MCP | `claude mcp get`: đăng ký, connected (health check), codegraph ghim đúng project | working |
 | rtk hook | có trong settings (user/project/local) *và* viết lại `git status` thật | working |
 | caveman hook | đã đăng ký, script tồn tại | configured |
+| workspace trust | `hasTrustDialogAccepted` cho project hoặc thư mục cha gần nhất trong `.claude.json`; chưa trust thì `claude -p` bỏ allowlist của project | configured (tuỳ chọn) |
 | evidence | task Verified có evidence khớp code hiện tại (IMP-002) | working |
 
 Mục bắt buộc (claude, runner, agents) lỗi → exit 1; mục tuỳ chọn cảnh báo kèm lệnh
 sửa. Chạy thật với claude 2.1.278 / codegraph / rtk trong HOME tạm: init mới báo
 zforge MCP chưa đăng ký và rtk chưa gắn hook; sau khi đăng ký thì cả hai MCP
-connected và rtk working. Regression: `tests/doctor_test.rs` (10, stub `claude`
+connected và rtk working. Regression: `tests/doctor_test.rs` (11, stub `claude`
 trả từng trạng thái MCP, stub `rtk` hoạt động/không hoạt động).
 
 Chưa làm: Codex/OpenCode; CodeGraph mới kiểm qua health check của `claude mcp
@@ -302,8 +303,9 @@ Quan sát từ lượt đạt, chưa xử lý:
 - Không phase nào gọi CodeGraph dù đã connected (agent choice). Project shell
   có thể không được CodeGraph index; cần kịch bản ngôn ngữ được hỗ trợ.
 - Workspace chưa trust thì `claude -p` bỏ toàn bộ allowlist của project. Chạy
-  foreground không TTY (MCP, CI) sẽ bị từ chối Bash; `doctor` nên kiểm tra
-  `hasTrustDialogAccepted`.
+  foreground không TTY (MCP, CI) sẽ bị từ chối Bash. Đã thêm check
+  `workspace trust` vào `doctor` (trust của thư mục cha có hiệu lực cho thư mục
+  con — đã kiểm với 2.1.278 khi thư mục con chưa có entry riêng).
 - Project không nhận ra ngôn ngữ bị init gán `rust` (có chủ đích từ trước:
   `empty_dir_falls_back_to_rust`), nên phase code preload skill Rust cho
   project shell.
