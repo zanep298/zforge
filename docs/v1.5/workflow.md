@@ -479,8 +479,7 @@ nhận, và run đã kết thúc còn giữ worktree.
 Chưa làm: **TASK-008 (benchmark với Claude thật)** — người dùng chọn bỏ, sẽ dùng
 thật rồi đánh giá từ log và trace. Vì vậy Mốc B **chưa được nghiệm thu** theo
 tiêu chí ở trên: mọi kiểm chứng hiện tại đều bằng stub phát lại stream thật, chưa
-có lượt chạy nào với model thật. Ngoài ra chưa có MCP cho intake/run (D4: CLI
-trước), và các task của MOC-B được làm theo revision đang review, chưa chốt.
+có lượt chạy nào với model thật. MCP cho intake/run đã có (chỉ chuẩn bị và quan sát), còn các task của MOC-B được làm theo revision đang review, chưa chốt.
 
 ### Mốc C — Feature nhiều task
 

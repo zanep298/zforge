@@ -129,6 +129,11 @@ zforge run status RUN-001
 Các lệnh khác: `zforge run list`, `run wait`, `run cancel`, `run retry`,
 `run clean`.
 
+Agent trong chat làm được phần chuẩn bị và theo dõi qua MCP: `intake_new`,
+`intake_task`, `intake_status`, `intake_review`, `intake_diff`, `change_new`,
+`readiness`, `knowledge_index`, `run_start`, `run_status`, `run_list`,
+`run_log`, `run_cancel`. **Không** có tool nào chốt hay handover được.
+
 Kết thúc thế nào:
 
 | Trạng thái | Nghĩa |
@@ -186,7 +191,8 @@ Không có lệnh "accept change request". Sửa hợp đồng luôn đi qua rev
 - Chỉ Claude chạy được leaf task.
 - Run chạy với `--dangerously-skip-permissions` để không cần người trả lời quyền.
   Agent bị giữ trong worktree bằng cwd, nhưng quyền trên máy vẫn là quyền của bạn.
-- Chưa có MCP cho intake/run; agent dùng qua Bash.
+- MCP chỉ có tool chuẩn bị và quan sát. Chốt, handover và `run clean` vẫn phải
+  chạy ở terminal.
 
 ## Ghi lại để đánh giá sau
 

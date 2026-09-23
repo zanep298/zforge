@@ -1,15 +1,22 @@
-/// zforge MCP server — stdio JSON-RPC 2.0
-///
-/// Exposes zforge pipeline operations as MCP tools so OpenCode's AI can
-/// orchestrate the full workflow from inside the TUI without leaving it.
-///
-/// Tools exposed:
-///   task_import  — create a task
-///   get_prompt   — render prompt for spec/testspec/plan/code/review
-///   approve      — mark an artifact as reviewed
-///   verify       — run the test suite
-///   ship         — advance Coded + run verify in one call (saves a round trip)
-///   status       — get task phase status
+//! zforge MCP server — stdio JSON-RPC 2.0
+//!
+//! Exposes zforge pipeline operations as MCP tools so OpenCode's AI can
+//! orchestrate the full workflow from inside the TUI without leaving it.
+//!
+//! Tools exposed:
+//!   task_import  — create a task
+//!   get_prompt   — render prompt for spec/testspec/plan/code/review
+//!   approve      — mark an artifact as reviewed
+//!   verify       — run the test suite
+//!   ship         — advance Coded + run verify in one call (saves a round trip)
+//!   status       — get task phase status
+//!   intake_* / readiness / knowledge_index / run_* — v1.5 intake and
+//!     runs (`v15`): preparation and observation only; accepting a
+//!     revision or handing over stays on the CLI, where a terminal
+//!     proves a human decided.
+
+pub mod v15;
+
 use crate::config;
 use crate::prompt::{build_context_for_phase, Engine, PromptPhase};
 use crate::state::{Flow, State, TaskState};
@@ -128,7 +135,12 @@ fn on_tools_call(id: Value, req: &Value) -> Value {
         "job_log" => tool_job_log(&args),
         "job_cancel" => tool_job_cancel(&args),
         "job_list" => tool_job_list(&args),
-        other => Err(anyhow::anyhow!("unknown tool: {other}")),
+        // v1.5 intake and runs (preparation and observation only; the
+        // user's decisions stay on the CLI — see `v15::FORBIDDEN`).
+        other => match v15::dispatch(other, &args) {
+            Some(result) => result,
+            None => Err(anyhow::anyhow!("unknown tool: {other}")),
+        },
     };
 
     match result {
@@ -604,6 +616,14 @@ fn tool_job_list(_args: &Value) -> Result<String> {
 // ─── tool schema definitions ──────────────────────────────────────────────────
 
 fn tool_definitions() -> Value {
+    let mut tools = base_tool_definitions();
+    if let Some(list) = tools.as_array_mut() {
+        list.extend(v15::definitions());
+    }
+    tools
+}
+
+fn base_tool_definitions() -> Value {
     json!([
         {
             "name": "task_import",
