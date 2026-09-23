@@ -236,6 +236,11 @@ fn work(
             cost_usd: cost,
         })?;
         interrupted()?;
+        // §8: the agent may only ask for the contract to change, never
+        // change it. A change request ends the run; the user decides.
+        if let Some(reason) = amendment_requested(&change_request, &meta.intake) {
+            return Err(Halt::Blocked(reason).into());
+        }
         if out.timed_out {
             return Err(Halt::Failed(format!("agent timed out after {timeout_secs}s")).into());
         }
@@ -330,6 +335,31 @@ fn finish(run: &Run, outcome: Result<crate::orchestrator::LoopOutcome>) -> Resul
         }
     };
     Ok(state)
+}
+
+/// The reason to block when the agent wrote a change request, with what the
+/// linter makes of it (workflow §8): an incomplete request is still a stop,
+/// but says what is missing.
+fn amendment_requested(path: &str, intake: &str) -> Option<String> {
+    let path = Path::new(path);
+    let text = std::fs::read_to_string(path).ok()?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let id = name.trim_end_matches(".md");
+    let issues = crate::intake::lint::lint(
+        &format!("{}{name}", crate::intake::lint::CHANGES_PREFIX),
+        &text,
+        intake,
+        &crate::intake::lint::Known::default(),
+    );
+    let missing: Vec<&str> = issues
+        .iter()
+        .filter(|i| i.severity == crate::intake::lint::Severity::Error)
+        .map(|i| i.message.as_str())
+        .collect();
+    Some(match missing.is_empty() {
+        true => format!("amendment: {id}"),
+        false => format!("amendment: {id} (incomplete — {})", missing.join("; ")),
+    })
 }
 
 /// A caught SIGINT/SIGTERM/SIGHUP stops the run (see `process::catch_interrupts`).

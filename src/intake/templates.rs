@@ -6,6 +6,7 @@ const BEHAVIOR: &str = include_str!("../../templates/intake/02-behavior.md");
 const SOLUTION: &str = include_str!("../../templates/intake/03-solution.md");
 const BREAKDOWN: &str = include_str!("../../templates/intake/04-breakdown.md");
 const TASK: &str = include_str!("../../templates/intake/task.md");
+const CHANGE: &str = include_str!("../../templates/intake/change.md");
 
 /// Template for a stage file, by name.
 pub fn stage(file: &str, intake_id: &str) -> Option<String> {
@@ -24,6 +25,13 @@ pub fn task(intake_id: &str, task_id: &str) -> String {
         .replace("{{task_id}}", task_id)
 }
 
+/// Skeleton of a change request (workflow §8).
+pub fn change(intake_id: &str, change_id: &str) -> String {
+    CHANGE
+        .replace("{{intake_id}}", intake_id)
+        .replace("{{change_id}}", change_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,5 +44,7 @@ mod tests {
         }
         let t = task("F-1", "TASK-001");
         assert!(t.contains("id: TASK-001") && t.contains("parent: F-1") && !t.contains("{{"));
+        let c = change("F-1", "CHANGE-RUN-001");
+        assert!(c.contains("CHANGE-RUN-001") && c.contains("F-1") && !c.contains("{{"));
     }
 }

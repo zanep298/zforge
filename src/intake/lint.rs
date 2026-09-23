@@ -20,6 +20,16 @@ pub const BREAKDOWN: &str = "04-breakdown.md";
 pub const OPEN_QUESTIONS: &str = "Câu hỏi còn mở";
 pub const INTEGRATION: &str = "Kiểm chứng tích hợp";
 pub const ACCEPTANCE: &str = "Acceptance và kiểm chứng";
+pub const CHANGES_PREFIX: &str = "changes/";
+
+/// Sections a change request carries (workflow §8).
+pub const CHANGE_SECTIONS: [&str; 5] = [
+    "Hợp đồng đang áp dụng",
+    "Bằng chứng",
+    "Đề xuất",
+    "Tác động",
+    "Cần quyết định",
+];
 
 /// Sections every leaf task contract has (workflow §5.6, example §11).
 pub const TASK_SECTIONS: [&str; 8] = [
@@ -284,6 +294,20 @@ pub fn lint(rel: &str, text: &str, intake_id: &str, known: &Known) -> Vec<Issue>
         }
     }
 
+    if rel.starts_with(CHANGES_PREFIX) {
+        let secs = sections(&clean);
+        for title in CHANGE_SECTIONS {
+            match section(&secs, title) {
+                None => issues.push(Issue::error(rel, format!("missing section \"{title}\""))),
+                Some(lines) if !has_content(lines) => {
+                    issues.push(Issue::error(rel, format!("section \"{title}\" is empty")))
+                }
+                Some(_) => {}
+            }
+        }
+        return issues;
+    }
+
     if let Some(stem) = rel
         .strip_prefix("tasks/")
         .and_then(|n| n.strip_suffix(".md"))
@@ -460,6 +484,30 @@ mod tests {
         ] {
             assert!(m.contains(&want), "missing {want:?} in {m:?}");
         }
+    }
+
+    /// MOC-B TASK-006 AC-02.
+    #[test]
+    fn change_requests_need_the_sections_of_section_8() {
+        let template = crate::intake::templates::change("F", "CHANGE-RUN-001");
+        let e = lint("changes/CHANGE-RUN-001.md", &template, "F", &known());
+        let m = errors(&e);
+        assert!(m.contains(&"section \"Bằng chứng\" is empty"), "{m:?}");
+        assert_eq!(
+            m.len(),
+            CHANGE_SECTIONS.len() + 1,
+            "every section, plus the empty file: {m:?}"
+        );
+
+        let filled = CHANGE_SECTIONS
+            .iter()
+            .map(|t| format!("## {t}\nnội dung\n"))
+            .collect::<String>();
+        assert!(errors(&lint("changes/CHANGE-RUN-001.md", &filled, "F", &known())).is_empty());
+
+        let missing = filled.replace("## Tác động\nnội dung\n", "");
+        let issues = lint("changes/CHANGE-RUN-001.md", &missing, "F", &known());
+        assert_eq!(errors(&issues), ["missing section \"Tác động\""]);
     }
 
     #[test]

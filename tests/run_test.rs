@@ -624,3 +624,93 @@ fn clean_removes_a_finished_worktree_and_keeps_the_work() {
     let out = p.zforge(&["run", "clean", "RUN-001"]);
     assert!(err(&out).contains("already cleaned"), "{}", err(&out));
 }
+
+// ─── TASK-006: the contract must change ─────────────────────────────────────
+
+/// AC-01, AC-02 and AC-03: an agent that asks for an amendment stops the
+/// run, the request is judged against §8, and the contract it was given is
+/// untouched.
+#[test]
+fn a_change_request_blocks_the_run_and_leaves_the_contract_alone() {
+    let p = Project::new(3.0, 3);
+    let sections = [
+        "Hợp đồng đang áp dụng",
+        "Bằng chứng",
+        "Đề xuất",
+        "Tác động",
+        "Cần quyết định",
+    ];
+    let body: String = sections
+        .iter()
+        .map(|t| format!("## {t}\\nnội dung\\n"))
+        .collect();
+    let cr = p.root.join(".zforge/intakes/F/changes/CHANGE-RUN-001.md");
+    p.stub(&format!(
+        "printf '{body}' > {}\ncat {FIXTURE}",
+        cr.display()
+    ));
+    let snapshot = p
+        .root
+        .join(".zforge/intakes/F/.records/revisions/tasks__TASK-001/1.md");
+    let before = std::fs::read_to_string(&snapshot).unwrap();
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "blocked");
+    assert_eq!(last["reason"], "amendment: CHANGE-RUN-001");
+    assert_eq!(p.count("RUN-001", "attempt"), 1, "no second agent call");
+    assert_eq!(
+        p.count("RUN-001", "verify_started"),
+        0,
+        "nothing was verified"
+    );
+
+    // AC-03: the contract the run used is exactly what the manifest pins.
+    assert_eq!(std::fs::read_to_string(&snapshot).unwrap(), before);
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            p.root
+                .join(".zforge/intakes/F/.records/handovers/HANDOVER-001.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let pinned = manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["file"] == "tasks/TASK-001.md")
+        .unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let digest = zforge::intake::hash::sha256(&before);
+    assert_eq!(digest, pinned, "snapshot still matches the handover");
+
+    // The user sees the request where the intake is reviewed.
+    let status = String::from_utf8_lossy(&p.zforge(&["intake", "status", "F"]).stdout).into_owned();
+    assert!(status.contains("changes/CHANGE-RUN-001.md"), "{status}");
+}
+
+/// An incomplete request still stops the run, and says what is missing.
+#[test]
+fn an_incomplete_change_request_says_what_it_lacks() {
+    let p = Project::new(3.0, 3);
+    let cr = p.root.join(".zforge/intakes/F/changes/CHANGE-RUN-001.md");
+    p.stub(&format!(
+        "printf '## Đề xuất\\nđổi output\\n' > {}\ncat {FIXTURE}",
+        cr.display()
+    ));
+
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    let reason = p.last("RUN-001")["reason"].as_str().unwrap().to_string();
+    assert!(
+        reason.starts_with("amendment: CHANGE-RUN-001 (incomplete"),
+        "{reason}"
+    );
+    assert!(reason.contains("Bằng chứng"), "{reason}");
+}
