@@ -1,8 +1,10 @@
 //! Readable views of a run (MOC-B TASK-005): the timeline and the result,
-//! used by `zforge run status` and written to `progress.md` / `result.md`.
+//! used by `zforge run status` and written to `progress.md` / `result.md`;
+//! and of a whole handover (`feature`).
 //! Generated from `run.yaml` and `events.jsonl`; editing them changes
 //! nothing.
 
+use super::feature::{FeatureState, Progress};
 use super::record::{Run, RunEvent, RunMeta, RunState};
 use anyhow::Result;
 use std::fmt::Write as _;
@@ -13,6 +15,76 @@ pub const RESULT: &str = "result.md";
 
 fn short(hash: &str) -> &str {
     &hash[..hash.len().min(12)]
+}
+
+/// One line per task and one for the integration check (MOC-C TASK-004).
+pub fn feature(f: &FeatureState) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "{} of {}", f.handover, f.intake);
+    let width = f
+        .tasks
+        .iter()
+        .map(|t| t.task.len())
+        .chain([super::integrate::TASK.len()])
+        .max()
+        .unwrap_or(0);
+    let rows = f
+        .tasks
+        .iter()
+        .map(|t| (t.task.as_str(), &t.progress))
+        .chain([(super::integrate::TASK, &f.integration)]);
+    for (name, p) in rows {
+        let _ = writeln!(
+            out,
+            "  {name:<width$}  {:<9} {}",
+            p.label(),
+            progress_detail(p)
+        );
+    }
+    let _ = writeln!(
+        out,
+        "feature: {}",
+        match &f.integration {
+            Progress::Verified { run, .. } => format!("verified ({run})"),
+            _ => "not verified".to_string(),
+        }
+    );
+    out
+}
+
+fn progress_detail(p: &Progress) -> String {
+    match p {
+        Progress::Waiting { on } if on.is_empty() => String::new(),
+        Progress::Waiting { on } => format!("on {}", on.join(", ")),
+        Progress::Running { run } => run.clone(),
+        Progress::Verified {
+            run,
+            commit,
+            from,
+            outdated,
+        } => {
+            let mut d = run.clone();
+            if let Some(c) = commit {
+                let _ = write!(d, "  output {}", short(c));
+            }
+            if !from.is_empty() {
+                let from: Vec<String> = from
+                    .iter()
+                    .map(|s| format!("{} ({})", s.task, s.run))
+                    .collect();
+                let _ = write!(d, "  from {}", from.join(" + "));
+            }
+            if !outdated.is_empty() {
+                let _ = write!(d, "  — built on an older output of {}", outdated.join(", "));
+            }
+            d
+        }
+        Progress::Stopped { run, reason, .. } => match reason {
+            Some(r) => format!("{run} — {}", r.lines().next().unwrap_or_default()),
+            None => run.clone(),
+        },
+        Progress::Blocked { by } => format!("by {}", by.join(", ")),
+    }
 }
 
 /// One line per event.

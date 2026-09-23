@@ -1221,3 +1221,73 @@ fn an_integration_run_waits_for_every_task() {
         "--task and --integration exclude each other"
     );
 }
+
+// ─── MOC-C TASK-004: the state of a handover ────────────────────────────────
+
+/// AC-03: `run status <HANDOVER>` shows what the records say, as the
+/// library derives it; a stopped task blocks the integration.
+#[test]
+fn status_of_a_handover_is_derived_from_its_runs() {
+    let p = Project::new(3.0, 1);
+    let feature = |id: &str| -> serde_json::Value {
+        let out = p.zforge(&["run", "status", id, "--json"]);
+        assert!(out.status.success(), "{}", err(&out));
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+
+    let f = feature("HANDOVER-001");
+    assert_eq!(
+        f["tasks"][0],
+        serde_json::json!({"task": "TASK-001", "state": "waiting", "on": []})
+    );
+    assert_eq!(f["tasks"][1]["on"], serde_json::json!(["TASK-001"]));
+    assert_eq!(f["integration"]["state"], "waiting");
+
+    p.stub(&fix_and_report());
+    let a = verify_task(&p, "TASK-001");
+    let f = feature("F/HANDOVER-001");
+    assert_eq!(f["tasks"][0]["state"], "verified");
+    assert_eq!(f["tasks"][0]["run"], "RUN-001");
+    assert_eq!(f["tasks"][0]["commit"], a.as_str());
+    assert_eq!(
+        f["tasks"][1],
+        serde_json::json!({"task": "TASK-002", "state": "waiting", "on": []})
+    );
+    assert_eq!(f["integration"]["on"], serde_json::json!(["TASK-002"]));
+
+    // TASK-002 undoes the fix: its only verification fails.
+    p.stub(&format!(
+        "printf '{}' > lib.sh\ncat {FIXTURE}",
+        BUG.trim_end().replace('%', "%%") + "\\n"
+    ));
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert!(!out.status.success());
+    let f = feature("HANDOVER-001");
+    assert_eq!(f["tasks"][1]["state"], "stopped");
+    assert_eq!(f["tasks"][1]["status"], "failed");
+    assert_eq!(f["tasks"][1]["run"], "RUN-002");
+    assert_eq!(
+        f["integration"],
+        serde_json::json!({"state": "blocked", "by": ["TASK-002"]})
+    );
+    // The CLI shows exactly what the library derives from the records.
+    let derived = zforge::run::feature::load(&p.root, "HANDOVER-001").unwrap();
+    assert_eq!(f, serde_json::to_value(&derived).unwrap());
+
+    let out = p.zforge(&["run", "status", "HANDOVER-001"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("HANDOVER-001 of F"), "{text}");
+    assert!(
+        text.contains("TASK-001     verified  RUN-001  output"),
+        "{text}"
+    );
+    assert!(text.contains("TASK-002     failed    RUN-002 — "), "{text}");
+    assert!(
+        text.contains("integration  blocked   by TASK-002"),
+        "{text}"
+    );
+    assert!(text.contains("feature: not verified"), "{text}");
+
+    // Nothing was written for the handover: its state is only derived.
+    assert!(!p.root.join(".zforge/runs/features").exists());
+}

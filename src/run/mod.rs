@@ -7,6 +7,7 @@
 
 pub mod contract;
 pub mod execute;
+pub mod feature;
 pub mod git;
 pub mod integrate;
 pub mod ops;

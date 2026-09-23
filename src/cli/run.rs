@@ -36,8 +36,10 @@ pub struct RunArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RunCmd {
-    /// State, events, verifications, agent calls and cost of a run.
+    /// State, events, verifications, agent calls and cost of a run; or,
+    /// given a handover, where each of its tasks and its integration stand.
     Status {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
         run: String,
         #[arg(long)]
         json: bool,
@@ -227,6 +229,13 @@ fn start(root: &Path, run: &Run, background: bool) -> Result<()> {
     }
 }
 
+/// `HANDOVER-001` or `<INTAKE>/HANDOVER-001`, as opposed to a run id.
+fn is_handover(id: &str) -> bool {
+    id.rsplit('/')
+        .next()
+        .is_some_and(|last| last.starts_with("HANDOVER-"))
+}
+
 fn describe(state: &RunState) -> String {
     match &state.reason {
         Some(r) => format!("{} — {r}", state.status.as_str()),
@@ -235,6 +244,14 @@ fn describe(state: &RunState) -> String {
 }
 
 fn status(root: &Path, id: &str, json: bool) -> Result<()> {
+    if is_handover(id) {
+        let f = crate::run::feature::load(root, id)?;
+        match json {
+            true => println!("{}", serde_json::to_string_pretty(&f)?),
+            false => print!("{}", view::feature(&f)),
+        }
+        return Ok(());
+    }
     let run = Run::open(root, id)?;
     let state = ops::refresh(&run)?;
     let meta = run.meta()?;

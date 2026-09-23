@@ -136,7 +136,13 @@ chứa output của tất cả:
 zforge run HANDOVER-001 --integration
 ```
 
-Lệnh lấy từ khối code đầu tiên dưới mục "Kiểm chứng tích hợp" của
+Xem cả handover đang ở đâu — từng task và bước tích hợp:
+
+```bash
+zforge run status HANDOVER-001
+```
+
+Lệnh tích hợp lấy từ khối code đầu tiên dưới mục "Kiểm chứng tích hợp" của
 `04-breakdown.md` đã chốt, mỗi dòng một lệnh; không có khối code thì dùng
 `project.test_command`. Không gọi agent: tích hợp fail là chuyện hợp đồng giữa
 các task, sửa qua amendment.
