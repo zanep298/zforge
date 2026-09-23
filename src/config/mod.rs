@@ -72,6 +72,10 @@ pub struct ExecutionConfig {
     pub max_iterations: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_usd: Option<f64>,
+    /// Globs of test files a run may not change (`run::guard`); absent
+    /// means the conventional locations, an empty list protects nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_tests: Option<Vec<String>>,
 }
 
 impl Default for ExecutionConfig {
@@ -79,6 +83,7 @@ impl Default for ExecutionConfig {
         Self {
             max_iterations: default_max_iterations(),
             budget_usd: None,
+            protected_tests: None,
         }
     }
 }

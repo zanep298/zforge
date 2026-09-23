@@ -1436,3 +1436,76 @@ fn a_failed_integration_leaves_the_task_level() {
     assert_eq!(req["verified_by"], "RUN-001");
     assert!(req.get("integration").is_none());
 }
+
+// ─── workflow §13: an agent may not change the tests ────────────────────────
+
+/// The agent leaves `lib.sh` broken and makes the suite pass by gutting
+/// `test.sh`, which the test command names.
+fn weaken_the_suite() -> String {
+    format!("printf 'exit 0\\n' > test.sh\ncat {FIXTURE}")
+}
+
+/// A suite that passes only because its test was changed is not a pass.
+#[test]
+fn a_run_that_changes_a_test_is_not_verified() {
+    let p = Project::new(3.0, 1);
+    p.stub(&weaken_the_suite());
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    assert_eq!(p.count("RUN-001", "verified"), 0);
+    let failed = p
+        .events("RUN-001")
+        .into_iter()
+        .find(|e| e["event"] == "verify_failed")
+        .expect("the pass was refused");
+    assert_eq!(
+        failed["failed_tests"],
+        serde_json::json!(["protected test changed: test.sh"])
+    );
+    assert_eq!(p.last("RUN-001")["event"], "failed");
+    assert!(status_json(&p, "RUN-001")["state"].get("output").is_none());
+}
+
+/// The refusal is feedback: an agent that restores the test and fixes the
+/// code on its next attempt is verified.
+#[test]
+fn an_agent_told_about_a_changed_test_can_restore_it() {
+    let p = Project::new(3.0, 2);
+    p.stub(&format!(
+        "if grep -q 'protected test changed: test.sh' {m}/prompt; then\n  \
+         git checkout -- test.sh\n  {fix}\nelse\n  {weaken}\nfi",
+        m = p.marks.display(),
+        fix = fix_and_report(),
+        weaken = weaken_the_suite(),
+    ));
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(p.count("RUN-001", "attempt"), 2);
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+    let output = status_json(&p, "RUN-001")["state"]["output"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(p
+        .git(&["show", &format!("{output}:test.sh")])
+        .contains("add 2 3"));
+}
+
+/// Only the accepted contract can let a task change a test.
+#[test]
+fn a_contract_can_let_a_task_change_a_test() {
+    let p = Project::new(3.0, 1);
+    p.amend(
+        "tasks/TASK-001.md",
+        "depends_on: []",
+        "depends_on: []\ntests_may_change: [test.sh]",
+    );
+    p.hand_over_again();
+    p.stub(&weaken_the_suite());
+
+    let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+}

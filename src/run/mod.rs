@@ -10,6 +10,7 @@ pub mod execute;
 pub mod feature;
 pub mod feature_ops;
 pub mod git;
+pub mod guard;
 pub mod integrate;
 pub mod ops;
 pub mod output;

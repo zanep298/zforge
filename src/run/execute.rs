@@ -195,6 +195,15 @@ fn work(
         .display()
         .to_string();
     let last_output = RefCell::new(String::new());
+    // Where the agent starts: protected tests must still be as they are here
+    // when the suite passes (`guard`).
+    let start = super::git::head(&work_dir)?;
+    let guard = super::guard::Guard::new(
+        config.execution.protected_tests.as_deref(),
+        &config.project.test_command,
+        &contract.tests_may_change,
+        &work_dir,
+    );
 
     let code = |n: u32, prev: Option<&VerifyOutcome>| -> Result<()> {
         interrupted()?;
@@ -297,6 +306,18 @@ fn work(
         };
         match (outcome.passed, candidate) {
             (true, Some(candidate)) => {
+                let changed = guard
+                    .changed(&work_dir, &start)
+                    .map_err(|e| Halt::Failed(format!("could not check the tests: {e:#}")))?;
+                if !changed.is_empty() {
+                    return protected_tests_changed(
+                        run,
+                        &last_output,
+                        outcome,
+                        candidate,
+                        &changed,
+                    );
+                }
                 // The output a dependent task starts from: the tested tree,
                 // sealed before anything else can touch the worktree.
                 let message = format!("zforge: output of {} ({})", run.id, meta.task);
@@ -386,6 +407,43 @@ fn amendment_requested(path: &str, intake: &str) -> Option<String> {
     Some(match missing.is_empty() {
         true => format!("amendment: {id}"),
         false => format!("amendment: {id} (incomplete — {})", missing.join("; ")),
+    })
+}
+
+/// The suite passed, but only after protected tests changed: not a pass.
+/// The agent is told which, and may restore them within its iterations.
+fn protected_tests_changed(
+    run: &Run,
+    last_output: &RefCell<String>,
+    outcome: VerifyOutcome,
+    candidate: String,
+    changed: &[String],
+) -> Result<VerifyOutcome> {
+    let failed_tests: Vec<String> = changed
+        .iter()
+        .map(|p| format!("protected test changed: {p}"))
+        .collect();
+    run.append(&RunEvent::VerifyFailed {
+        at: Utc::now(),
+        candidate: Some(candidate),
+        failed_tests: failed_tests.clone(),
+    })?;
+    *last_output.borrow_mut() = format!(
+        "The tests passed, but these test files differ from where this task started:\n{}\n\n\
+         Restore them. A task may not change existing tests unless its contract lists \
+         them under `tests_may_change`; if the contract has to change, write a change \
+         request instead.",
+        changed
+            .iter()
+            .map(|p| format!("- {p}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    Ok(VerifyOutcome {
+        passed: false,
+        failed_tests: failed_tests.len(),
+        failed_names: failed_tests,
+        ..outcome
     })
 }
 

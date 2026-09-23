@@ -38,6 +38,8 @@ pub struct Contract {
     /// The task's dependencies, from its pinned snapshot, all in the
     /// handover.
     pub depends_on: Vec<String>,
+    /// Protected test files the contract lets it change (`run::guard`).
+    pub tests_may_change: Vec<String>,
     /// Every file the manifest pins, verified.
     pub files: Vec<ContractFile>,
 }
@@ -106,7 +108,8 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
             h.manifest.tasks.join(", ")
         );
     }
-    let depends_on = h.depends_on(task)?;
+    let meta = h.task_meta(task)?;
+    let depends_on = meta.depends_on;
     // Readiness keeps dependencies inside the scope; the pinned snapshot is
     // checked again rather than trusting the manifest was made that way.
     if let Some(outside) = depends_on.iter().find(|d| !h.manifest.tasks.contains(d)) {
@@ -118,6 +121,7 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         manifest_sha256: h.manifest_sha256,
         task: task.to_string(),
         depends_on,
+        tests_may_change: meta.tests_may_change,
         files: h.files,
     })
 }
@@ -178,12 +182,15 @@ impl Handover {
             .ok_or_else(|| anyhow::anyhow!("{} does not pin {name}", self.manifest.id))
     }
 
+    /// `task`'s frontmatter, from its pinned snapshot.
+    pub fn task_meta(&self, task: &str) -> Result<lint::TaskMeta> {
+        let name = format!("tasks/{task}.md");
+        lint::parse_task_meta(&self.file(&name)?.text).map_err(|e| anyhow::anyhow!("{name}: {e}"))
+    }
+
     /// `task`'s dependencies, from its pinned snapshot.
     pub fn depends_on(&self, task: &str) -> Result<Vec<String>> {
-        let name = format!("tasks/{task}.md");
-        let meta = lint::parse_task_meta(&self.file(&name)?.text)
-            .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
-        Ok(meta.depends_on)
+        Ok(self.task_meta(task)?.depends_on)
     }
 
     /// Tasks no other handed-over task depends on, in manifest order. Their

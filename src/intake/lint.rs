@@ -88,6 +88,8 @@ pub struct TaskMeta {
     pub parent: String,
     pub requirements: Vec<String>,
     pub depends_on: Vec<String>,
+    /// Protected test files the contract lets the task change (globs).
+    pub tests_may_change: Vec<String>,
 }
 
 fn re(pattern: &'static str, cell: &'static OnceLock<Regex>) -> &'static Regex {
@@ -232,6 +234,7 @@ pub fn parse_task_meta(text: &str) -> Result<TaskMeta, String> {
         parent: string("parent"),
         requirements: list("requirements")?,
         depends_on: list("depends_on")?,
+        tests_may_change: list("tests_may_change")?,
     })
 }
 
@@ -436,6 +439,7 @@ mod tests {
                 parent: "F".into(),
                 requirements: vec!["REQ-001".into()],
                 depends_on: vec![],
+                tests_may_change: vec![],
             }
         );
     }

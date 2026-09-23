@@ -186,6 +186,22 @@ Kết thúc thế nào:
 | `blocked` | Hết budget, hoặc agent xin sửa hợp đồng (`amendment: CHANGE-RUN-001`) |
 | `cancelled` | Bạn hủy, hoặc Ctrl-C |
 
+**Test là của hợp đồng, không phải của agent.** Khi test pass, zforge kiểm
+các file test có sẵn so với lúc task bắt đầu: file nào bị sửa, xóa hay đổi tên
+thì lần pass đó bị tính là fail (`protected test changed: <file>`), và agent
+được báo để khôi phục. Thêm test mới thì được. File được bảo vệ: vị trí test
+quen thuộc (`tests/**`, `test/**`, `*_test.*`, `test_*.*`, `*.test.*`,
+`*.spec.*`, …) và file mà `test_command` gọi (`sh test.sh` → `test.sh`). Đổi
+danh sách bằng `execution.protected_tests` trong config. Một task được phép sửa
+test cụ thể chỉ khi hợp đồng của nó ghi, trong frontmatter:
+
+```yaml
+tests_may_change: [tests/api_test.rs]
+```
+
+Giới hạn: test nằm chung file với code (module test trong file Rust) hay cấu
+hình test runner ở chỗ khác thì không phát hiện được.
+
 Budget là **tổng cho mọi lần chạy của một task trong một handover**. Hết thì phải
 handover mới, tức bạn quyết định chi thêm. Lần gọi agent bị kill giữa chừng bị
 tính là đã tiêu hết phần được cấp, vì không biết nó đã tiêu bao nhiêu — và phần

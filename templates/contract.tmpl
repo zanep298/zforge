@@ -7,7 +7,10 @@ current directory (this run's own git worktree) and nowhere else.
 ## Rules
 
 - Meet every acceptance criterion. Do not delete or weaken a test, an
-  assertion or a criterion to make the suite pass.
+  assertion or a criterion to make the suite pass. Existing test files are
+  checked when the suite passes: one that was changed, deleted or renamed
+  makes it a failure, unless the task's `tests_may_change` lists it. Adding
+  tests is fine.
 - Inside the contract you decide how: structure, names, algorithms, tests.
   Suggestions in the solution may be replaced by an equivalent; binding
   decisions ("Quyết định bắt buộc") may not.
