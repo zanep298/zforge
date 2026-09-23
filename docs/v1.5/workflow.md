@@ -491,7 +491,7 @@ có lượt chạy nào với model thật. MCP cho intake/run đã có (chỉ c
 Chạy tuần tự có thể đáp ứng milestone ban đầu. Parallel execution, model routing
 thích nghi và UI chuyên dụng chỉ bổ sung khi có nhu cầu và bằng chứng lợi ích.
 
-**Tiến độ (23/09/2026, intake `MOC-C`, 8 task, đang review, chưa chốt):**
+**Tiến độ (23/09/2026, intake `MOC-C` TASK-001…008; hợp đồng đang review, chưa chốt):**
 
 | Hạng mục | Đã có |
 |---|---|
@@ -503,8 +503,12 @@ thích nghi và UI chuyên dụng chỉ bổ sung khi có nhu cầu và bằng c
 | Vòng chạy cả handover | `zforge run <HANDOVER> [--async]`: task theo thứ tự rồi tích hợp; chạy lại thì tiếp tục (task verified bỏ qua, run bị ngắt/hủy được chạy lại, `failed`/`blocked` giữ nguyên); khóa theo handover và theo task nên không có hai run của một task cùng lúc; `run cancel|log|wait <HANDOVER>`; MCP `run_start` không kèm task. Hạn chế: hủy lúc agent đang làm tiêu hết budget còn lại của task (quy tắc Mốc B), nên task đó cần handover mới (TASK-005) |
 | Tái dùng qua handover | Trước lần chạy đầu của một task trong handover mới, vòng chạy tìm run `verified` ở handover khác của cùng intake có cùng khóa hợp đồng (commit baseline, 4 stage, file task, file task mọi dependency bắc cầu — so bằng hash đã pin) **và** xuất phát đúng từ output hiện có của dependency; có thì ghi một run chỉ gồm event `reused`, không gọi agent, không tốn tiền. `--task` luôn chạy thật; run tích hợp không bao giờ tái dùng (TASK-006) |
 | Knowledge ba mức | Requirement lên `integration_verified` khi handover chứa task của nó có run tích hợp verified, lên `integrated` khi output của run tích hợp đó là tổ tiên của branch baseline hiện tại (`git merge-base --is-ancestor`). Tính lại mỗi lần dựng index, không lưu; merge kiểu squash/rebase giữ `integration_verified` (TASK-007) |
+| Nghiệm thu | `tests/feature_run_test.rs` chạy binary thật với stub cho năm dấu hiệu thành công của 01-outcome (chuỗi A ← B ← C tới `integration_verified`; task bị chặn chỉ chặn phần phụ thuộc; kill rồi chạy lại không làm lại việc đã xong; agent xin amendment → sửa hợp đồng → handover mới → chỉ chạy lại task đó; tích hợp fail thì feature chưa verified), cộng task có hai dependency; mỗi kịch bản kiểm working tree của người dùng không đổi (TASK-008) |
 
-Còn lại: nghiệm thu đầu cuối (TASK-008).
+Mốc C làm xong theo 8 task, nhưng **chưa nghiệm thu chính thức**: hợp đồng MOC-C
+chưa được chốt (người dùng chọn bỏ bước chốt), và cũng như Mốc B, mọi kiểm chứng
+đều bằng stub. Chạy song song, model routing thích nghi và UI chuyên dụng vẫn
+ngoài phạm vi.
 
 ## 13. Kịch bản nghiệm thu workflow
 

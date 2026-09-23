@@ -4,8 +4,10 @@ Hướng dẫn đi hết một vòng: từ yêu cầu tới code đã kiểm ch�
 Phần thiết kế ở [workflow](./workflow.md), các quyết định ở
 [decisions](./decisions.md).
 
-**Trạng thái:** Mốc A và Mốc B đã dùng được. Chưa có lượt chạy nào với model thật
-(TASK-008 bị bỏ), nên hãy coi những lần chạy đầu là vừa dùng vừa kiểm chứng.
+**Trạng thái:** Mốc A, B và C đã dùng được: intake, chạy một task, và chạy cả
+feature nhiều task có dependency, kiểm chứng tích hợp, tái dùng qua handover.
+Mọi kiểm chứng đều bằng stub; chưa có lượt chạy nào với model thật, nên hãy coi
+những lần chạy đầu là vừa dùng vừa kiểm chứng.
 
 ## Chuẩn bị một lần
 
