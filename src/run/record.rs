@@ -179,6 +179,16 @@ pub enum RunEvent {
         at: DateTime<Utc>,
         reason: String,
     },
+    /// The task's contract and starting outputs are exactly those of
+    /// `from_run` in `from_handover`, verified there: its output stands for
+    /// this handover too, and no agent is called (MOC-C TASK-006).
+    Reused {
+        at: DateTime<Utc>,
+        from_run: String,
+        from_handover: String,
+        candidate: String,
+        commit: String,
+    },
 }
 
 impl RunEvent {
@@ -192,7 +202,8 @@ impl RunEvent {
             | Self::VerifyFailed { at, .. }
             | Self::Blocked { at, .. }
             | Self::Failed { at, .. }
-            | Self::Cancelled { at, .. } => *at,
+            | Self::Cancelled { at, .. }
+            | Self::Reused { at, .. } => *at,
         }
     }
 
@@ -207,6 +218,7 @@ impl RunEvent {
             Self::Blocked { .. } => "blocked",
             Self::Failed { .. } => "failed",
             Self::Cancelled { .. } => "cancelled",
+            Self::Reused { .. } => "reused",
         }
     }
 }
@@ -269,6 +281,9 @@ pub struct RunState {
     /// The sealed output of a verified run: the commit whose tree was tested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    /// `<HANDOVER>/<RUN>` whose verified output this run reuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reused_from: Option<String>,
 }
 
 impl Default for RunState {
@@ -283,6 +298,7 @@ impl Default for RunState {
             in_flight_usd: None,
             last_candidate: None,
             output: None,
+            reused_from: None,
         }
     }
 }
@@ -365,6 +381,21 @@ impl RunState {
                     Failed
                 };
                 next.reason = Some(reason.clone());
+            }
+            RunEvent::Reused {
+                from_run,
+                from_handover,
+                candidate,
+                commit,
+                ..
+            } => {
+                if self.status != Ready {
+                    return refuse();
+                }
+                next.status = Verified;
+                next.last_candidate = Some(candidate.clone());
+                next.output = Some(commit.clone());
+                next.reused_from = Some(format!("{from_handover}/{from_run}"));
             }
             RunEvent::Cancelled { reason, .. } => {
                 // A run can be cancelled before a worker picked it up.
@@ -608,6 +639,28 @@ pub(crate) mod tests {
         assert_eq!(s.last_candidate.as_deref(), Some("c2"));
         assert_eq!(s.output.as_deref(), Some("k2"));
         assert_eq!(RunState::replay(&events).unwrap(), s);
+    }
+
+    /// MOC-C TASK-006: a reused run goes straight from ready to verified.
+    #[test]
+    fn a_reused_run_is_verified_without_running() {
+        let reused = RunEvent::Reused {
+            at: now(),
+            from_run: "RUN-001".into(),
+            from_handover: "HANDOVER-001".into(),
+            candidate: "c1".into(),
+            commit: "k1".into(),
+        };
+        let s = RunState::default().apply(&reused).unwrap();
+        assert_eq!(s.status, RunStatus::Verified);
+        assert_eq!(s.output.as_deref(), Some("k1"));
+        assert_eq!(s.last_candidate.as_deref(), Some("c1"));
+        assert_eq!(s.reused_from.as_deref(), Some("HANDOVER-001/RUN-001"));
+        assert_eq!(s.cost_usd, 0.0);
+        let running = RunState::default()
+            .apply(&RunEvent::Started { at: now(), pid: 1 })
+            .unwrap();
+        assert!(running.apply(&reused).is_err(), "only a run not started");
     }
 
     /// AC-04 (MOC-C TASK-001): a `verified` line written before outputs were

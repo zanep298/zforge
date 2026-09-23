@@ -45,6 +45,9 @@ pub enum Progress {
         /// Tasks among `from` whose output has since been replaced.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         outdated: Vec<String>,
+        /// `<HANDOVER>/<RUN>` whose output this run reused (TASK-006).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reused_from: Option<String>,
     },
     /// The latest run ended without being verified.
     Stopped {
@@ -65,6 +68,10 @@ impl Progress {
             Self::Waiting { on } if on.is_empty() => "ready",
             Self::Waiting { .. } => "waiting",
             Self::Running { .. } => "running",
+            Self::Verified {
+                reused_from: Some(_),
+                ..
+            } => "reused",
             Self::Verified { .. } => "verified",
             Self::Stopped { status, .. } => status.as_str(),
             Self::Blocked { .. } => "blocked",
@@ -135,7 +142,11 @@ impl FeatureState {
 
         let mark = |p: Progress| match p {
             Progress::Verified {
-                run, commit, from, ..
+                run,
+                commit,
+                from,
+                reused_from,
+                ..
             } => {
                 let outdated = from
                     .iter()
@@ -147,6 +158,7 @@ impl FeatureState {
                     commit,
                     from,
                     outdated,
+                    reused_from,
                 }
             }
             other => other,
@@ -215,6 +227,7 @@ fn from_runs(runs: &[&(RunMeta, RunState)]) -> Option<Progress> {
             commit: s.output.clone(),
             from: m.start.as_ref().map(|s| s.from.clone()).unwrap_or_default(),
             outdated: Vec::new(),
+            reused_from: s.reused_from.clone(),
         });
     }
     let (m, s) = runs.last()?;

@@ -148,6 +148,35 @@ impl Project {
         handover::create(&i, &self.root, &[], &config, &r.files, None).unwrap();
     }
 
+    /// Edit `file` of intake F (replace `from` with `to`), then review and
+    /// accept the new revision, as the user would.
+    fn amend(&self, file: &str, from: &str, to: &str) {
+        use zforge::intake::review;
+        let i = zforge::intake::Intake::open(&self.root, "F").unwrap();
+        let path = i.dir.join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{file} has no {from:?}");
+        std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        review::review(&i, file).unwrap();
+        review::accept(&i, file, None).unwrap();
+    }
+
+    /// Hand every task over again: the next `HANDOVER-nnn`.
+    fn hand_over_again(&self) {
+        use zforge::intake::{handover, readiness};
+        let i = zforge::intake::Intake::open(&self.root, "F").unwrap();
+        let config = zforge::config::load_from(&self.root.join(".zforge/config.yaml")).unwrap();
+        let r = readiness::check(&i, &self.root, &[], &config.execution).unwrap();
+        assert!(r.ready, "{:?}", r.checks);
+        handover::create(&i, &self.root, &[], &config, &r.files, None).unwrap();
+    }
+
+    fn agent_calls(&self) -> usize {
+        std::fs::read_to_string(self.marks.join("cwd"))
+            .map(|t| t.lines().count())
+            .unwrap_or(0)
+    }
+
     /// Register `claude` as a stub: records its cwd, then runs `body`.
     fn stub(&self, body: &str) {
         let script = self.home.join("claude-stub");
@@ -1571,4 +1600,157 @@ fn wait_follows_a_background_handover() {
     let out = p.zforge(&["run", "wait", "HANDOVER-001", "--timeout", "120"]);
     assert!(out.status.success(), "{}", err(&out));
     assert!(String::from_utf8_lossy(&out.stdout).contains("feature: verified (RUN-005)"));
+}
+
+// ─── MOC-C TASK-006: reuse across handovers ─────────────────────────────────
+
+/// A handover run to the end, then HANDOVER-002 after `change`.
+fn handed_over_twice(change: impl Fn(&Project)) -> Project {
+    let p = feature_project(3);
+    p.stub(&per_task(&p, ""));
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    change(&p);
+    p.hand_over_again();
+    p
+}
+
+fn states(p: &Project, handover: &str) -> Vec<(String, String)> {
+    let out = p.zforge(&["run", "status", handover, "--json"]);
+    let f: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    f["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            let label = match (t["state"].as_str().unwrap(), t.get("reused_from")) {
+                ("verified", Some(_)) => "reused",
+                (s, _) => s,
+            };
+            (t["task"].as_str().unwrap().to_string(), label.to_string())
+        })
+        .collect()
+}
+
+fn expect(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect()
+}
+
+/// AC-01: only the amended task runs again; what it depends on and what is
+/// independent of it are reused, and the integration checks the result.
+#[test]
+fn an_amendment_reruns_only_what_it_touches() {
+    let p = handed_over_twice(|p| {
+        p.amend(
+            "tasks/TASK-003.md",
+            "Chỉ sửa lib.sh.",
+            "Chỉ sửa lib.sh, cẩn thận.",
+        )
+    });
+    let before = p.agent_calls();
+
+    let out = p.zforge(&["run", "HANDOVER-002"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        p.agent_calls(),
+        before + 1,
+        "only TASK-003 called the agent"
+    );
+    assert_eq!(
+        states(&p, "HANDOVER-002"),
+        expect(&[
+            ("TASK-001", "reused"),
+            ("TASK-002", "reused"),
+            ("TASK-003", "verified"),
+            ("TASK-004", "reused"),
+        ])
+    );
+    let reused = p.last("RUN-006");
+    assert_eq!(reused["event"], "reused");
+    assert_eq!(reused["from_run"], "RUN-001");
+    assert_eq!(reused["from_handover"], "HANDOVER-001");
+    assert_eq!(p.events("RUN-006").len(), 1, "no agent, no verification");
+    // TASK-003 starts from the output TASK-002 reuses.
+    let task2_output = status_json(&p, "RUN-002")["state"]["output"].clone();
+    assert_eq!(status_json(&p, "RUN-007")["state"]["output"], task2_output);
+    assert_eq!(
+        status_json(&p, "RUN-008")["meta"]["start"]["commit"],
+        task2_output
+    );
+    assert_eq!(p.last("RUN-010")["event"], "verified", "integration ran");
+    let text =
+        String::from_utf8_lossy(&p.zforge(&["run", "status", "HANDOVER-002"]).stdout).into_owned();
+    assert!(
+        text.contains("TASK-001     reused    RUN-006  reuses HANDOVER-001/RUN-001"),
+        "{text}"
+    );
+}
+
+/// AC-04: amending a task reruns it and everything depending on it.
+#[test]
+fn an_amended_dependency_reruns_its_chain() {
+    let p = handed_over_twice(|p| {
+        p.amend(
+            "tasks/TASK-001.md",
+            "Chỉ sửa lib.sh.",
+            "Chỉ sửa lib.sh, cẩn thận.",
+        )
+    });
+    let before = p.agent_calls();
+    assert!(p.zforge(&["run", "HANDOVER-002"]).status.success());
+    assert_eq!(p.agent_calls(), before + 3);
+    assert_eq!(
+        states(&p, "HANDOVER-002"),
+        expect(&[
+            ("TASK-001", "verified"),
+            ("TASK-002", "verified"),
+            ("TASK-003", "verified"),
+            ("TASK-004", "reused"),
+        ])
+    );
+}
+
+/// AC-02: a stage is part of every task's contract.
+#[test]
+fn an_amended_stage_reruns_everything() {
+    let p = handed_over_twice(|p| {
+        p.amend(
+            "03-solution.md",
+            "Sửa phép tính.",
+            "Sửa phép tính cẩn thận.",
+        )
+    });
+    let before = p.agent_calls();
+    assert!(p.zforge(&["run", "HANDOVER-002"]).status.success());
+    assert_eq!(p.agent_calls(), before + 4);
+    assert!(states(&p, "HANDOVER-002")
+        .iter()
+        .all(|(_, s)| s == "verified"));
+}
+
+/// AC-03: a new baseline is new code under every task.
+#[test]
+fn a_new_baseline_reruns_everything() {
+    let p = handed_over_twice(|p| {
+        std::fs::write(p.root.join("README"), "moved on\n").unwrap();
+        p.git(&["add", "README"]);
+        p.git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "later",
+        ]);
+    });
+    let before = p.agent_calls();
+    assert!(p.zforge(&["run", "HANDOVER-002"]).status.success());
+    assert_eq!(p.agent_calls(), before + 4);
+    assert!(states(&p, "HANDOVER-002")
+        .iter()
+        .all(|(_, s)| s == "verified"));
 }

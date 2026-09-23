@@ -62,8 +62,12 @@ fn progress_detail(p: &Progress) -> String {
             commit,
             from,
             outdated,
+            reused_from,
         } => {
             let mut d = run.clone();
+            if let Some(r) = reused_from {
+                let _ = write!(d, "  reuses {r}");
+            }
             if let Some(c) = commit {
                 let _ = write!(d, "  output {}", short(c));
             }
@@ -137,6 +141,17 @@ pub fn event_line(e: &RunEvent) -> String {
         RunEvent::Blocked { reason, .. } => format!("{t} blocked — {reason}"),
         RunEvent::Failed { reason, .. } => format!("{t} failed — {reason}"),
         RunEvent::Cancelled { reason, .. } => format!("{t} cancelled — {reason}"),
+        RunEvent::Reused {
+            from_run,
+            from_handover,
+            candidate,
+            commit,
+            ..
+        } => format!(
+            "{t} reused {from_run} of {from_handover} — candidate {}, output {}",
+            short(candidate),
+            short(commit)
+        ),
     }
 }
 

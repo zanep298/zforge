@@ -118,6 +118,12 @@ ngắt hoặc bị hủy được chạy lại (`retry_of`); run `failed`/`block
 giữ nguyên cho bạn quyết. Chạy nền thì thêm `--async`, rồi
 `zforge run log|wait|cancel HANDOVER-001`.
 
+Sau amendment và handover mới, `zforge run HANDOVER-002` **tái dùng** output
+của task không đổi từ handover trước — chỉ khi hash của 4 stage, file task, mọi
+dependency của nó và commit baseline đều trùng, và nó được làm trên đúng output
+mà dependency đang có. Task được tái dùng hiện `reused`, không gọi agent. Muốn
+chạy lại một task dù không đổi thì dùng `--task`.
+
 Một task riêng:
 
 ```bash
@@ -226,8 +232,7 @@ Không có lệnh "accept change request". Sửa hợp đồng luôn đi qua rev
 
 ## Giới hạn hiện tại
 
-- Chạy tuần tự, một run một lúc. Tái dùng task không đổi qua handover mới:
-  đang làm (Mốc C).
+- Chạy tuần tự, một run một lúc.
 - Chỉ Claude chạy được leaf task.
 - Run chạy với `--dangerously-skip-permissions` để không cần người trả lời quyền.
   Agent bị giữ trong worktree bằng cwd, nhưng quyền trên máy vẫn là quyền của bạn.

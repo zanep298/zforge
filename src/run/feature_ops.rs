@@ -12,7 +12,10 @@
 //!   gets a new run (`retry_of`), with what is left of its budget; a run
 //!   that failed or was blocked is a verdict and stays until the user acts;
 //! - within one invocation a task gets at most one new run, so a run the
-//!   user cancels by id is not restarted behind their back.
+//!   user cancels by id is not restarted behind their back;
+//! - a task that has not run in this handover reuses its verified output
+//!   from an earlier handover when nothing it was built from changed
+//!   ([`super::reuse`]).
 //!
 //! Two locks keep runs from overlapping: the handover's loop lock, held for
 //! the whole command, and [`claim`], taken by every run creation — here and
@@ -199,6 +202,7 @@ pub fn run_feature(project_root: &Path, handover_id: &str) -> Result<FeatureStat
 }
 
 fn drive(project_root: &Path, handover: &str) -> Result<FeatureState> {
+    let h = contract::load_handover(project_root, handover)?;
     let mut own = BTreeSet::new();
     let mut refused = BTreeSet::new();
     loop {
@@ -211,6 +215,10 @@ fn drive(project_root: &Path, handover: &str) -> Result<FeatureState> {
             Step::Busy { what, run } => bail!(
                 "{what} is being run by {run} outside this command; wait for it or `zforge run cancel {run}`"
             ),
+            Step::Task {
+                task,
+                retry_of: None,
+            } if reuse(project_root, &h, &task)? => continue,
             Step::Task { task, retry_of } => {
                 let r = execute::create(project_root, handover, &task, retry_of.as_deref());
                 (task, retry_of, r)
@@ -267,6 +275,30 @@ fn drive(project_root: &Path, handover: &str) -> Result<FeatureState> {
             return Err(Interrupted.into());
         }
     }
+}
+
+/// Reuse `task`'s verified output from another handover when nothing it
+/// was built from changed (TASK-006). True when it was reused.
+fn reuse(project_root: &Path, h: &contract::Handover, task: &str) -> Result<bool> {
+    let mut runs = Vec::new();
+    for run in record::list(project_root)? {
+        let meta = run.meta()?;
+        if meta.intake == h.intake {
+            let state = run.state()?;
+            runs.push((meta, state));
+        }
+    }
+    let Some(from) = super::reuse::find(project_root, h, task, &runs)? else {
+        return Ok(false);
+    };
+    let run = super::reuse::record(project_root, h, task, &from)?;
+    let state = run.state()?;
+    view::write(project_root, &run, &state)?;
+    eprintln!(
+        "↺ {} — {task} reuses {} of {}",
+        run.id, from.0.id, from.0.handover
+    );
+    Ok(true)
 }
 
 /// The pid of a live loop for this handover: the one it recorded, or a
@@ -408,6 +440,7 @@ mod tests {
             commit: Some("c".into()),
             from: vec![],
             outdated: vec![],
+            reused_from: None,
         }
     }
 
