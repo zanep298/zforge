@@ -486,6 +486,7 @@ fn run_health_is_reported() {
         budget_usd: 1.0,
         max_iterations: 2,
         retry_of: None,
+        start: None,
     };
     let run = zforge::run::record::create(&env.project, meta).unwrap();
     let mut gone = std::process::Command::new("true").spawn().unwrap();

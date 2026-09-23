@@ -2,7 +2,8 @@
 //!
 //! [`create`] records a run for a handed-over task — refusing when the
 //! task's budget in that handover is used up — and [`execute`] carries it
-//! out: worktree from the baseline commit, then the v1 verifier loop
+//! out: worktree from where the task starts (the baseline, or its
+//! dependencies' outputs — `start`), then the v1 verifier loop
 //! (`orchestrator::verifier_loop::iterate`, flow `Contract`) with the agent
 //! and the test suite running in the worktree, never in zforge's own cwd.
 //!
@@ -71,8 +72,8 @@ pub fn spent_before(project_root: &Path, intake: &str, handover: &str, task: &st
 }
 
 /// Record a new run of `task` from handover `handover_id`. The contract is
-/// loaded and verified first, so a tampered snapshot or a dependent task
-/// creates nothing; so does a used-up budget.
+/// loaded and verified first, so a tampered snapshot or a dependency
+/// without a verified output creates nothing; so does a used-up budget.
 pub fn create(
     project_root: &Path,
     handover_id: &str,
@@ -80,6 +81,9 @@ pub fn create(
     retry_of: Option<&str>,
 ) -> Result<Run> {
     let c = contract::load(project_root, handover_id, task)?;
+    // A dependency without an output refuses the task before anything is
+    // created (MOC-C REQ-003).
+    let start = super::start::plan(project_root, &c.intake, &c.manifest.id, task, &c.depends_on)?;
     let spent = spent_before(project_root, &c.intake, &c.manifest.id, task)?;
     let left = c.manifest.policy.budget_usd - spent;
     if left < MIN_ALLOTMENT_USD {
@@ -103,6 +107,7 @@ pub fn create(
         budget_usd: left,
         max_iterations: c.manifest.policy.max_iterations.max(1),
         retry_of: retry_of.map(str::to_string),
+        start: start.clone(),
     })
 }
 
@@ -147,7 +152,10 @@ fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, Age
             anyhow!("runner `{RUNNER}` is not in the registry; leaf tasks run on Claude")
         })?;
     let timeout = registry.fallback_policy.spawn_timeout_secs;
-    worktree::create(project_root, &meta.id, &meta.task, &meta.baseline_commit)?;
+    let wt = worktree::create(project_root, &meta.id, &meta.task, meta.start_commit())?;
+    if let Some(start) = &meta.start {
+        super::start::apply(&wt.path, &meta.id, start)?;
+    }
     Ok((contract, config, spec, timeout))
 }
 

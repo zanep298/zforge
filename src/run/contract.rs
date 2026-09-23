@@ -30,6 +30,9 @@ pub struct Contract {
     /// SHA-256 of the manifest file, recorded in the run's `run.yaml`.
     pub manifest_sha256: String,
     pub task: String,
+    /// The task's dependencies, from its pinned snapshot, all in the
+    /// handover.
+    pub depends_on: Vec<String>,
     /// Every file the manifest pins, verified.
     pub files: Vec<ContractFile>,
 }
@@ -135,11 +138,10 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         .expect("checked above")
         .text;
     let meta = lint::parse_task_meta(task_text).map_err(|e| anyhow::anyhow!("{task_file}: {e}"))?;
-    if !meta.depends_on.is_empty() {
-        bail!(
-            "{task} depends on {}; running dependent tasks comes with Mốc C",
-            meta.depends_on.join(", ")
-        );
+    // Readiness keeps dependencies inside the scope; the pinned snapshot is
+    // checked again rather than trusting the manifest was made that way.
+    if let Some(outside) = meta.depends_on.iter().find(|d| !manifest.tasks.contains(d)) {
+        bail!("{task} depends on {outside}, which is not in {id}");
     }
 
     Ok(Contract {
@@ -147,6 +149,7 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         manifest,
         manifest_sha256: hash::sha256(&raw),
         task: task.to_string(),
+        depends_on: meta.depends_on,
         files,
     })
 }
@@ -334,17 +337,20 @@ pub(crate) mod tests {
         assert!(!after.contains("SỬA"));
     }
 
-    /// AC-03.
+    /// MOC-C TASK-002: a dependent task loads, with its dependencies.
     #[test]
-    fn a_task_with_dependencies_is_refused() {
+    fn a_task_carries_its_dependencies() {
         let f = handed_over();
-        let err = load(&f.root, "HANDOVER-001", "TASK-002")
-            .unwrap_err()
-            .to_string();
         assert_eq!(
-            err,
-            "TASK-002 depends on TASK-001; running dependent tasks comes with Mốc C"
+            load(&f.root, "HANDOVER-001", "TASK-002")
+                .unwrap()
+                .depends_on,
+            ["TASK-001"]
         );
+        assert!(load(&f.root, "HANDOVER-001", "TASK-001")
+            .unwrap()
+            .depends_on
+            .is_empty());
         let err = load(&f.root, "HANDOVER-001", "TASK-009")
             .unwrap_err()
             .to_string();

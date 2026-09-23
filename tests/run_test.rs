@@ -333,6 +333,76 @@ fn a_verified_run_seals_the_tested_tree_as_its_output() {
     assert_eq!(state["state"]["output"], commit);
 }
 
+fn status_json(p: &Project, id: &str) -> serde_json::Value {
+    let out = p.zforge(&["run", "status", id, "--json"]);
+    assert!(out.status.success(), "{}", err(&out));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+/// MOC-C TASK-002 AC-01 and AC-05: a dependent task starts from its
+/// dependency's sealed output. TASK-002's agent changes nothing, so its
+/// tests pass only because TASK-001's fix is where it starts.
+#[test]
+fn a_dependent_task_starts_from_its_dependencys_output() {
+    let p = Project::new(3.0, 3);
+    p.stub(&fix_and_report());
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let output = status_json(&p, "RUN-001")["state"]["output"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    p.stub(&format!("cat {FIXTURE}"));
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    let meta = &status_json(&p, "RUN-002")["meta"];
+    assert_eq!(meta["start"]["commit"], output.as_str());
+    assert_eq!(
+        meta["start"]["from"],
+        serde_json::json!([{"task": "TASK-001", "run": "RUN-001", "commit": output}])
+    );
+    assert_eq!(p.last("RUN-002")["event"], "verified");
+    let worktree = p.root.join(".zforge/worktrees/RUN-002");
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("lib.sh")).unwrap(),
+        FIX
+    );
+    // Its branch continues from TASK-001's output.
+    p.git(&[
+        "merge-base",
+        "--is-ancestor",
+        &output,
+        "zforge/TASK-002/RUN-002",
+    ]);
+
+    // AC-05: a task without dependencies records no start.
+    assert!(status_json(&p, "RUN-001")["meta"].get("start").is_none());
+    let yaml = std::fs::read_to_string(p.run_dir("RUN-001").join("run.yaml")).unwrap();
+    assert!(!yaml.contains("start"), "{yaml}");
+}
+
+/// MOC-C TASK-002 AC-02: a dependency that ran but was not verified.
+#[test]
+fn a_dependency_that_failed_refuses_the_task() {
+    let p = Project::new(3.0, 1);
+    p.stub(&format!("cat {FIXTURE}"));
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains(
+            "TASK-002 depends on TASK-001, which has no verified run in HANDOVER-001 (latest: RUN-001 failed)"
+        ),
+        "{}",
+        err(&out)
+    );
+    assert!(!p.run_dir("RUN-002").exists());
+}
+
 /// AC-02.
 #[test]
 fn a_run_that_never_passes_fails_after_its_verifications() {
@@ -424,10 +494,11 @@ fn an_interrupted_foreground_run_is_recorded_as_cancelled() {
 fn refusals_create_no_run() {
     let p = Project::new(3.0, 3);
     p.stub(&format!("cat {FIXTURE}"));
+    // MOC-C TASK-002 AC-02: a dependency without output refuses the task.
     let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
     assert!(!out.status.success());
     assert!(
-        err(&out).contains("running dependent tasks comes with Mốc C"),
+        err(&out).contains("TASK-002 depends on TASK-001, which has not run in HANDOVER-001"),
         "{}",
         err(&out)
     );

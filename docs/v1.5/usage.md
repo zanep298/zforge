@@ -187,7 +187,10 @@ Không có lệnh "accept change request". Sửa hợp đồng luôn đi qua rev
 
 ## Giới hạn hiện tại
 
-- Task có `depends_on` **chưa chạy được**; ghép output giữa các task thuộc Mốc C.
+- Task có `depends_on` chạy được từng task một bằng `--task`, sau khi mọi
+  dependency đã `verified`; worktree của nó xuất phát từ output của chúng. Chạy cả
+  feature bằng một lệnh, kiểm chứng tích hợp và tái dùng qua handover: đang làm
+  (Mốc C).
 - Chỉ Claude chạy được leaf task.
 - Run chạy với `--dangerously-skip-permissions` để không cần người trả lời quyền.
   Agent bị giữ trong worktree bằng cwd, nhưng quyền trên máy vẫn là quyền của bạn.

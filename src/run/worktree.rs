@@ -1,7 +1,8 @@
 //! The git worktree of a run (MOC-B TASK-002, REQ-002).
 //!
 //! Each run works in `.zforge/worktrees/<RUN>` on its own branch
-//! `zforge/<task>/<run>`, created from the handover's baseline commit. The
+//! `zforge/<task>/<run>`, created from the commit it starts at — the
+//! handover's baseline, or its dependencies' output (`start`). The
 //! user's branch and working tree are never touched. A failed run keeps its
 //! worktree for inspection; removing a worktree keeps its branch, so the
 //! work stays reachable until the user deletes it.
@@ -69,7 +70,7 @@ pub fn create(project_root: &Path, run: &str, task: &str, commit: &str) -> Resul
             &format!("{commit}^{{commit}}"),
         ],
     )
-    .with_context(|| format!("baseline commit {commit} not found"))?;
+    .with_context(|| format!("start commit {commit} not found"))?;
     let branch = branch_name(task, run);
     if branch_exists(project_root, &branch)? {
         bail!("branch {branch} already exists; a run never reuses a branch");
@@ -290,7 +291,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(err.contains("baseline commit"), "{err}");
+        assert!(err.contains("start commit"), "{err}");
         assert!(!path_for(&r.root, "RUN-002").exists());
         assert!(!branch_exists(&r.root, "zforge/TASK-002/RUN-002").unwrap());
 

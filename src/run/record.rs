@@ -48,6 +48,35 @@ pub struct RunMeta {
     /// The run this one retries, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_of: Option<String>,
+    /// Where the worktree starts when not at `baseline_commit` (MOC-C
+    /// TASK-002): the outputs of the task's dependencies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<Start>,
+}
+
+impl RunMeta {
+    /// The commit the worktree is created at.
+    pub fn start_commit(&self) -> &str {
+        self.start
+            .as_ref()
+            .map_or(&self.baseline_commit, |s| &s.commit)
+    }
+}
+
+/// A worktree created at `commit`, then with the output of every source
+/// merged in, in order; a source already contained in it is not merged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Start {
+    pub commit: String,
+    pub from: Vec<Source>,
+}
+
+/// The sealed output of `task`'s run `run`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Source {
+    pub task: String,
+    pub run: String,
+    pub commit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -482,6 +511,7 @@ pub(crate) mod tests {
             budget_usd: 3.0,
             max_iterations: 3,
             retry_of: None,
+            start: None,
         }
     }
 
