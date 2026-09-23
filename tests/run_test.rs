@@ -714,3 +714,110 @@ fn an_incomplete_change_request_says_what_it_lacks() {
     );
     assert!(reason.contains("Bằng chứng"), "{reason}");
 }
+
+// ─── TASK-007: knowledge and the run's result ───────────────────────────────
+
+impl Project {
+    fn knowledge(&self) -> serde_json::Value {
+        serde_json::from_slice(&self.zforge(&["knowledge", "index", "--json"]).stdout).unwrap()
+    }
+}
+
+fn entry(v: &serde_json::Value, id: &str) -> serde_json::Value {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == id)
+        .cloned()
+        .unwrap()
+}
+
+/// AC-01 and AC-03.
+#[test]
+fn a_verified_run_makes_its_requirement_verified() {
+    let p = Project::new(3.0, 3);
+
+    // Before any run: handed over, not built.
+    let before = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(before["implementation"], "handed_over");
+
+    // A failed run changes nothing.
+    p.stub(&format!("cat {FIXTURE}"));
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    assert_eq!(
+        entry(&p.knowledge(), "REQ-001")["implementation"],
+        "handed_over"
+    );
+
+    p.stub(&fix_and_report());
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    let e = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(e["implementation"], "verified");
+    assert_eq!(e["verified_by"], "RUN-002");
+    let candidate = e["candidate"].as_str().unwrap();
+    assert_eq!(
+        Some(candidate),
+        zforge::evidence::fingerprint(&p.root.join(".zforge/worktrees/RUN-002")).hash(),
+        "the candidate is the tree that passed"
+    );
+    let md = std::fs::read_to_string(p.root.join(".zforge/knowledge/index.md")).unwrap();
+    assert!(md.contains("verified (RUN-002"), "{md}");
+
+    // The run's own result reads back what it used and proved.
+    let result = std::fs::read_to_string(p.run_dir("RUN-002").join("result.md")).unwrap();
+    for want in [
+        "RUN-002 — TASK-001 of F/HANDOVER-001: verified",
+        "branch zforge/TASK-001/RUN-002",
+        "## Contract",
+        "tasks/TASK-001.md rev 1",
+        "## Verifications",
+        "1. passed — candidate",
+    ] {
+        assert!(result.contains(want), "missing {want:?} in:\n{result}");
+    }
+
+    // AC-03: the views are generated; editing them changes nothing.
+    std::fs::write(p.run_dir("RUN-002").join("result.md"), "RUN-002 failed\n").unwrap();
+    let after = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(after["implementation"], "verified");
+    let status: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "status", "RUN-002", "--json"]).stdout).unwrap();
+    assert_eq!(status["state"]["status"], "verified");
+}
+
+/// AC-02: a requirement dropped from the accepted outcome is never reported
+/// as built, whatever its tasks' runs did.
+#[test]
+fn a_superseded_requirement_is_never_verified() {
+    let p = Project::new(3.0, 3);
+    p.stub(&fix_and_report());
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    assert_eq!(
+        entry(&p.knowledge(), "REQ-001")["implementation"],
+        "verified"
+    );
+
+    // The user accepts an outcome without REQ-001.
+    let intake = zforge::intake::Intake::open(&p.root, "F").unwrap();
+    std::fs::write(
+        intake.dir.join("01-outcome.md"),
+        "# F\n\n## Yêu cầu\n\n- REQ-002: cộng đúng\n\n## Câu hỏi còn mở\n",
+    )
+    .unwrap();
+    zforge::intake::review::review(&intake, "01-outcome.md").unwrap();
+    zforge::intake::review::accept(&intake, "01-outcome.md", None).unwrap();
+
+    let e = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(e["decision"], "superseded");
+    assert_eq!(e["implementation"], "not_implemented");
+    assert!(e["verified_by"].is_null());
+}

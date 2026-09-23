@@ -117,13 +117,13 @@ pub fn worker(project_root: &Path, run_id: &str) -> Result<RunState> {
     );
     crate::process::catch_interrupts();
     let state = execute::execute(project_root, &run)?;
-    view::write(&run, &state)?;
+    view::write(project_root, &run, &state)?;
     Ok(state)
 }
 
 /// Stop the run's worker and everything it started, then record it
 /// `cancelled` (unless the worker recorded its own end first).
-pub fn cancel(run: &Run) -> Result<RunState> {
+pub fn cancel(project_root: &Path, run: &Run) -> Result<RunState> {
     let state = refresh(run)?;
     if state.status.is_final() {
         bail!("{} is already {}", run.id, state.status.as_str());
@@ -143,7 +143,7 @@ pub fn cancel(run: &Run) -> Result<RunState> {
             reason: "cancelled by the user".into(),
         })?,
     };
-    view::write(run, &state)?;
+    view::write(project_root, run, &state)?;
     Ok(state)
 }
 

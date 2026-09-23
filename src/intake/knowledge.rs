@@ -7,10 +7,11 @@
 //!
 //! - **decision** — `active` while the item is in the file's current
 //!   accepted revision, `superseded` once a later accepted revision drops it;
-//! - **implementation** — derived only from records: `handed_over` when a
-//!   task covering it is in a handover manifest, else `not_implemented`.
-//!   `verified` and `integrated` come from run records (Mốc B); never from
-//!   what an agent says.
+//! - **implementation** — derived only from records: `verified` when a run
+//!   of a task covering it ended verified (with that run and the candidate
+//!   it tested), `handed_over` when such a task is in a handover manifest,
+//!   else `not_implemented`. Never from what an agent wrote; `integrated`
+//!   waits for Mốc C.
 
 use super::handover;
 use super::lint::{self, TaskMeta};
@@ -35,6 +36,10 @@ pub enum DecisionStatus {
 pub enum Implementation {
     NotImplemented,
     HandedOver,
+    /// A run of a task serving this item passed its verification;
+    /// `verified_by` and `candidate` on the entry say which run and which
+    /// tree.
+    Verified,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -56,6 +61,12 @@ pub struct Entry {
     /// Handover manifests those tasks are in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub handovers: Vec<String>,
+    /// The run that verified one of those tasks (latest first seen).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_by: Option<String>,
+    /// Fingerprint of the tree that run verified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<String>,
 }
 
 pub fn index_dir(project_root: &Path) -> PathBuf {
@@ -72,10 +83,11 @@ pub fn build(project_root: &Path) -> Result<Vec<Entry>> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     ids.sort();
+    let verified = verified_runs(project_root)?;
     let mut entries = Vec::new();
     for id in ids {
         let intake = Intake::open(project_root, &id)?;
-        entries.extend(intake_entries(&intake)?);
+        entries.extend(intake_entries(&intake, &verified)?);
     }
     Ok(entries)
 }
@@ -96,7 +108,37 @@ fn accepted_revisions(intake: &Intake, file: &str) -> Result<Vec<(u32, String, S
     Ok(out)
 }
 
-fn intake_entries(intake: &Intake) -> Result<Vec<Entry>> {
+/// The run that verified a task, and the tree it tested.
+#[derive(Debug, Clone)]
+pub struct VerifiedBy {
+    pub run: String,
+    pub candidate: Option<String>,
+}
+
+/// `(intake, task)` → the latest run that verified it.
+type VerifiedTasks = BTreeMap<(String, String), VerifiedBy>;
+
+/// `(intake, task)` → the latest run that verified it, with its candidate.
+/// Read-only: the run log is the record, and reading it never changes it.
+fn verified_runs(project_root: &Path) -> Result<VerifiedTasks> {
+    let mut out = BTreeMap::new();
+    for run in crate::run::record::list(project_root)? {
+        let meta = run.meta()?;
+        let state = run.state()?;
+        if state.status == crate::run::record::RunStatus::Verified {
+            out.insert(
+                (meta.intake.clone(), meta.task.clone()),
+                VerifiedBy {
+                    run: run.id.clone(),
+                    candidate: state.last_candidate.clone(),
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
+fn intake_entries(intake: &Intake, verified: &VerifiedTasks) -> Result<Vec<Entry>> {
     // Tasks as accepted, and the manifests they were handed over in.
     let mut metas: BTreeMap<String, TaskMeta> = BTreeMap::new();
     for f in intake.files() {
@@ -175,6 +217,19 @@ fn intake_entries(intake: &Intake) -> Result<Vec<Entry>> {
             e.implementation = Implementation::HandedOver;
         }
         e.handovers = hs;
+        // A superseded item is never reported as built.
+        if e.decision != DecisionStatus::Active {
+            continue;
+        }
+        if let Some(v) = e
+            .tasks
+            .iter()
+            .find_map(|t| verified.get(&(intake.id.clone(), t.clone())))
+        {
+            e.implementation = Implementation::Verified;
+            e.verified_by = Some(v.run.clone());
+            e.candidate = v.candidate.clone();
+        }
     }
     Ok(entries)
 }
@@ -223,6 +278,8 @@ fn collect(
             implementation: Implementation::NotImplemented,
             tasks: Vec::new(),
             handovers: Vec::new(),
+            verified_by: None,
+            candidate: None,
         });
     }
     Ok(())
@@ -264,6 +321,14 @@ pub fn render(entries: &[Entry]) -> String {
         let implementation = match e.implementation {
             Implementation::NotImplemented => "not implemented".to_string(),
             Implementation::HandedOver => format!("handed over ({})", e.handovers.join(", ")),
+            Implementation::Verified => format!(
+                "verified ({}{})",
+                e.verified_by.as_deref().unwrap_or("?"),
+                e.candidate
+                    .as_deref()
+                    .map(|c| format!(", candidate {}", hash::short(c)))
+                    .unwrap_or_default()
+            ),
         };
         let decision = match e.decision {
             DecisionStatus::Active => "active",

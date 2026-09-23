@@ -6,6 +6,7 @@
 use super::record::{Run, RunEvent, RunMeta, RunState};
 use anyhow::Result;
 use std::fmt::Write as _;
+use std::path::Path;
 
 pub const PROGRESS: &str = "progress.md";
 pub const RESULT: &str = "result.md";
@@ -116,8 +117,59 @@ pub fn timeline(events: &[RunEvent]) -> String {
         .collect()
 }
 
+/// The contract the run was given, as the handover pins it. Read from the
+/// manifest for display only — a run's own verification of those hashes
+/// happened before it started.
+fn contract_files(project_root: &Path, meta: &RunMeta) -> Vec<String> {
+    let path = project_root
+        .join(".zforge/intakes")
+        .join(&meta.intake)
+        .join(".records/handovers")
+        .join(format!("{}.json", meta.handover));
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = serde_json::from_str::<crate::intake::handover::Manifest>(&text) else {
+        return Vec::new();
+    };
+    manifest
+        .files
+        .iter()
+        .map(|f| format!("{} rev {} {}", f.file, f.revision, short(&f.sha256)))
+        .collect()
+}
+
+/// Verifications, newest last, with the candidate each tested.
+fn verifications(events: &[RunEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::Verified { candidate, .. } => {
+                Some(format!("passed — candidate {}", short(candidate)))
+            }
+            RunEvent::VerifyFailed {
+                candidate,
+                failed_tests,
+                ..
+            } => Some(format!(
+                "failed{}{}",
+                candidate
+                    .as_deref()
+                    .map(|c| format!(" — candidate {}", short(c)))
+                    .unwrap_or_default(),
+                if failed_tests.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", failed_tests.join(", "))
+                }
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Regenerate `progress.md` and `result.md`.
-pub fn write(run: &Run, state: &RunState) -> Result<()> {
+pub fn write(project_root: &Path, run: &Run, state: &RunState) -> Result<()> {
     let meta = run.meta()?;
     let events = run.events()?;
     let note =
@@ -128,10 +180,21 @@ pub fn write(run: &Run, state: &RunState) -> Result<()> {
         timeline(&events)
     );
     crate::state::write_atomic(&run.dir.join(PROGRESS), progress.as_bytes())?;
-    let result = format!(
-        "# {} result\n\n{note}\n\n```text\n{}```\n",
+    let mut result = format!(
+        "# {} result\n\n{note}\n\n```text\n{}```\n\n## Contract\n\n",
         meta.id,
         summary(&meta, state)
     );
+    for f in contract_files(project_root, &meta) {
+        result.push_str(&format!("- {f}\n"));
+    }
+    result.push_str("\n## Verifications\n\n");
+    let runs = verifications(&events);
+    if runs.is_empty() {
+        result.push_str("None.\n");
+    }
+    for (i, v) in runs.iter().enumerate() {
+        result.push_str(&format!("{}. {v}\n", i + 1));
+    }
     crate::state::write_atomic(&run.dir.join(RESULT), result.as_bytes())
 }

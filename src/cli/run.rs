@@ -69,7 +69,7 @@ pub fn run(args: RunArgs) -> Result<()> {
         Some(RunCmd::List { handover, json }) => list(&root, handover.as_deref(), json),
         Some(RunCmd::Cancel { run }) => {
             let r = Run::open(&root, &run)?;
-            let state = ops::cancel(&r)?;
+            let state = ops::cancel(&root, &r)?;
             println!("{} {} {}", "✓".green(), r.id, describe(&state));
             Ok(())
         }
@@ -138,7 +138,7 @@ fn start(root: &Path, run: &Run, background: bool) -> Result<()> {
     );
     crate::process::catch_interrupts();
     let state = execute::execute(root, run)?;
-    view::write(run, &state)?;
+    view::write(root, run, &state)?;
     let line = match state.status {
         RunStatus::Verified => format!(
             "{} {} verified — branch {}, candidate {}, {} verification(s), ${:.2}",
