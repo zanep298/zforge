@@ -277,9 +277,16 @@ fn work(
         };
         match (outcome.passed, candidate) {
             (true, Some(candidate)) => {
+                // The output a dependent task starts from: the tested tree,
+                // sealed before anything else can touch the worktree.
+                let message = format!("zforge: output of {} ({})", run.id, meta.task);
+                let commit = super::output::seal(&work_dir, &message, &candidate).map_err(|e| {
+                    Halt::Failed(format!("tests passed but the output was not sealed: {e:#}"))
+                })?;
                 run.append(&RunEvent::Verified {
                     at: Utc::now(),
                     candidate,
+                    commit: Some(commit),
                 })?;
                 advance(&tasks_dir, &run.id, State::Verified);
             }

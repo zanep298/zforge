@@ -199,45 +199,9 @@ pub fn clean(project_root: &Path, run: &Run) -> Result<Option<String>> {
 /// Commit anything uncommitted in the worktree to the run's branch. Returns
 /// the commit id when there was something to save.
 fn commit_leftovers(meta: &RunMeta) -> Result<Option<String>> {
-    let git = |args: &[&str]| -> Result<std::process::Output> {
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(args).current_dir(&meta.worktree);
-        for var in crate::evidence::candidate::REPO_LOCAL_GIT_ENV {
-            cmd.env_remove(var);
-        }
-        cmd.output().context("git is not available")
-    };
-    let status = git(&["status", "--porcelain"])?;
-    if String::from_utf8_lossy(&status.stdout).trim().is_empty() {
-        return Ok(None);
-    }
     let message = format!("zforge: uncommitted work of {} ({})", meta.id, meta.task);
-    for args in [
-        &["add", "-A"][..],
-        &[
-            "-c",
-            "user.name=zforge",
-            "-c",
-            "user.email=zforge@localhost",
-            "commit",
-            "-q",
-            "-m",
-            &message,
-        ],
-    ] {
-        let out = git(args)?;
-        if !out.status.success() {
-            bail!(
-                "could not save the worktree's changes to {}: {}",
-                meta.branch,
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-    }
-    let head = git(&["rev-parse", "HEAD"])?;
-    Ok(Some(
-        String::from_utf8_lossy(&head.stdout).trim().to_string(),
-    ))
+    super::git::commit_all(&meta.worktree, &message)
+        .with_context(|| format!("could not save the worktree's changes to {}", meta.branch))
 }
 
 /// Ask the worker itself to stop — a foreground `zforge run` is not a

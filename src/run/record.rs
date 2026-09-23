@@ -82,9 +82,14 @@ pub enum RunEvent {
         at: DateTime<Utc>,
     },
     /// The suite passed on `candidate` (fingerprint of the worktree).
+    /// `commit` is the run's output: the worktree sealed as a commit whose
+    /// tree is `candidate` (MOC-C TASK-001). Runs verified before outputs
+    /// were sealed have none.
     Verified {
         at: DateTime<Utc>,
         candidate: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
     },
     /// The suite failed; the run goes back to work within the contract.
     VerifyFailed {
@@ -193,6 +198,9 @@ pub struct RunState {
     /// Candidate of the latest verification, passed or failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_candidate: Option<String>,
+    /// The sealed output of a verified run: the commit whose tree was tested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 impl Default for RunState {
@@ -206,6 +214,7 @@ impl Default for RunState {
             cost_usd: 0.0,
             in_flight_usd: None,
             last_candidate: None,
+            output: None,
         }
     }
 }
@@ -259,13 +268,16 @@ impl RunState {
                 }
                 next.status = Verifying;
             }
-            RunEvent::Verified { candidate, .. } => {
+            RunEvent::Verified {
+                candidate, commit, ..
+            } => {
                 if self.status != Verifying {
                     return refuse();
                 }
                 next.status = Verified;
                 next.verifications += 1;
                 next.last_candidate = Some(candidate.clone());
+                next.output = commit.clone();
             }
             RunEvent::VerifyFailed { candidate, .. } => {
                 if self.status != Verifying {
@@ -505,6 +517,7 @@ pub(crate) mod tests {
             RunEvent::Verified {
                 at: now(),
                 candidate: "c2".into(),
+                commit: Some("k2".into()),
             },
         ];
         let mut s = RunState::default();
@@ -522,7 +535,26 @@ pub(crate) mod tests {
         assert_eq!(s.pid, Some(42));
         assert_eq!(s.cost_usd, 1.25, "missing cost counts the whole allotment");
         assert_eq!(s.last_candidate.as_deref(), Some("c2"));
+        assert_eq!(s.output.as_deref(), Some("k2"));
         assert_eq!(RunState::replay(&events).unwrap(), s);
+    }
+
+    /// AC-04 (MOC-C TASK-001): a `verified` line written before outputs were
+    /// sealed still replays; the run simply has no output.
+    #[test]
+    fn a_verified_event_without_a_commit_still_reads() {
+        let line = r#"{"event":"verified","at":"2026-09-20T10:00:00Z","candidate":"c1"}"#;
+        let e: RunEvent = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            e,
+            RunEvent::Verified {
+                at: "2026-09-20T10:00:00Z".parse().unwrap(),
+                candidate: "c1".into(),
+                commit: None,
+            }
+        );
+        let written = serde_json::to_string(&e).unwrap();
+        assert!(!written.contains("commit"), "{written}");
     }
 
     /// An attempt killed mid-call counts its whole allotment; a finished
@@ -591,7 +623,8 @@ pub(crate) mod tests {
             running
                 .apply(&RunEvent::Verified {
                     at: now(),
-                    candidate: "c".into()
+                    candidate: "c".into(),
+                    commit: None,
                 })
                 .is_err(),
             "verified without verifying"

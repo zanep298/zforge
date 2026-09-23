@@ -6,13 +6,12 @@
 //! worktree for inspection; removing a worktree keeps its branch, so the
 //! work stays reachable until the user deletes it.
 //!
-//! Git runs with the repository-binding variables of the caller stripped
-//! (as the evidence fingerprint does), so a git hook's `GIT_DIR` cannot
-//! point it at another repository.
+//! Git goes through [`super::git`], which strips the caller's
+//! repository-binding variables.
 
+use super::git::{ok as git_ok, run as git};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 /// Worktrees live here, relative to the project root.
 pub const WORKTREES_DIR: &str = ".zforge/worktrees";
@@ -32,27 +31,6 @@ pub fn branch_name(task: &str, run: &str) -> String {
 
 pub fn path_for(project_root: &Path, run: &str) -> PathBuf {
     project_root.join(WORKTREES_DIR).join(run)
-}
-
-fn git(dir: &Path, args: &[&str]) -> Result<Output> {
-    let mut cmd = Command::new("git");
-    cmd.args(args).current_dir(dir);
-    for var in crate::evidence::candidate::REPO_LOCAL_GIT_ENV {
-        cmd.env_remove(var);
-    }
-    cmd.output().context("git is not available")
-}
-
-fn git_ok(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = git(dir, args)?;
-    if !out.status.success() {
-        bail!(
-            "`git {}` failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn branch_exists(root: &Path, branch: &str) -> Result<bool> {

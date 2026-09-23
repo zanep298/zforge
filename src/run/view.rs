@@ -39,9 +39,13 @@ pub fn event_line(e: &RunEvent) -> String {
             }
         ),
         RunEvent::VerifyStarted { .. } => format!("{t} verifying"),
-        RunEvent::Verified { candidate, .. } => {
-            format!("{t} verified — candidate {}", short(candidate))
-        }
+        RunEvent::Verified {
+            candidate, commit, ..
+        } => format!(
+            "{t} verified — candidate {}{}",
+            short(candidate),
+            output_note(commit.as_deref())
+        ),
         RunEvent::VerifyFailed {
             candidate,
             failed_tests,
@@ -62,6 +66,12 @@ pub fn event_line(e: &RunEvent) -> String {
         RunEvent::Failed { reason, .. } => format!("{t} failed — {reason}"),
         RunEvent::Cancelled { reason, .. } => format!("{t} cancelled — {reason}"),
     }
+}
+
+fn output_note(commit: Option<&str>) -> String {
+    commit
+        .map(|c| format!(", output {}", short(c)))
+        .unwrap_or_default()
 }
 
 /// Header lines: what the run is and where it stands.
@@ -104,6 +114,9 @@ pub fn summary(meta: &RunMeta, state: &RunState) -> String {
     if let Some(c) = &state.last_candidate {
         let _ = writeln!(out, "  last candidate {c}");
     }
+    if let Some(o) = &state.output {
+        let _ = writeln!(out, "  output {o} on {}", meta.branch);
+    }
     if let Some(r) = &meta.retry_of {
         let _ = writeln!(out, "  retry of {r}");
     }
@@ -144,9 +157,13 @@ fn verifications(events: &[RunEvent]) -> Vec<String> {
     events
         .iter()
         .filter_map(|e| match e {
-            RunEvent::Verified { candidate, .. } => {
-                Some(format!("passed — candidate {}", short(candidate)))
-            }
+            RunEvent::Verified {
+                candidate, commit, ..
+            } => Some(format!(
+                "passed — candidate {}{}",
+                short(candidate),
+                output_note(commit.as_deref())
+            )),
             RunEvent::VerifyFailed {
                 candidate,
                 failed_tests,

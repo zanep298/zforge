@@ -491,6 +491,15 @@ có lượt chạy nào với model thật. MCP cho intake/run đã có (chỉ c
 Chạy tuần tự có thể đáp ứng milestone ban đầu. Parallel execution, model routing
 thích nghi và UI chuyên dụng chỉ bổ sung khi có nhu cầu và bằng chứng lợi ích.
 
+**Tiến độ (23/09/2026, intake `MOC-C`, 8 task, đang review, chưa chốt):**
+
+| Hạng mục | Đã có |
+|---|---|
+| Output của task | Test pass thì zforge niêm phong worktree thành commit trên branch của run (`run/output.rs`), chỉ nhận khi worktree sạch và fingerprint vẫn bằng candidate đã test; commit ghi trong event `verified` (TASK-001). Hook của repo luôn chạy; hook từ chối thì run `failed` |
+
+Còn lại: điểm xuất phát từ output dependency (TASK-002), run tích hợp, trạng
+thái feature, vòng chạy cả handover, tái dùng, knowledge ba mức, nghiệm thu.
+
 ## 13. Kịch bản nghiệm thu workflow
 
 | Kịch bản | Kết quả bắt buộc |

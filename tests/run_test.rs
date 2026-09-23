@@ -269,6 +269,70 @@ fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
     );
 }
 
+/// MOC-C TASK-001 AC-01 and AC-03: the tested tree is sealed as the run's
+/// output — a commit on its branch — and a later commit to the branch does
+/// not change what the run verified.
+#[test]
+fn a_verified_run_seals_the_tested_tree_as_its_output() {
+    let p = Project::new(3.0, 3);
+    // The stub leaves its fix uncommitted.
+    p.stub(&fix_and_report());
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    let worktree = p.root.join(".zforge/worktrees/RUN-001");
+    let verified = p.last("RUN-001");
+    assert_eq!(verified["event"], "verified");
+    let commit = verified["commit"]
+        .as_str()
+        .expect("verified carries its output");
+    let branch = "zforge/TASK-001/RUN-001";
+    assert_eq!(p.git(&["rev-parse", branch]).trim(), commit);
+    assert_eq!(p.git(&["show", &format!("{commit}:lib.sh")]), FIX);
+    assert_eq!(
+        p.git(&["log", "-1", "--format=%an|%s", commit]).trim(),
+        "zforge|zforge: output of RUN-001 (TASK-001)"
+    );
+    // The output is the tree the tests ran on.
+    assert!(p
+        .git(&[
+            "-C",
+            &worktree.display().to_string(),
+            "status",
+            "--porcelain"
+        ])
+        .is_empty());
+    assert_eq!(
+        zforge::evidence::fingerprint(&worktree).hash(),
+        verified["candidate"].as_str()
+    );
+
+    let status = p.zforge(&["run", "status", "RUN-001", "--json"]);
+    let state: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(state["state"]["output"], commit);
+
+    // Whatever lands on the branch afterwards is not the output.
+    std::fs::write(worktree.join("later.txt"), "after the run\n").unwrap();
+    let wt = worktree.display().to_string();
+    p.git(&["-C", &wt, "add", "-A"]);
+    p.git(&[
+        "-C",
+        &wt,
+        "-c",
+        "user.email=u@u",
+        "-c",
+        "user.name=u",
+        "commit",
+        "-qm",
+        "later",
+    ]);
+    assert_ne!(p.git(&["rev-parse", branch]).trim(), commit);
+    let status = p.zforge(&["run", "status", "RUN-001", "--json"]);
+    let state: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(state["state"]["output"], commit);
+}
+
 /// AC-02.
 #[test]
 fn a_run_that_never_passes_fails_after_its_verifications() {

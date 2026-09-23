@@ -7,7 +7,9 @@
 
 pub mod contract;
 pub mod execute;
+pub mod git;
 pub mod ops;
+pub mod output;
 pub mod reconcile;
 pub mod record;
 pub mod view;
