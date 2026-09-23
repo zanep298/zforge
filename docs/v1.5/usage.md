@@ -215,8 +215,12 @@ zforge knowledge index
 
 Sinh `.zforge/knowledge/index.md`: mỗi requirement và mỗi quyết định bắt buộc,
 kèm nguồn (file, revision, hash), trạng thái quyết định (`active` hay
-`superseded`) và trạng thái triển khai (`not_implemented`, `handed_over`,
-`verified (RUN-001, candidate …)`).
+`superseded`) và trạng thái triển khai — mức cao nhất đúng: `not_implemented`,
+`handed_over`, `verified (RUN-001, candidate …)` (task pass trên branch riêng),
+`integration verified (RUN-005 of HANDOVER-001, …)` (cả feature pass kiểm chứng
+tích hợp), `integrated (…, <commit> in main)` (output tích hợp đã nằm trong
+branch baseline). `integrated` được hỏi lại git mỗi lần; merge kiểu squash
+hoặc rebase không giữ commit nên vẫn là `integration verified`.
 
 ## Khi agent xin sửa hợp đồng
 

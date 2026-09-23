@@ -1754,3 +1754,89 @@ fn a_new_baseline_reruns_everything() {
         .iter()
         .all(|(_, s)| s == "verified"));
 }
+
+// ─── MOC-C TASK-007: three levels of implementation ─────────────────────────
+
+fn merge_into_main(p: &Project, args: &[&str]) {
+    let mut all = vec!["-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q"];
+    all.extend_from_slice(args);
+    p.git(&all);
+}
+
+/// AC-01 and AC-02: a passed integration raises its requirements; merging
+/// its output into the baseline branch makes them integrated.
+#[test]
+fn knowledge_follows_the_integration_into_the_baseline() {
+    let p = feature_project(3);
+    p.stub(&per_task(&p, ""));
+    assert!(p.zforge(&["run", "HANDOVER-001"]).status.success());
+
+    let req = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(req["implementation"], "integration_verified");
+    assert_eq!(req["integration"]["run"], "RUN-005");
+    assert_eq!(req["integration"]["handover"], "HANDOVER-001");
+    assert_eq!(req["integration"]["branch"], "main");
+    let commit = req["integration"]["commit"].as_str().unwrap().to_string();
+    assert_eq!(
+        status_json(&p, "RUN-005")["state"]["output"]
+            .as_str()
+            .unwrap(),
+        commit
+    );
+
+    merge_into_main(&p, &["--no-edit", "zforge/F/integration/RUN-005"]);
+    let req = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(req["implementation"], "integrated");
+    let out = p.zforge(&["knowledge", "index"]);
+    assert!(out.status.success());
+    let md = std::fs::read_to_string(p.root.join(".zforge/knowledge/index.md")).unwrap();
+    assert!(
+        md.contains(&format!(
+            "integrated (RUN-005 of HANDOVER-001, {} in main)",
+            &commit[..12]
+        )),
+        "{md}"
+    );
+}
+
+/// AC-03: a squash merge carries the content but not the commit; knowledge
+/// does not guess.
+#[test]
+fn a_squash_merge_is_not_taken_for_integrated() {
+    let p = feature_project(3);
+    p.stub(&per_task(&p, ""));
+    assert!(p.zforge(&["run", "HANDOVER-001"]).status.success());
+    merge_into_main(&p, &["--squash", "zforge/F/integration/RUN-005"]);
+    p.git(&[
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "squashed",
+    ]);
+    assert_eq!(
+        entry(&p.knowledge(), "REQ-001")["implementation"],
+        "integration_verified"
+    );
+}
+
+/// AC-04: a failed integration leaves the requirement verified by its task.
+#[test]
+fn a_failed_integration_leaves_the_task_level() {
+    let p = Project::with(
+        3.0,
+        3,
+        &[("TASK-001", "")],
+        "```bash\nsh test.sh\nexit 1\n```",
+    );
+    p.stub(&fix_and_report());
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(!out.status.success());
+    assert_eq!(p.last("RUN-002")["event"], "failed");
+    let req = entry(&p.knowledge(), "REQ-001");
+    assert_eq!(req["implementation"], "verified");
+    assert_eq!(req["verified_by"], "RUN-001");
+    assert!(req.get("integration").is_none());
+}

@@ -502,8 +502,9 @@ thích nghi và UI chuyên dụng chỉ bổ sung khi có nhu cầu và bằng c
 | Trạng thái feature | `zforge run status <HANDOVER>`: mỗi task `ready`/`waiting`/`running`/`verified`/`failed`…/`blocked by`, và bước tích hợp — là hàm thuần của record các run, không có file trạng thái. Run verified mới nhất thắng run fail sau nó; task dừng chặn mọi task phía sau; việc làm trên output cũ của dependency được đánh dấu `outdated` (TASK-004) |
 | Vòng chạy cả handover | `zforge run <HANDOVER> [--async]`: task theo thứ tự rồi tích hợp; chạy lại thì tiếp tục (task verified bỏ qua, run bị ngắt/hủy được chạy lại, `failed`/`blocked` giữ nguyên); khóa theo handover và theo task nên không có hai run của một task cùng lúc; `run cancel|log|wait <HANDOVER>`; MCP `run_start` không kèm task. Hạn chế: hủy lúc agent đang làm tiêu hết budget còn lại của task (quy tắc Mốc B), nên task đó cần handover mới (TASK-005) |
 | Tái dùng qua handover | Trước lần chạy đầu của một task trong handover mới, vòng chạy tìm run `verified` ở handover khác của cùng intake có cùng khóa hợp đồng (commit baseline, 4 stage, file task, file task mọi dependency bắc cầu — so bằng hash đã pin) **và** xuất phát đúng từ output hiện có của dependency; có thì ghi một run chỉ gồm event `reused`, không gọi agent, không tốn tiền. `--task` luôn chạy thật; run tích hợp không bao giờ tái dùng (TASK-006) |
+| Knowledge ba mức | Requirement lên `integration_verified` khi handover chứa task của nó có run tích hợp verified, lên `integrated` khi output của run tích hợp đó là tổ tiên của branch baseline hiện tại (`git merge-base --is-ancestor`). Tính lại mỗi lần dựng index, không lưu; merge kiểu squash/rebase giữ `integration_verified` (TASK-007) |
 
-Còn lại: knowledge ba mức, nghiệm thu.
+Còn lại: nghiệm thu đầu cuối (TASK-008).
 
 ## 13. Kịch bản nghiệm thu workflow
 

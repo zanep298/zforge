@@ -7,11 +7,16 @@
 //!
 //! - **decision** — `active` while the item is in the file's current
 //!   accepted revision, `superseded` once a later accepted revision drops it;
-//! - **implementation** — derived only from records: `verified` when a run
-//!   of a task covering it ended verified (with that run and the candidate
-//!   it tested), `handed_over` when such a task is in a handover manifest,
-//!   else `not_implemented`. Never from what an agent wrote; `integrated`
-//!   waits for Mốc C.
+//! - **implementation** — derived only from records and git, the highest
+//!   level that holds: `integrated` when the output of a verified
+//!   integration run of a handover holding one of its tasks is in the
+//!   baseline branch now (`git merge-base --is-ancestor`; a squash or rebase
+//!   merge is not recognised, and nothing assumes it); `integration_verified`
+//!   when that run exists; `verified` when a run of such a task ended
+//!   verified (with that run and the candidate it tested); `handed_over`
+//!   when such a task is in a handover manifest; else `not_implemented`.
+//!   Never from what an agent wrote, and never stored: every build asks
+//!   again (MOC-C TASK-007).
 
 use super::handover;
 use super::lint::{self, TaskMeta};
@@ -40,6 +45,22 @@ pub enum Implementation {
     /// `verified_by` and `candidate` on the entry say which run and which
     /// tree.
     Verified,
+    /// The handover's integration check passed; `integration` says where.
+    IntegrationVerified,
+    /// That integration's output is in the baseline branch.
+    Integrated,
+}
+
+/// The integration run that checked an item's handover.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Integration {
+    pub handover: String,
+    pub run: String,
+    pub candidate: Option<String>,
+    /// The integration's sealed output.
+    pub commit: String,
+    /// The baseline branch `integrated` is judged against.
+    pub branch: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -67,6 +88,8 @@ pub struct Entry {
     /// Fingerprint of the tree that run verified.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integration: Option<Integration>,
 }
 
 pub fn index_dir(project_root: &Path) -> PathBuf {
@@ -84,10 +107,13 @@ pub fn build(project_root: &Path) -> Result<Vec<Entry>> {
         .collect();
     ids.sort();
     let verified = verified_runs(project_root)?;
+    let integrations = integration_runs(project_root)?;
     let mut entries = Vec::new();
     for id in ids {
         let intake = Intake::open(project_root, &id)?;
-        entries.extend(intake_entries(&intake, &verified)?);
+        let mut these = intake_entries(&intake, &verified)?;
+        add_integration(project_root, &intake, &integrations, &mut these)?;
+        entries.extend(these);
     }
     Ok(entries)
 }
@@ -138,6 +164,86 @@ fn verified_runs(project_root: &Path) -> Result<VerifiedTasks> {
         }
     }
     Ok(out)
+}
+
+/// Verified integration runs, oldest first: `(intake, handover, run,
+/// candidate, commit)`.
+type IntegrationRuns = Vec<(String, String, String, Option<String>, String)>;
+
+fn integration_runs(project_root: &Path) -> Result<IntegrationRuns> {
+    let mut out = Vec::new();
+    for run in crate::run::record::list(project_root)? {
+        let meta = run.meta()?;
+        if meta.kind != crate::run::record::RunKind::Integration {
+            continue;
+        }
+        let state = run.state()?;
+        if let (crate::run::record::RunStatus::Verified, Some(commit)) =
+            (state.status, state.output.clone())
+        {
+            out.push((
+                meta.intake,
+                meta.handover,
+                run.id,
+                state.last_candidate,
+                commit,
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// Raise verified requirements whose handover passed its integration check
+/// — and whose integration is in the baseline branch now — to those levels.
+fn add_integration(
+    project_root: &Path,
+    intake: &Intake,
+    runs: &IntegrationRuns,
+    entries: &mut [Entry],
+) -> Result<()> {
+    let branches: BTreeMap<String, String> = handover::list(intake)?
+        .into_iter()
+        .map(|m| (m.id, m.baseline.branch))
+        .collect();
+    let integrated = |commit: &str, branch: &str| {
+        crate::run::git::run(
+            project_root,
+            &[
+                "merge-base",
+                "--is-ancestor",
+                commit,
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .is_ok_and(|o| o.status.success())
+    };
+    for e in entries.iter_mut() {
+        if e.kind != "requirement" || e.implementation != Implementation::Verified {
+            continue;
+        }
+        let candidates: Vec<Integration> = runs
+            .iter()
+            .rev()
+            .filter(|(i, h, ..)| *i == intake.id && e.handovers.contains(h))
+            .filter_map(|(_, h, run, candidate, commit)| {
+                Some(Integration {
+                    handover: h.clone(),
+                    run: run.clone(),
+                    candidate: candidate.clone(),
+                    commit: commit.clone(),
+                    branch: branches.get(h)?.clone(),
+                })
+            })
+            .collect();
+        if let Some(i) = candidates.iter().find(|i| integrated(&i.commit, &i.branch)) {
+            e.implementation = Implementation::Integrated;
+            e.integration = Some(i.clone());
+        } else if let Some(i) = candidates.into_iter().next() {
+            e.implementation = Implementation::IntegrationVerified;
+            e.integration = Some(i);
+        }
+    }
+    Ok(())
 }
 
 fn intake_entries(intake: &Intake, verified: &VerifiedTasks) -> Result<Vec<Entry>> {
@@ -282,6 +388,7 @@ fn collect(
             handovers: Vec::new(),
             verified_by: None,
             candidate: None,
+            integration: None,
         });
     }
     Ok(())
@@ -331,6 +438,28 @@ pub fn render(entries: &[Entry]) -> String {
                     .map(|c| format!(", candidate {}", hash::short(c)))
                     .unwrap_or_default()
             ),
+            Implementation::IntegrationVerified => match &e.integration {
+                Some(i) => format!(
+                    "integration verified ({} of {}{})",
+                    i.run,
+                    i.handover,
+                    i.candidate
+                        .as_deref()
+                        .map(|c| format!(", candidate {}", hash::short(c)))
+                        .unwrap_or_default()
+                ),
+                None => "integration verified".to_string(),
+            },
+            Implementation::Integrated => match &e.integration {
+                Some(i) => format!(
+                    "integrated ({} of {}, {} in {})",
+                    i.run,
+                    i.handover,
+                    hash::short(&i.commit),
+                    i.branch
+                ),
+                None => "integrated".to_string(),
+            },
         };
         let decision = match e.decision {
             DecisionStatus::Active => "active",
