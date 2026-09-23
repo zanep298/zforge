@@ -93,6 +93,21 @@ pub fn summary(meta: &RunMeta, state: &RunState) -> String {
     );
     let _ = writeln!(out, "  branch {}", meta.branch);
     let _ = writeln!(out, "  worktree {}", meta.worktree.display());
+    if let Some(start) = &meta.start {
+        let from: Vec<String> = start
+            .from
+            .iter()
+            .map(|s| format!("{} ({}, {})", s.task, s.run, short(&s.commit)))
+            .collect();
+        let _ = writeln!(out, "  starts from {}", from.join(" + "));
+    }
+    if let Some(checks) = &meta.checks {
+        let from = format!("{:?}", checks.from).to_lowercase();
+        let _ = writeln!(out, "  checks (from {from}):");
+        for c in &checks.commands {
+            let _ = writeln!(out, "    $ {c}");
+        }
+    }
     let _ = writeln!(
         out,
         "  baseline {}, manifest {}",

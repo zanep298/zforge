@@ -125,7 +125,9 @@ fn verified_runs(project_root: &Path) -> Result<VerifiedTasks> {
     for run in crate::run::record::list(project_root)? {
         let meta = run.meta()?;
         let state = run.state()?;
-        if state.status == crate::run::record::RunStatus::Verified {
+        if meta.kind == crate::run::record::RunKind::Task
+            && state.status == crate::run::record::RunStatus::Verified
+        {
             out.insert(
                 (meta.intake.clone(), meta.task.clone()),
                 VerifiedBy {

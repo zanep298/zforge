@@ -3,6 +3,8 @@
 //! `zforge run <HANDOVER> --task <TASK> [--async]` executes one handed-over
 //! leaf task in its own worktree: in the foreground by default (Ctrl-C
 //! records the run as `cancelled` and exits 130), or in the background.
+//! `zforge run <HANDOVER> --integration` checks the handover's verified
+//! outputs together (MOC-C TASK-003), without an agent.
 //! `status`, `list`, `cancel`, `retry` and `clean` operate existing runs.
 
 use crate::config;
@@ -21,8 +23,12 @@ pub struct RunArgs {
     /// `HANDOVER-001`, or `<INTAKE>/HANDOVER-001` when ambiguous.
     pub handover: Option<String>,
     /// The leaf task to run.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "integration")]
     pub task: Option<String>,
+    /// Check every task's verified output together, with the integration
+    /// check of the handed-over breakdown.
+    #[arg(long)]
+    pub integration: bool,
     /// Run in the background; follow with `zforge run status <RUN>`.
     #[arg(long = "async")]
     pub background: bool,
@@ -127,10 +133,15 @@ pub fn run(args: RunArgs) -> Result<()> {
             poll_ms,
         }) => wait(&root, &run, timeout, poll_ms),
         None => {
-            let (Some(handover), Some(task)) = (args.handover, args.task) else {
-                bail!("usage: zforge run <HANDOVER> --task <TASK> [--async], or a subcommand (see --help)");
+            const USAGE: &str = "usage: zforge run <HANDOVER> --task <TASK> | --integration [--async], or a subcommand (see --help)";
+            let Some(handover) = args.handover else {
+                bail!(USAGE);
             };
-            let r = execute::create(&root, &handover, &task, None)?;
+            let r = match (args.task, args.integration) {
+                (Some(task), false) => execute::create(&root, &handover, &task, None)?,
+                (None, true) => crate::run::integrate::create(&root, &handover, None)?,
+                _ => bail!(USAGE),
+            };
             start(&root, &r, args.background)
         }
     }
@@ -139,15 +150,28 @@ pub fn run(args: RunArgs) -> Result<()> {
 /// Execute `run` in the foreground, or hand it to a background worker.
 fn start(root: &Path, run: &Run, background: bool) -> Result<()> {
     let meta = run.meta()?;
-    eprintln!(
-        "{} {} — {} of {}, budget ${:.2}, at most {} verification(s)",
-        "▶".cyan(),
-        run.id,
-        meta.task,
-        meta.handover,
-        meta.budget_usd,
-        meta.max_iterations
-    );
+    match &meta.checks {
+        Some(checks) => eprintln!(
+            "{} {} — integration of {}: {} check(s) from the {}, no agent",
+            "▶".cyan(),
+            run.id,
+            meta.handover,
+            checks.commands.len(),
+            match checks.from {
+                crate::run::record::ChecksFrom::Breakdown => "breakdown",
+                crate::run::record::ChecksFrom::Config => "project's test command",
+            }
+        ),
+        None => eprintln!(
+            "{} {} — {} of {}, budget ${:.2}, at most {} verification(s)",
+            "▶".cyan(),
+            run.id,
+            meta.task,
+            meta.handover,
+            meta.budget_usd,
+            meta.max_iterations
+        ),
+    }
     if background {
         let pid = ops::spawn_async(root, run)?;
         println!(

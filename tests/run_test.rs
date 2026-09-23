@@ -34,8 +34,21 @@ struct Project {
 }
 
 impl Project {
-    /// `budget` and `iterations` go into the handover's policy.
+    /// `budget` and `iterations` go into the handover's policy. TASK-001,
+    /// and TASK-002 depending on it; the integration check is prose, so the
+    /// test command.
     fn new(budget: f64, iterations: u32) -> Self {
+        Self::with(
+            budget,
+            iterations,
+            &[("TASK-001", ""), ("TASK-002", "TASK-001")],
+            "sh test.sh",
+        )
+    }
+
+    /// `tasks` as (id, depends_on); `integration` is the body of the
+    /// breakdown's "Kiểm chứng tích hợp".
+    fn with(budget: f64, iterations: u32, tasks: &[(&str, &str)], integration: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap().join("proj");
         let home = dir.path().canonicalize().unwrap().join("zf");
@@ -76,7 +89,7 @@ impl Project {
             "-qm",
             "base",
         ]);
-        p.hand_over();
+        p.hand_over(tasks, integration);
         p
     }
 
@@ -94,7 +107,7 @@ impl Project {
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
-    fn hand_over(&self) {
+    fn hand_over(&self, tasks: &[(&str, &str)], integration: &str) {
         use zforge::intake::{handover, readiness, review};
         let i = review::create(&self.root, "F").unwrap();
         let d = &i.dir;
@@ -113,9 +126,18 @@ impl Project {
             "# S\n\n## Luồng\nSửa phép tính.\n\n## Câu hỏi còn mở\n",
         )
         .unwrap();
-        std::fs::write(d.join("04-breakdown.md"), "# K\n\n## Task\nTASK-001, TASK-002\n\n## Kiểm chứng tích hợp\nsh test.sh\n\n## Câu hỏi còn mở\n").unwrap();
-        std::fs::write(d.join("tasks/TASK-001.md"), task("TASK-001", "")).unwrap();
-        std::fs::write(d.join("tasks/TASK-002.md"), task("TASK-002", "TASK-001")).unwrap();
+        let ids: Vec<&str> = tasks.iter().map(|(id, _)| *id).collect();
+        std::fs::write(
+            d.join("04-breakdown.md"),
+            format!(
+                "# K\n\n## Task\n{}\n\n## Kiểm chứng tích hợp\n{integration}\n\n## Câu hỏi còn mở\n",
+                ids.join(", ")
+            ),
+        )
+        .unwrap();
+        for (id, deps) in tasks {
+            std::fs::write(d.join(format!("tasks/{id}.md")), task(id, deps)).unwrap();
+        }
         for f in i.files() {
             review::review(&i, &f).unwrap();
             review::accept(&i, &f, None).unwrap();
@@ -132,7 +154,7 @@ impl Project {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\ncat > /dev/null\npwd >> {marks}/cwd\necho \"$@\" >> {marks}/args\n{body}\n",
+                "#!/bin/sh\ncat > {marks}/prompt\npwd >> {marks}/cwd\necho \"$@\" >> {marks}/args\n{body}\n",
                 marks = self.marks.display()
             ),
         )
@@ -1016,5 +1038,186 @@ fn wait_reports_a_failed_run() {
         String::from_utf8_lossy(&out.stdout).contains("failed"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+// ─── MOC-C TASK-003: integration runs ───────────────────────────────────────
+
+/// Run `task` to `verified` and return its sealed output.
+fn verify_task(p: &Project, task: &str) -> String {
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", task]);
+    assert!(out.status.success(), "{task}: {}", err(&out));
+    let runs = p.zforge(&["run", "list", "--json"]);
+    let runs: serde_json::Value = serde_json::from_slice(&runs.stdout).unwrap();
+    runs.as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|r| r["meta"]["task"] == task)
+        .and_then(|r| r["state"]["output"].as_str())
+        .unwrap()
+        .to_string()
+}
+
+/// AC-01 and AC-04: one leaf, so the check runs on its output as is; the
+/// breakdown's check is prose, so the project's test command is used. No
+/// agent, no budget.
+#[test]
+fn an_integration_run_checks_the_leaf_output() {
+    let p = Project::new(3.0, 3);
+    p.stub(&fix_and_report());
+    verify_task(&p, "TASK-001");
+    p.stub(&format!("cat {FIXTURE}"));
+    let leaf = verify_task(&p, "TASK-002");
+    let calls = std::fs::read_to_string(p.marks.join("cwd"))
+        .unwrap()
+        .lines()
+        .count();
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--integration"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(err(&out)
+        .contains("integration of HANDOVER-001: 1 check(s) from the project's test command"));
+
+    let v = status_json(&p, "RUN-003");
+    let meta = &v["meta"];
+    assert_eq!(meta["kind"], "integration");
+    assert_eq!(meta["task"], "integration");
+    assert_eq!(meta["branch"], "zforge/F/integration/RUN-003");
+    assert_eq!(meta["budget_usd"], 0.0);
+    assert_eq!(
+        meta["checks"],
+        serde_json::json!({"from": "config", "commands": ["sh test.sh"]})
+    );
+    assert_eq!(meta["start"]["commit"], leaf.as_str());
+    assert_eq!(meta["start"]["from"][0]["task"], "TASK-002");
+
+    let state = &v["state"];
+    assert_eq!(state["status"], "verified");
+    assert_eq!(state["attempts"], 0);
+    assert_eq!(state["cost_usd"], 0.0);
+    let commit = state["output"].as_str().unwrap();
+    // Nothing to seal on top of the leaf's output: it is the output.
+    assert_eq!(commit, leaf);
+    assert_eq!(
+        p.git(&["rev-parse", "zforge/F/integration/RUN-003"]).trim(),
+        commit
+    );
+    let worktree = p.root.join(".zforge/worktrees/RUN-003");
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("lib.sh")).unwrap(),
+        FIX
+    );
+    let log = std::fs::read_to_string(p.run_dir("RUN-003").join("checks.log")).unwrap();
+    assert!(log.contains("$ sh test.sh") && log.contains("ok"), "{log}");
+    // No agent was called.
+    assert_eq!(
+        std::fs::read_to_string(p.marks.join("cwd"))
+            .unwrap()
+            .lines()
+            .count(),
+        calls
+    );
+    // Its run is not an output a task could depend on, nor task spending.
+    assert!(!p.root.join(".zforge/runs/RUN-003/trace.jsonl").exists());
+}
+
+/// AC-02: two leaves meet in the integration worktree, and the checks come
+/// from the breakdown's code block.
+#[test]
+fn an_integration_run_merges_every_leaf() {
+    let p = Project::with(
+        3.0,
+        3,
+        &[("TASK-001", ""), ("TASK-002", "")],
+        "```bash\nsh test.sh\ntest -f extra.txt\n```",
+    );
+    // Both tasks fix lib.sh the same way; TASK-002 also adds extra.txt.
+    p.stub(&format!(
+        "{}\n[ \"$(sed -n '1s/^# Leaf task \\([^ ]*\\).*/\\1/p' {marks}/prompt)\" = TASK-002 ] && echo extra > extra.txt\ntrue",
+        fix_and_report(),
+        marks = p.marks.display()
+    ));
+    let a = verify_task(&p, "TASK-001");
+    let b = verify_task(&p, "TASK-002");
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--integration"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    let meta = &status_json(&p, "RUN-003")["meta"];
+    assert_eq!(meta["checks"]["from"], "breakdown");
+    assert_eq!(
+        meta["checks"]["commands"],
+        serde_json::json!(["sh test.sh", "test -f extra.txt"])
+    );
+    let from: Vec<&str> = meta["start"]["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["commit"].as_str().unwrap())
+        .collect();
+    assert_eq!(from, [a.as_str(), b.as_str()]);
+    let branch = "zforge/F/integration/RUN-003";
+    for c in [&a, &b] {
+        p.git(&["merge-base", "--is-ancestor", c, branch]);
+    }
+    assert_eq!(p.last("RUN-003")["event"], "verified");
+}
+
+/// AC-03: the first failing command fails the run and stops the rest.
+#[test]
+fn a_failing_integration_command_fails_the_run() {
+    let p = Project::with(
+        3.0,
+        3,
+        &[("TASK-001", "")],
+        "```bash\nsh test.sh\necho boom; exit 3\ntouch third-ran\n```",
+    );
+    p.stub(&fix_and_report());
+    verify_task(&p, "TASK-001");
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--integration"]);
+    assert!(!out.status.success());
+
+    let events = p.events("RUN-002");
+    let failed = events
+        .iter()
+        .find(|e| e["event"] == "verify_failed")
+        .unwrap();
+    assert_eq!(
+        failed["failed_tests"],
+        serde_json::json!(["echo boom; exit 3"])
+    );
+    let last = p.last("RUN-002");
+    assert_eq!(last["event"], "failed");
+    let reason = last["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("`echo boom; exit 3` failed (exit 3)"),
+        "{reason}"
+    );
+    assert!(reason.contains("boom"), "{reason}");
+    assert!(!p.root.join(".zforge/worktrees/RUN-002/third-ran").exists());
+    assert!(status_json(&p, "RUN-002")["state"].get("output").is_none());
+}
+
+/// AC-05: not every task is verified yet.
+#[test]
+fn an_integration_run_waits_for_every_task() {
+    let p = Project::new(3.0, 3);
+    let out = p.zforge(&["run", "HANDOVER-001", "--integration"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains(
+            "integration needs every task verified: TASK-001, which has not run in HANDOVER-001"
+        ),
+        "{}",
+        err(&out)
+    );
+    assert!(!p.run_dir("RUN-001").exists());
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--integration"]);
+    assert!(
+        !out.status.success(),
+        "--task and --integration exclude each other"
     );
 }

@@ -129,6 +129,18 @@ zforge run status RUN-001
 Các lệnh khác: `zforge run list`, `run wait`, `run cancel`, `run retry`,
 `run clean`.
 
+Khi mọi task của handover đã `verified`, kiểm chứng cả feature trên một tree
+chứa output của tất cả:
+
+```bash
+zforge run HANDOVER-001 --integration
+```
+
+Lệnh lấy từ khối code đầu tiên dưới mục "Kiểm chứng tích hợp" của
+`04-breakdown.md` đã chốt, mỗi dòng một lệnh; không có khối code thì dùng
+`project.test_command`. Không gọi agent: tích hợp fail là chuyện hợp đồng giữa
+các task, sửa qua amendment.
+
 Agent trong chat làm được phần chuẩn bị và theo dõi qua MCP: `intake_new`,
 `intake_task`, `intake_status`, `intake_review`, `intake_diff`, `change_new`,
 `readiness`, `knowledge_index`, `run_start`, `run_status`, `run_list`,

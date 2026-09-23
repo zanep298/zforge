@@ -52,6 +52,45 @@ pub struct RunMeta {
     /// TASK-002): the outputs of the task's dependencies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<Start>,
+    /// What the run is (MOC-C TASK-003). Absent means a task run.
+    #[serde(default, skip_serializing_if = "RunKind::is_task")]
+    pub kind: RunKind,
+    /// The commands an integration run checks the feature with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Checks>,
+}
+
+/// A run implements one task, or checks a whole handover's outputs
+/// together without an agent.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunKind {
+    #[default]
+    Task,
+    Integration,
+}
+
+impl RunKind {
+    pub fn is_task(&self) -> bool {
+        *self == Self::Task
+    }
+}
+
+/// Commands run in order; the first to fail fails the check.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Checks {
+    pub from: ChecksFrom,
+    pub commands: Vec<String>,
+}
+
+/// Where the commands came from: the first code block of the pinned
+/// breakdown's "Kiểm chứng tích hợp", or `project.test_command` when that
+/// section has none.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksFrom {
+    Breakdown,
+    Config,
 }
 
 impl RunMeta {
@@ -512,6 +551,8 @@ pub(crate) mod tests {
             max_iterations: 3,
             retry_of: None,
             start: None,
+            kind: Default::default(),
+            checks: None,
         }
     }
 

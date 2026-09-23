@@ -8,6 +8,7 @@
 pub mod contract;
 pub mod execute;
 pub mod git;
+pub mod integrate;
 pub mod ops;
 pub mod output;
 pub mod reconcile;

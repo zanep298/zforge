@@ -15,7 +15,7 @@
 //! allotment as spent.
 
 use super::contract::{self, Contract};
-use super::record::{self, Run, RunEvent, RunMeta, RunState, RunStatus};
+use super::record::{self, Run, RunEvent, RunKind, RunMeta, RunState, RunStatus};
 use super::worktree;
 use crate::cli::verify::VerifyOutcome;
 use crate::config::Config;
@@ -64,7 +64,11 @@ pub fn spent_before(project_root: &Path, intake: &str, handover: &str, task: &st
     let mut spent = 0.0;
     for run in record::list(project_root)? {
         let meta = run.meta()?;
-        if meta.intake == intake && meta.handover == handover && meta.task == task {
+        if meta.kind == RunKind::Task
+            && meta.intake == intake
+            && meta.handover == handover
+            && meta.task == task
+        {
             spent += run.state()?.cost_usd;
         }
     }
@@ -108,6 +112,8 @@ pub fn create(
         max_iterations: c.manifest.policy.max_iterations.max(1),
         retry_of: retry_of.map(str::to_string),
         start: start.clone(),
+        kind: Default::default(),
+        checks: None,
     })
 }
 
@@ -115,6 +121,9 @@ pub fn create(
 /// could not start (worktree, contract changed) ends `failed` like any other.
 pub fn execute(project_root: &Path, run: &Run) -> Result<RunState> {
     let meta = run.meta()?;
+    if meta.kind == RunKind::Integration {
+        return super::integrate::execute(project_root, run);
+    }
     run.append(&RunEvent::Started {
         at: Utc::now(),
         pid: std::process::id(),

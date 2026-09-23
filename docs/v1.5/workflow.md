@@ -498,9 +498,10 @@ thích nghi và UI chuyên dụng chỉ bổ sung khi có nhu cầu và bằng c
 | Output của task | Test pass thì zforge niêm phong worktree thành commit trên branch của run (`run/output.rs`), chỉ nhận khi worktree sạch và fingerprint vẫn bằng candidate đã test; commit ghi trong event `verified` (TASK-001). Hook của repo luôn chạy; hook từ chối thì run `failed` |
 
 | Điểm xuất phát | Task có dependency chạy được bằng `--task`: worktree tạo tại output của dependency, nhiều dependency thì merge theo thứ tự task liệt kê; `run.yaml` ghi `start` (commit + nguồn). Dependency chưa có output thì từ chối, không tạo gì; merge xung đột thì run `failed` nêu task và file, không gọi agent (TASK-002) |
+| Kiểm chứng tích hợp | `zforge run <HANDOVER> --integration`: run `kind: integration` khi mọi task đã có output; worktree chứa output các task lá; chạy lệnh trong khối code đầu tiên của mục "Kiểm chứng tích hợp" đã pin (không có thì `project.test_command`), lệnh ghi trong `run.yaml`, output ở `checks.log`; lệnh fail đầu tiên làm run `failed`; không gọi agent, không tốn budget (TASK-003) |
 
-Còn lại: run tích hợp, trạng thái feature, vòng chạy cả handover, tái dùng,
-knowledge ba mức, nghiệm thu.
+Còn lại: trạng thái feature, vòng chạy cả handover, tái dùng, knowledge ba mức,
+nghiệm thu.
 
 ## 13. Kịch bản nghiệm thu workflow
 

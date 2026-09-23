@@ -6,7 +6,12 @@
 //! mismatch and nothing is run. The prompt is built from those snapshots
 //! only, so editing a contract file while a run is going — or ever after —
 //! does not change what that run was given.
+//!
+//! [`load_handover`] gives the same verified view of a whole handover, for
+//! what spans its tasks: their dependency graph and the integration check
+//! (MOC-C TASK-003).
 
+use super::record::{Checks, ChecksFrom};
 use crate::intake::handover::Manifest;
 use crate::intake::{hash, lint, record, Intake, STAGES};
 use anyhow::{bail, Context, Result};
@@ -80,9 +85,45 @@ fn manifest_path(intake: &Intake, id: &str) -> std::path::PathBuf {
         .join(format!("{id}.json"))
 }
 
+/// A handover as its manifest pins it: every snapshot read and verified.
+#[derive(Debug, Clone)]
+pub struct Handover {
+    pub intake: String,
+    pub manifest: Manifest,
+    /// SHA-256 of the manifest file, recorded in each run's `run.yaml`.
+    pub manifest_sha256: String,
+    pub files: Vec<ContractFile>,
+}
+
 /// Load and verify the contract of `task` in handover `handover_id`
 /// (`HANDOVER-001` or `<INTAKE>/HANDOVER-001`).
 pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contract> {
+    let h = load_handover(project_root, handover_id)?;
+    let id = &h.manifest.id;
+    if !h.manifest.tasks.iter().any(|t| t == task) {
+        bail!(
+            "{task} is not in {id} (handed over: {})",
+            h.manifest.tasks.join(", ")
+        );
+    }
+    let depends_on = h.depends_on(task)?;
+    // Readiness keeps dependencies inside the scope; the pinned snapshot is
+    // checked again rather than trusting the manifest was made that way.
+    if let Some(outside) = depends_on.iter().find(|d| !h.manifest.tasks.contains(d)) {
+        bail!("{task} depends on {outside}, which is not in {id}");
+    }
+    Ok(Contract {
+        intake: h.intake,
+        manifest: h.manifest,
+        manifest_sha256: h.manifest_sha256,
+        task: task.to_string(),
+        depends_on,
+        files: h.files,
+    })
+}
+
+/// Load handover `handover_id` and verify every snapshot it pins.
+pub fn load_handover(project_root: &Path, handover_id: &str) -> Result<Handover> {
     let intake = find_handover(project_root, handover_id)?;
     let id = handover_id.rsplit('/').next().unwrap_or(handover_id);
     let path = manifest_path(&intake, id);
@@ -96,17 +137,6 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
             intake.id
         );
     }
-    if !manifest.tasks.iter().any(|t| t == task) {
-        bail!(
-            "{task} is not in {id} (handed over: {})",
-            manifest.tasks.join(", ")
-        );
-    }
-    let task_file = format!("tasks/{task}.md");
-    if !manifest.files.iter().any(|f| f.file == task_file) {
-        bail!("{id} does not pin {task_file}");
-    }
-
     let mut files = Vec::with_capacity(manifest.files.len());
     for pin in &manifest.files {
         crate::intake::validate_file(&pin.file)
@@ -132,26 +162,97 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         });
     }
 
-    let task_text = &files
-        .iter()
-        .find(|f| f.file == task_file)
-        .expect("checked above")
-        .text;
-    let meta = lint::parse_task_meta(task_text).map_err(|e| anyhow::anyhow!("{task_file}: {e}"))?;
-    // Readiness keeps dependencies inside the scope; the pinned snapshot is
-    // checked again rather than trusting the manifest was made that way.
-    if let Some(outside) = meta.depends_on.iter().find(|d| !manifest.tasks.contains(d)) {
-        bail!("{task} depends on {outside}, which is not in {id}");
-    }
-
-    Ok(Contract {
+    Ok(Handover {
         intake: intake.id,
         manifest,
         manifest_sha256: hash::sha256(&raw),
-        task: task.to_string(),
-        depends_on: meta.depends_on,
         files,
     })
+}
+
+impl Handover {
+    fn file(&self, name: &str) -> Result<&ContractFile> {
+        self.files
+            .iter()
+            .find(|f| f.file == name)
+            .ok_or_else(|| anyhow::anyhow!("{} does not pin {name}", self.manifest.id))
+    }
+
+    /// `task`'s dependencies, from its pinned snapshot.
+    pub fn depends_on(&self, task: &str) -> Result<Vec<String>> {
+        let name = format!("tasks/{task}.md");
+        let meta = lint::parse_task_meta(&self.file(&name)?.text)
+            .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+        Ok(meta.depends_on)
+    }
+
+    /// Tasks no other handed-over task depends on, in manifest order. Their
+    /// outputs hold every other task's (MOC-C 02-behavior, rule 3).
+    pub fn leaves(&self) -> Result<Vec<String>> {
+        let mut needed = std::collections::BTreeSet::new();
+        for t in &self.manifest.tasks {
+            needed.extend(self.depends_on(t)?);
+        }
+        Ok(self
+            .manifest
+            .tasks
+            .iter()
+            .filter(|t| !needed.contains(*t))
+            .cloned()
+            .collect())
+    }
+
+    /// The integration check: the first code block under "Kiểm chứng tích
+    /// hợp" in the pinned breakdown, one command per non-empty, non-comment
+    /// line; without one, `test_command`.
+    pub fn checks(&self, test_command: &str) -> Result<Checks> {
+        let breakdown = self.file(STAGES[3])?;
+        let commands = integration_block(&breakdown.text);
+        if !commands.is_empty() {
+            return Ok(Checks {
+                from: ChecksFrom::Breakdown,
+                commands,
+            });
+        }
+        let test_command = test_command.trim();
+        if test_command.is_empty() {
+            bail!(
+                "no integration check: {} has no code block under \"{}\" and no `project.test_command` is configured",
+                STAGES[3],
+                lint::INTEGRATION
+            );
+        }
+        Ok(Checks {
+            from: ChecksFrom::Config,
+            commands: vec![test_command.to_string()],
+        })
+    }
+}
+
+/// Commands of the first fenced code block in the integration section.
+fn integration_block(breakdown: &str) -> Vec<String> {
+    let heading = format!("## {}", lint::INTEGRATION);
+    let fence = |l: &str| l.trim_start().starts_with("```");
+    let mut lines = breakdown
+        .lines()
+        .skip_while(|l| l.trim() != heading)
+        .skip(1);
+    // Outside a block, the next heading ends the section; inside one, a
+    // line starting with `#` is a shell comment.
+    loop {
+        match lines.next() {
+            None => return Vec::new(),
+            Some(l) if fence(l) => break,
+            Some(l) if l.starts_with("## ") || l.starts_with("# ") => return Vec::new(),
+            Some(_) => {}
+        }
+    }
+    lines
+        .take_while(|l| !fence(l))
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect()
 }
 
 impl Contract {
@@ -335,6 +436,41 @@ pub(crate) mod tests {
             .prompt(None, ".zforge/intakes/F/changes/CHANGE-001.md");
         assert_eq!(before, after);
         assert!(!after.contains("SỬA"));
+    }
+
+    /// MOC-C TASK-003: the leaves hold every other task's output; a
+    /// breakdown without a code block falls back to the test command.
+    #[test]
+    fn a_handover_knows_its_leaves_and_its_integration_check() {
+        let f = handed_over();
+        let h = load_handover(&f.root, "HANDOVER-001").unwrap();
+        assert_eq!(h.leaves().unwrap(), ["TASK-002"]);
+        assert_eq!(
+            h.checks("cargo test").unwrap(),
+            Checks {
+                from: ChecksFrom::Config,
+                commands: vec!["cargo test".into()]
+            }
+        );
+        let err = h.checks("  ").unwrap_err().to_string();
+        assert!(err.contains("no integration check"), "{err}");
+    }
+
+    /// AC-01/AC-04: the first block of the integration section, line by
+    /// line, comments and blank lines dropped; blocks elsewhere ignored.
+    #[test]
+    fn the_integration_block_is_read_from_its_section_only() {
+        let breakdown = "# K\n\n## Task\n\n```bash\nnot this\n```\n\n\
+            ## Kiểm chứng tích hợp\n\nChạy ở gốc repo:\n\n```bash\n# all of it\ncargo test\n\n  cargo fmt --check  \n```\n\n\
+            ```bash\nnor this\n```\n\n## Câu hỏi còn mở\n\n```\nnor this either\n```\n";
+        assert_eq!(
+            integration_block(breakdown),
+            ["cargo test", "cargo fmt --check"]
+        );
+        assert!(integration_block(
+            "# K\n\n## Kiểm chứng tích hợp\nprose only\n\n## Câu hỏi còn mở\n```\nx\n```\n"
+        )
+        .is_empty());
     }
 
     /// MOC-C TASK-002: a dependent task loads, with its dependencies.

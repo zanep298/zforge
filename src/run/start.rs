@@ -12,7 +12,7 @@
 //! the agent: which outputs to keep is a contract question, not the agent's.
 
 use super::git;
-use super::record::{self, RunMeta, RunState, RunStatus, Source, Start};
+use super::record::{self, RunKind, RunMeta, RunState, RunStatus, Source, Start};
 use anyhow::{bail, Result};
 use std::path::Path;
 
@@ -57,7 +57,10 @@ pub fn output_of(
     handover: &str,
     runs: &[(RunMeta, RunState)],
 ) -> Result<Source, String> {
-    let mine: Vec<&(RunMeta, RunState)> = runs.iter().filter(|(m, _)| m.task == task).collect();
+    let mine: Vec<&(RunMeta, RunState)> = runs
+        .iter()
+        .filter(|(m, _)| m.kind == RunKind::Task && m.task == task)
+        .collect();
     let Some((latest, latest_state)) = mine.last() else {
         return Err(format!("{task}, which has not run in {handover}"));
     };
@@ -173,6 +176,8 @@ mod tests {
             max_iterations: 1,
             retry_of: None,
             start: None,
+            kind: Default::default(),
+            checks: None,
         }
     }
 

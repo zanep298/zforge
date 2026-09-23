@@ -52,8 +52,14 @@ fn branch_exists(root: &Path, branch: &str) -> Result<bool> {
 /// nothing behind; if git itself fails half-way, whatever it created is
 /// removed again.
 pub fn create(project_root: &Path, run: &str, task: &str, commit: &str) -> Result<Worktree> {
-    crate::intake::validate_id(run)?;
     crate::intake::validate_id(task)?;
+    create_on(project_root, run, &branch_name(task, run), commit)
+}
+
+/// [`create`] on a branch of the caller's choosing — an integration run's
+/// is `zforge/<INTAKE>/integration/<RUN>`.
+pub fn create_on(project_root: &Path, run: &str, branch: &str, commit: &str) -> Result<Worktree> {
+    crate::intake::validate_id(run)?;
     let inside = git(project_root, &["rev-parse", "--is-inside-work-tree"])?;
     if !inside.status.success() || String::from_utf8_lossy(&inside.stdout).trim() != "true" {
         bail!(
@@ -71,7 +77,7 @@ pub fn create(project_root: &Path, run: &str, task: &str, commit: &str) -> Resul
         ],
     )
     .with_context(|| format!("start commit {commit} not found"))?;
-    let branch = branch_name(task, run);
+    let branch = branch.to_string();
     if branch_exists(project_root, &branch)? {
         bail!("branch {branch} already exists; a run never reuses a branch");
     }

@@ -160,12 +160,15 @@ pub fn retry(project_root: &Path, run: &Run) -> Result<Run> {
         _ => {}
     }
     let meta = run.meta()?;
-    execute::create(
-        project_root,
-        &format!("{}/{}", meta.intake, meta.handover),
-        &meta.task,
-        Some(&run.id),
-    )
+    let handover = format!("{}/{}", meta.intake, meta.handover);
+    match meta.kind {
+        record::RunKind::Task => {
+            execute::create(project_root, &handover, &meta.task, Some(&run.id))
+        }
+        record::RunKind::Integration => {
+            super::integrate::create(project_root, &handover, Some(&run.id))
+        }
+    }
 }
 
 /// Remove a finished run's worktree, keeping its branch. Uncommitted work
