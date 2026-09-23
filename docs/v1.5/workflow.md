@@ -459,6 +459,26 @@ theo [IMP-006](./improvements.md#imp-006). Các lỗi P1 trên đường chạy 
 phải được đóng; test stub không thay thế kiểm tra native client hoặc LLM thật
 khi kết luận cần bằng chứng ở các mức đó.
 
+**Tiến độ (23/09/2026, `src/run/`, `src/cli/run.rs`; intake MOC-B TASK-001…007):**
+
+| Hạng mục | Đã có |
+|---|---|
+| Ranh giới thực thi | Mỗi lần chạy một git worktree `.zforge/worktrees/<RUN>` trên branch `zforge/<task>/<run>` từ commit baseline của manifest (TASK-002). Agent, lệnh test và fingerprint đều nhận work dir tường minh; code v1 vẫn dùng cwd như cũ |
+| Input đã pin | Hợp đồng chỉ đọc từ snapshot `.records/revisions/` mà manifest pin, có kiểm hash; sửa file đang làm việc không đổi prompt. Task có dependency bị từ chối (Mốc C). `Flow::Contract` = Imported → Coded → Verified (TASK-003) |
+| Vòng thực thi | `zforge run <HANDOVER> --task <T> [--async]` chạy verifier loop v1, mỗi lần gọi agent là Claude headless trong worktree với `--max-budget-usd` bằng phần còn lại (TASK-004) |
+| Evidence và trace | Mỗi lần verify ghi candidate = fingerprint của worktree; mỗi lần gọi agent để lại trace IMP-006 trong `<run>/trace.jsonl` |
+| Budget | Tổng cho mọi lần chạy của một task trong một handover; chạm trần thì `blocked`, không gọi agent nữa. Lần gọi bị kill giữa chừng tính là đã tiêu hết phần được cấp |
+| Interruption và retry | Ctrl-C ghi `cancelled` (exit 130). Worker chết → `failed (interrupted)`, và mọi process group nó đã ghi bị dừng theo. `run retry` tạo run mới, `retry_of`, dùng phần budget còn lại (TASK-005) |
+| Vận hành | `run status/list/cancel/clean`, `progress.md`/`result.md` sinh từ nhật ký sự kiện — nguồn sự thật duy nhất về trạng thái (TASK-001) |
+| Amendment | Agent ghi change request vào `changes/` thì run dừng `blocked: amendment: CHANGE-<RUN>`; request được kiểm theo 5 mục §8; hợp đồng đã pin không đổi (TASK-006) |
+| Knowledge | Requirement thành `verified` kèm run và candidate, chỉ suy từ record của run (TASK-007) |
+
+Chưa làm: **TASK-008 (benchmark với Claude thật)** — người dùng chọn bỏ, sẽ dùng
+thật rồi đánh giá từ log và trace. Vì vậy Mốc B **chưa được nghiệm thu** theo
+tiêu chí ở trên: mọi kiểm chứng hiện tại đều bằng stub phát lại stream thật, chưa
+có lượt chạy nào với model thật. Ngoài ra chưa có MCP cho intake/run (D4: CLI
+trước), và các task của MOC-B được làm theo revision đang review, chưa chốt.
+
 ### Mốc C — Feature nhiều task
 
 - Kiểm tra và điều phối dependency; bind output thực tế của task trước.
