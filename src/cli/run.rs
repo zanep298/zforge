@@ -55,6 +55,26 @@ pub enum RunCmd {
     /// Remove a finished run's worktree; its branch is kept, with any
     /// uncommitted work committed to it first.
     Clean { run: String },
+    /// Print (or follow) a background run's log.
+    Log {
+        run: String,
+        /// Keep printing until the run ends.
+        #[arg(long)]
+        follow: bool,
+        /// Start from the last N lines.
+        #[arg(long)]
+        tail: Option<usize>,
+    },
+    /// Block until the run ends. Exit 0 only when it is verified.
+    Wait {
+        run: String,
+        /// Give up after this many seconds (default 3600).
+        #[arg(long, default_value = "3600")]
+        timeout: u64,
+        /// Poll interval in milliseconds.
+        #[arg(long = "poll-ms", default_value = "500")]
+        poll_ms: u64,
+    },
 }
 
 fn project_root() -> Result<std::path::PathBuf> {
@@ -100,6 +120,12 @@ pub fn run(args: RunArgs) -> Result<()> {
             }
             Ok(())
         }
+        Some(RunCmd::Log { run, follow, tail }) => log(&root, &run, follow, tail),
+        Some(RunCmd::Wait {
+            run,
+            timeout,
+            poll_ms,
+        }) => wait(&root, &run, timeout, poll_ms),
         None => {
             let (Some(handover), Some(task)) = (args.handover, args.task) else {
                 bail!("usage: zforge run <HANDOVER> --task <TASK> [--async], or a subcommand (see --help)");
@@ -251,5 +277,69 @@ pub fn worker(run_id: &str) -> Result<()> {
     match state.status {
         RunStatus::Verified => Ok(()),
         _ => Err(anyhow!("{run_id} ended {}", describe(&state))),
+    }
+}
+
+/// Print a background run's log; `--follow` until the run ends.
+fn log(root: &Path, id: &str, follow: bool, tail: Option<usize>) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    let run = Run::open(root, id)?;
+    let path = run.dir.join(crate::run::ops::LOG);
+    if !path.exists() {
+        bail!("{id} has no log; only a run started with --async writes one");
+    }
+    let mut pos = 0;
+    if let Some(n) = tail {
+        let content = std::fs::read_to_string(&path)?;
+        let lines: Vec<&str> = content.lines().collect();
+        for line in &lines[lines.len().saturating_sub(n)..] {
+            println!("{line}");
+        }
+        pos = content.len() as u64;
+    } else {
+        let content = std::fs::read_to_string(&path)?;
+        print!("{content}");
+        pos = pos.max(content.len() as u64);
+    }
+    if !follow {
+        return Ok(());
+    }
+    let mut file = std::fs::File::open(&path)?;
+    loop {
+        file.seek(SeekFrom::Start(pos))?;
+        let mut buf = Vec::new();
+        let n = file.read_to_end(&mut buf)?;
+        if n > 0 {
+            print!("{}", String::from_utf8_lossy(&buf));
+            pos += n as u64;
+        }
+        if ops::refresh(&run)?.status.is_final() && n == 0 {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// Block until the run ends; exit non-zero unless it was verified.
+fn wait(root: &Path, id: &str, timeout_secs: u64, poll_ms: u64) -> Result<()> {
+    let run = Run::open(root, id)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        let state = ops::refresh(&run)?;
+        if state.status.is_final() {
+            println!("{} {}", run.id, describe(&state));
+            return match state.status {
+                RunStatus::Verified => Ok(()),
+                status => Err(anyhow!("{} ended {}", run.id, status.as_str())),
+            };
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!(
+                "{} is still {} after {timeout_secs}s",
+                run.id,
+                state.status.as_str()
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(poll_ms));
     }
 }

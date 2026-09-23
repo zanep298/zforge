@@ -821,3 +821,65 @@ fn a_superseded_requirement_is_never_verified() {
     assert_eq!(e["implementation"], "not_implemented");
     assert!(e["verified_by"].is_null());
 }
+
+// ─── following a background run (outside the MOC-B contracts) ───────────────
+
+/// `run log --follow` prints the worker's output and returns when the run
+/// ends; `run wait` reports the verdict.
+#[test]
+fn log_and_wait_follow_a_background_run_to_its_end() {
+    let p = Project::new(3.0, 3);
+    p.stub(&fix_and_report());
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--async"])
+        .status
+        .success());
+
+    let out = p.zforge(&["run", "wait", "RUN-001", "--timeout", "60"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("RUN-001 verified"));
+
+    let out = p.zforge(&["run", "log", "RUN-001", "--follow"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let log = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        log.contains("attempt 1") && log.contains("verifying"),
+        "{log}"
+    );
+
+    let out = p.zforge(&["run", "log", "RUN-001", "--tail", "1"]);
+    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 1);
+
+    // A foreground run keeps its output on the terminal, so it has no log.
+    let p2 = Project::new(3.0, 3);
+    p2.stub(&fix_and_report());
+    assert!(p2
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    let out = p2.zforge(&["run", "log", "RUN-001"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains("only a run started with --async"),
+        "{}",
+        err(&out)
+    );
+}
+
+/// A run that fails makes `wait` exit non-zero.
+#[test]
+fn wait_reports_a_failed_run() {
+    let p = Project::new(5.0, 1);
+    p.stub(&format!("cat {FIXTURE}"));
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001", "--async"])
+        .status
+        .success());
+    let out = p.zforge(&["run", "wait", "RUN-001", "--timeout", "60"]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("failed"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
