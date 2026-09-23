@@ -1,13 +1,15 @@
 # Workflow v1.5 — Intake top-down và thực thi theo hợp đồng
 
-**Trạng thái: đề xuất thiết kế của một hướng phát triển riêng so với v2.**
+**Trạng thái: thiết kế của một hướng phát triển riêng so với v2; Mốc A, B, C đã
+implement (xem *Tiến độ* ở từng mốc §12 và [đối chiếu §13](#đối-chiếu-kịch-bản-với-code)),
+chưa nghiệm thu chính thức.**
 
 Tài liệu ghi nhận workflow được thảo luận với người dùng: tập trung trách nhiệm
 làm rõ vào intake; tạo file để review qua từng mức; bàn giao task đủ cơ sở thực
 hiện; tái sử dụng nội dung đã chốt làm product knowledge.
 
-Các tên trạng thái, đường dẫn và record dưới đây là thiết kế đề xuất của v1.5,
-không phải cam kết rằng CLI, schema hay runtime hiện tại đã hỗ trợ chúng.
+Phần thiết kế (§1–§11) giữ nguyên như khi thống nhất; tên lệnh, record và đường
+dẫn thực tế nằm ở mục *Tiến độ* của từng mốc và trong [hướng dẫn dùng](./usage.md).
 
 ## 1. Vấn đề cần giải quyết
 
@@ -441,9 +443,14 @@ Mốc này chứng minh trải nghiệm intake, chưa tuyên bố có execution 
 | Readiness, manifest, knowledge | `zforge readiness` (§6.2, trên bản đã chốt) ghi `readiness.md`; `zforge handover` (TTY) ghi `HANDOVER-nnn.json` với file/revision/hash, thứ tự task, baseline + HEAD + fingerprint, policy, ranh giới bàn giao; `zforge knowledge index` sinh index từ bản đã chốt, tách trạng thái quyết định (active/superseded) và triển khai (not_implemented/handed_over) |
 | Agent intake | Skill native `zforge-intake`: thứ tự stage, nội dung từng file, gửi review và không bao giờ tự chốt |
 
+Sau đó đã có: MCP cho intake (tool chuẩn bị/quan sát, không tool nào chốt được);
+change request do agent ghi trong lúc chạy (Mốc B) hoặc qua MCP `change_new`;
+file bị cũ so với file phía trên giờ **chặn** readiness, và được xác nhận lại
+bằng review + accept dù không sửa (D6).
+
 Chưa làm: **thử trên một feature thật** với người dùng (tiêu chí cuối của mốc);
-MCP cho intake (D4: CLI trước); change request (§8, `changes/`) mới có thư mục,
-chưa có lệnh; ID của quyết định bắt buộc trong knowledge đang theo vị trí
+lệnh CLI để người dùng tự tạo change request (hiện chỉ có qua MCP hoặc agent);
+ID của quyết định bắt buộc trong knowledge đang theo vị trí
 (`03-solution.md#2`), đổi thứ tự sẽ đổi ID.
 
 ### Mốc B — Thực thi một task theo hợp đồng
@@ -532,6 +539,32 @@ ngoài phạm vi.
 | Verify mới fail sau một lần pass | Vô hiệu evidence pass cũ, chặn review/bàn giao |
 | Timeout/cancel khi process con còn giữ pipe | Dừng cây process và trả kết quả trong giới hạn đã định |
 | Refresh agent/profile sau khi đổi model | Giữ config người dùng, áp dụng model mới vào output được sinh |
+
+### Đối chiếu kịch bản với code
+
+Trạng thái ngày 23/09/2026. "Test" là test chạy binary thật với agent stub;
+chưa kịch bản nào được kiểm với model thật.
+
+| Kịch bản | Hiện trạng |
+|---|---|
+| Agent đánh dấu accepted không qua người dùng | Có: trạng thái suy từ nhật ký quyết định, chốt chỉ qua TTY (D1) — `tests/intake_test.rs`, `tests/mcp_v15_test.rs` |
+| File sửa sau khi chốt | Có: run chỉ đọc snapshot đã pin, kiểm hash — `tests/run_test.rs` |
+| Requirement thiếu task | Có: readiness "requirement coverage" |
+| Dependency chưa có output hợp lệ | Có: từ chối tạo run; vòng chạy feature để task ở `waiting`/`blocked` — `tests/feature_run_test.rs` |
+| Bug thông thường | Có: vòng code → verify → phản hồi, không hỏi người dùng |
+| Cần đổi output/quyết định | Có: change request → run `blocked`, chỉ chặn phần phụ thuộc — `tests/feature_run_test.rs` |
+| Agent sửa test để bỏ yêu cầu | **Một phần**: file test có sẵn (theo vị trí quen thuộc, hoặc do `test_command` gọi) bị sửa/xóa thì lần pass không được tính, trừ khi hợp đồng cho phép (`tests_may_change`). Không thấy test nằm chung file với code hay cấu hình test runner đổi ở chỗ khác |
+| Test không chạy được, crash, hết budget | Có: `failed`/`blocked`, không bao giờ `verified` |
+| Task con pass, tích hợp fail | Có: run tích hợp `failed`, feature chưa verified — `tests/feature_run_test.rs` |
+| Task verified ở branch riêng | Có: knowledge `verified` ≠ `integration_verified` ≠ `integrated` |
+| Rule đã chốt chưa implement | Có: knowledge `not_implemented`/`handed_over` |
+| Người dùng chấp nhận amendment | Có: sửa → review → accept → handover mới; file phía dưới phải xác nhận lại; task không đổi được tái dùng |
+| Run tạm dừng rồi tiếp tục | Có: chạy lại `zforge run <HANDOVER>` tiếp từ chỗ dừng. Giới hạn: hủy lúc agent đang làm tiêu hết budget còn lại của task (quy tắc Mốc B) |
+| Init chọn client, task không override | Có (FIX-015); run v1.5 chỉ dùng Claude |
+| Skill/tool bắt buộc thiếu | **Một phần**: readiness kiểm `test_command` và runner `claude` (registry + cài trên máy). Skill/agent/MCP do `zforge doctor` kiểm, chưa gắn vào readiness |
+| Verify mới fail sau một lần pass | Có cho task v1 (FIX-002, IMP-002). Run v1.5 kết thúc ở `verified` là cuối; verify lại là run mới |
+| Timeout/cancel khi con giữ pipe | Có (FIX-006). Giới hạn: worker bị SIGKILL trong vài ms giữa lúc spawn con và lúc ghi process group của nó thì con đó không được dừng |
+| Refresh agent/profile sau khi đổi model | Có (FIX-017) |
 
 Đánh giá trải nghiệm bằng việc người dùng có thể giải thích mục tiêu, luồng chính,
 quyết định quan trọng và liên hệ tới task/code. Theo dõi câu hỏi lặp lại, quyết

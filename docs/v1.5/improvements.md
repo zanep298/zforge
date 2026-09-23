@@ -91,7 +91,9 @@ code đã sửa và evidence của command khác.
 
 Chưa làm: recovery khi nhiều artifact cập nhật dở dang (không có transaction
 nhiều file), fault injection ở mức rename/fsync. `status` chưa hiển thị evidence
-cũ (tính fingerprint mỗi lần status tốn kém với `status --global`).
+cũ (tính fingerprint mỗi lần status tốn kém với `status --global`). Process
+group của tiến trình con được ghi *sau* khi spawn (`process::persist`, có fsync):
+worker bị SIGKILL trong khe vài mili giây đó để lại tiến trình con không ai dừng.
 
 **Nghiệm thu:** fault injection tại các bước ghi/rename/cập nhật artifact không
 để state bị cắt cụt hoặc tạo Verified thiếu evidence. Recovery phân biệt được

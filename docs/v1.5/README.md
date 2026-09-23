@@ -1,6 +1,8 @@
 # zForge v1.5 — Hiểu, chốt và giao việc cho agent
 
-**Trạng thái: đề xuất thiết kế, chưa phải workflow đã được implement.**
+**Trạng thái: Mốc A, B, C đã implement; chưa nghiệm thu chính thức** — chưa thử
+trên feature thật, chưa chạy với model thật, và hợp đồng intake của Mốc B, C
+chưa được chốt. Xem [đối chiếu kịch bản](./workflow.md#đối-chiếu-kịch-bản-với-code).
 
 V1.5 là một hướng phát triển riêng so với [v2](../v2/README.md). Trọng tâm là
 giúp người sở hữu sản phẩm hiểu và kiểm soát công việc qua intake top-down,
@@ -54,7 +56,9 @@ v1.5. Toàn bộ FIX-001 → FIX-026 đã sửa, kèm regression test. Cải ti�
 cho Claude Code (client chính): IMP-002, IMP-004, IMP-005, IMP-006 (trace +
 benchmark một task); IMP-001/IMP-003 đạt phần cần cho các fix. Mốc A (intake) đã có: tạo, review, chốt qua TTY, readiness, handover manifest,
 knowledge index ([tiến độ](./workflow.md#mốc-a--intake-và-knowledge-có-thể-sử-dụng));
-chưa thử trên feature thật. Mốc B, C chưa làm.
+chưa thử trên feature thật. Mốc B (chạy một task trong worktree, budget, trace,
+amendment) và Mốc C (feature nhiều task, kiểm chứng tích hợp, tái dùng qua
+handover, knowledge ba mức) đã có; mọi kiểm chứng đều bằng agent stub.
 
 | Tài liệu | Nội dung |
 |---|---|
