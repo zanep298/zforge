@@ -41,6 +41,7 @@ pub fn run(json: bool) -> Result<OperationOutcome> {
             checks::caveman_hook(&ctx),
             checks::workspace_trust(&ctx),
             checks::evidence(&ctx),
+            checks::runs(&ctx),
         ],
     };
 

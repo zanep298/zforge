@@ -473,6 +473,9 @@ khi kết luận cần bằng chứng ở các mức đó.
 | Amendment | Agent ghi change request vào `changes/` thì run dừng `blocked: amendment: CHANGE-<RUN>`; request được kiểm theo 5 mục §8; hợp đồng đã pin không đổi (TASK-006) |
 | Knowledge | Requirement thành `verified` kèm run và candidate, chỉ suy từ record của run (TASK-007) |
 
+`zforge doctor` có thêm check `runs`: run mà worker đã chết nhưng chưa được ghi
+nhận, và run đã kết thúc còn giữ worktree.
+
 Chưa làm: **TASK-008 (benchmark với Claude thật)** — người dùng chọn bỏ, sẽ dùng
 thật rồi đánh giá từ log và trace. Vì vậy Mốc B **chưa được nghiệm thu** theo
 tiêu chí ở trên: mọi kiểm chứng hiện tại đều bằng stub phát lại stream thật, chưa

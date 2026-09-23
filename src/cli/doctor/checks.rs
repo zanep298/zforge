@@ -520,6 +520,77 @@ pub fn workspace_trust(ctx: &Ctx<'_>) -> Check {
     .not_checked("that a run honours the allowlist (needs a model call)")
 }
 
+/// v1.5 Mốc B: runs that look alive but are not, and worktrees left behind.
+/// Read-only — recording an interruption is `zforge run status`'s job, not a
+/// diagnostic's.
+pub fn runs(ctx: &Ctx<'_>) -> Check {
+    const NAME: &str = "runs";
+    let runs = match crate::run::record::list(&ctx.root) {
+        Ok(r) => r,
+        Err(e) => {
+            return Check::new(
+                NAME,
+                false,
+                Level::Broken,
+                format!("cannot read the runs: {e:#}"),
+            )
+        }
+    };
+    if runs.is_empty() {
+        return Check::new(NAME, false, Level::Configured, "no runs yet");
+    }
+    let mut dead = Vec::new();
+    let mut live = 0;
+    let mut worktrees = Vec::new();
+    for run in &runs {
+        let (Ok(meta), Ok(state)) = (run.meta(), run.state()) else {
+            continue;
+        };
+        let active = matches!(
+            state.status,
+            crate::run::record::RunStatus::Running | crate::run::record::RunStatus::Verifying
+        );
+        match (active, state.pid) {
+            (true, Some(pid)) if !crate::job::lifecycle::pid_alive(pid) => {
+                dead.push(format!("{} (worker {pid} is gone)", run.id))
+            }
+            (true, _) => live += 1,
+            _ => {}
+        }
+        if state.status.is_final() && meta.worktree.is_dir() {
+            worktrees.push(run.id.clone());
+        }
+    }
+    let mut detail = format!("{} run(s); {live} still running", runs.len());
+    if !worktrees.is_empty() {
+        detail.push_str(&format!(
+            "; {} finished run(s) still hold a worktree: {}",
+            worktrees.len(),
+            worktrees.join(", ")
+        ));
+    }
+    if dead.is_empty() {
+        let check = Check::new(NAME, false, Level::Working, detail);
+        return match worktrees.first() {
+            None => check,
+            Some(id) => check.fix(format!("free the disk with `zforge run clean {id}`")),
+        };
+    }
+    Check::new(
+        NAME,
+        false,
+        Level::Broken,
+        format!(
+            "{detail}; worker gone but not recorded: {}",
+            dead.join(", ")
+        ),
+    )
+    .fix(format!(
+        "record it with `zforge run status {}`",
+        dead[0].split_whitespace().next().unwrap_or("<RUN>")
+    ))
+}
+
 pub fn evidence(ctx: &Ctx<'_>) -> Check {
     let tasks_dir = ctx.config.tasks_dir();
     let Ok(entries) = std::fs::read_dir(&tasks_dir) else {

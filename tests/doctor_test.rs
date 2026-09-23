@@ -464,3 +464,64 @@ fn workspace_trust_levels() {
         .unwrap()
         .contains("permissions.allow"));
 }
+
+/// v1.5 Mốc B: runs whose worker is gone, and worktrees left behind.
+#[test]
+fn run_health_is_reported() {
+    let env = Env::new();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "runs"), "configured");
+    assert_eq!(c["runs"]["detail"], "no runs yet");
+
+    let meta = |id: &str| zforge::run::record::RunMeta {
+        id: id.to_string(),
+        created_at: chrono::Utc::now(),
+        intake: "F".into(),
+        handover: "HANDOVER-001".into(),
+        task: "TASK-001".into(),
+        manifest_sha256: "m".into(),
+        worktree: env.project.join(".zforge/worktrees").join(id),
+        branch: format!("zforge/TASK-001/{id}"),
+        baseline_commit: "c".into(),
+        budget_usd: 1.0,
+        max_iterations: 2,
+        retry_of: None,
+    };
+    let run = zforge::run::record::create(&env.project, meta).unwrap();
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    let dead_pid = gone.id();
+    gone.wait().unwrap();
+    run.append(&zforge::run::record::RunEvent::Started {
+        at: chrono::Utc::now(),
+        pid: dead_pid,
+    })
+    .unwrap();
+
+    let (code, c) = env.doctor();
+    assert_eq!(level(&c, "runs"), "broken");
+    let detail = c["runs"]["detail"].as_str().unwrap();
+    assert!(detail.contains("worker gone but not recorded"), "{detail}");
+    assert!(c["runs"]["fix"]
+        .as_str()
+        .unwrap()
+        .contains("zforge run status RUN-001"));
+    assert_eq!(code, 0, "an optional check does not fail the run");
+
+    // Finished run holding a worktree: worth cleaning, not broken.
+    run.append(&zforge::run::record::RunEvent::Cancelled {
+        at: chrono::Utc::now(),
+        reason: "user".into(),
+    })
+    .unwrap();
+    std::fs::create_dir_all(env.project.join(".zforge/worktrees/RUN-001")).unwrap();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "runs"), "working");
+    assert!(c["runs"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("still hold a worktree"));
+    assert!(c["runs"]["fix"]
+        .as_str()
+        .unwrap()
+        .contains("run clean RUN-001"));
+}

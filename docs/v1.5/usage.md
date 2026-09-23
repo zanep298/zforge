@@ -187,7 +187,6 @@ Không có lệnh "accept change request". Sửa hợp đồng luôn đi qua rev
 - Run chạy với `--dangerously-skip-permissions` để không cần người trả lời quyền.
   Agent bị giữ trong worktree bằng cwd, nhưng quyền trên máy vẫn là quyền của bạn.
 - Chưa có MCP cho intake/run; agent dùng qua Bash.
-- `zforge doctor` chưa kiểm phần Mốc B (worktree, run còn treo).
 
 ## Ghi lại để đánh giá sau
 
