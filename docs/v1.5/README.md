@@ -59,6 +59,7 @@ chưa thử trên feature thật. Mốc B, C chưa làm.
 | Tài liệu | Nội dung |
 |---|---|
 | [Backlog sửa lỗi](./bug-fixes.md) | 17 nhóm lỗi runtime và init/dispatch, cộng 9 lỗi từ review nhánh sửa lỗi; mức ưu tiên, bằng chứng, vị trí code, hướng sửa và tiêu chí nghiệm thu — tất cả đã sửa |
+| [Hướng dẫn dùng](./usage.md) | Đi hết một vòng: intake → chốt → readiness → handover → run → kết quả và knowledge; giới hạn hiện tại; dữ liệu để đánh giá sau |
 | [Quyết định §14](./decisions.md) | 6 quyết định triển khai: phương án, lựa chọn đã chốt và hệ quả |
 | [Kế hoạch cải tiến](./improvements.md) | 6 nhóm cải tiến về operation, persistence, CI, native skills/agents/MCP, readiness tool và trace/benchmark; mỗi mục ghi tiến độ và phần chưa làm |
 
