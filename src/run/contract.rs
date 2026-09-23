@@ -383,7 +383,7 @@ pub(crate) mod tests {
             review::accept(&intake, &f, None).unwrap();
         }
         let config = crate::config::load_from(&root.join(".zforge/config.yaml")).unwrap();
-        let r = readiness::check(&intake, &root, &[], &config.execution).unwrap();
+        let r = readiness::check(&intake, &root, &[], &config).unwrap();
         assert!(r.ready, "{:?}", r.checks);
         handover::create(&intake, &root, &[], &config, &r.files, None).unwrap();
         Fixture {

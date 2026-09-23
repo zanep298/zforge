@@ -89,7 +89,7 @@ pub fn create(
     by: Option<String>,
 ) -> Result<Manifest> {
     let _lock = super::review::lock(intake)?;
-    let r = readiness::check(intake, project_root, requested, &config.execution)?;
+    let r = readiness::check(intake, project_root, requested, config)?;
     if !r.ready {
         bail!(
             "{} is not ready to hand over; run `zforge readiness {}`",

@@ -144,7 +144,7 @@ impl Project {
             review::accept(&i, &f, None).unwrap();
         }
         let config = zforge::config::load_from(&self.root.join(".zforge/config.yaml")).unwrap();
-        let r = readiness::check(&i, &self.root, &[], &config.execution).unwrap();
+        let r = readiness::check(&i, &self.root, &[], &config).unwrap();
         assert!(r.ready, "{:?}", r.checks);
         handover::create(&i, &self.root, &[], &config, &r.files, None).unwrap();
     }
@@ -162,12 +162,25 @@ impl Project {
         review::accept(&i, file, None).unwrap();
     }
 
-    /// Hand every task over again: the next `HANDOVER-nnn`.
+    /// Hand every task over again: the next `HANDOVER-nnn`. Files that
+    /// rest on something amended since they were accepted are confirmed
+    /// again first, as the user would (readiness refuses otherwise).
     pub fn hand_over_again(&self) {
-        use zforge::intake::{handover, readiness};
+        use zforge::intake::{handover, readiness, review};
         let i = zforge::intake::Intake::open(&self.root, "F").unwrap();
+        // Confirming one file can make those below it stale in turn.
+        loop {
+            let stale = readiness::stale(&i).unwrap();
+            if stale.is_empty() {
+                break;
+            }
+            for f in stale {
+                review::review(&i, &f).unwrap();
+                review::accept(&i, &f, None).unwrap();
+            }
+        }
         let config = zforge::config::load_from(&self.root.join(".zforge/config.yaml")).unwrap();
-        let r = readiness::check(&i, &self.root, &[], &config.execution).unwrap();
+        let r = readiness::check(&i, &self.root, &[], &config).unwrap();
         assert!(r.ready, "{:?}", r.checks);
         handover::create(&i, &self.root, &[], &config, &r.files, None).unwrap();
     }
@@ -268,6 +281,22 @@ impl Project {
                 self.events(id)
             );
             std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Wait until `run` has recorded the process group of the child it is
+    /// running. A worker killed before it records one leaves that child
+    /// behind — a window of a few milliseconds that a test must not hit by
+    /// chance.
+    pub fn wait_for_recorded_child(&self, run: &str) {
+        let path = self.run_dir(run).join("child-pgids");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while std::fs::read_to_string(&path)
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            assert!(Instant::now() < deadline, "{run} never recorded a child");
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 

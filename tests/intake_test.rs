@@ -26,7 +26,19 @@ impl Project {
             "project:\n  name: t\n  language: rust\n  test_command: \"true\"\n",
         )
         .unwrap();
-        Self { _dir: dir, root }
+        let p = Self { _dir: dir, root };
+        p.register_runner("sh");
+        p
+    }
+
+    /// Register `claude` as `command` in this project's agent registry.
+    fn register_runner(&self, command: &str) {
+        std::fs::create_dir_all(self.root.join(".home")).unwrap();
+        std::fs::write(
+            self.root.join(".home/registry.yaml"),
+            format!("agents:\n  claude:\n    command: {command}\n"),
+        )
+        .unwrap();
     }
 
     fn zforge(&self, args: &[&str]) -> Output {
@@ -318,29 +330,22 @@ fn a_fully_accepted_intake_is_ready_and_hands_over_what_was_accepted() {
     assert_eq!(m.policy.budget_usd, 2.5);
     assert_eq!(m.files, pinned);
 
-    // Accepting a new revision after readiness was shown: refused.
+    // Accepting a new revision after readiness was shown: refused. (A leaf
+    // task, so nothing below it goes stale and readiness itself still passes.)
+    let leaf = p.intake_dir().join("tasks/TASK-002.md");
+    let text = std::fs::read_to_string(&leaf).unwrap();
     std::fs::write(
-        p.intake_dir().join("03-solution.md"),
-        SOLUTION.replace("listing", "listing module"),
+        &leaf,
+        text.replacen("## Mục tiêu\n", "## Mục tiêu\nRõ hơn.\n", 1),
     )
     .unwrap();
-    p.accept("03-solution.md");
+    p.accept("tasks/TASK-002.md");
     let err = zforge::intake::handover::create(&intake, &p.root, &[], &config, &pinned, None)
         .unwrap_err();
     assert!(
         err.to_string().contains("changed after they were shown"),
         "{err}"
     );
-
-    // Tasks and later stages accepted before that revision may rest on the
-    // old solution.
-    let (_, r) = p.readiness(&[]);
-    let warnings = r["warnings"].to_string();
-    assert!(
-        warnings.contains("tasks/TASK-001.md was accepted before 03-solution.md revision 2"),
-        "{warnings}"
-    );
-    assert!(warnings.contains("04-breakdown.md was accepted before 03-solution.md revision 2"));
 }
 
 #[test]
@@ -451,5 +456,81 @@ fn knowledge_index_follows_accepted_revisions_and_handovers() {
         entry(&v, "REQ-001")["text"],
         "REQ-001: lọc theo trạng thái",
         "not the draft"
+    );
+}
+
+/// Workflow §13: what a run needs on this machine is checked before the
+/// handover, naming what is missing.
+#[test]
+fn readiness_names_a_missing_runner() {
+    let p = Project::new();
+    p.ready_intake();
+    p.register_runner("no-such-claude-binary");
+    let (ok, r) = p.readiness(&[]);
+    assert!(!ok);
+    assert_eq!(
+        failing(&r),
+        ["runner `claude` runs `no-such-claude-binary`, which is not installed or not on PATH"]
+    );
+
+    std::fs::write(p.root.join(".home/registry.yaml"), "agents: {}\n").unwrap();
+    let (ok, r) = p.readiness(&[]);
+    assert!(!ok);
+    assert_eq!(
+        failing(&r),
+        ["runner `claude` is not in the agent registry; run `zforge init --agent claude`"]
+    );
+}
+
+/// D6: a file accepted before something it builds on changed is not handed
+/// over until the user confirms it again — which they can, unchanged.
+#[test]
+fn a_file_resting_on_a_changed_upstream_is_confirmed_again() {
+    let p = Project::new();
+    p.ready_intake();
+    std::fs::write(
+        p.intake_dir().join("03-solution.md"),
+        SOLUTION.replace("listing", "listing module"),
+    )
+    .unwrap();
+    p.accept("03-solution.md");
+
+    let (ok, r) = p.readiness(&[]);
+    assert!(!ok);
+    let problems = failing(&r);
+    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert!(problems[0].starts_with(
+        "04-breakdown.md was accepted before 03-solution.md revision 2; review it again"
+    ));
+
+    // Unchanged, but stale: it may be reviewed and accepted again. Its
+    // hash does not change; its revision does.
+    let before = p.status();
+    p.accept("04-breakdown.md");
+    let breakdown = |v: &serde_json::Value| {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["file"] == "04-breakdown.md")
+            .unwrap()["accepted"]
+            .clone()
+    };
+    let (old, new) = (breakdown(&before), breakdown(&p.status()));
+    assert_eq!(old["sha256"], new["sha256"]);
+    assert_eq!(new["revision"], old["revision"].as_u64().unwrap() + 1);
+    // The tasks rest on the breakdown too, so they follow.
+    for t in ["tasks/TASK-001.md", "tasks/TASK-002.md"] {
+        p.accept(t);
+    }
+    let (ok, r) = p.readiness(&[]);
+    assert!(ok, "{:?}", failing(&r));
+
+    // A file that is not stale still cannot be "reviewed" unchanged.
+    let out = p.zforge(&["intake", "review", "F-1", "tasks/TASK-001.md"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("already accepted"),
+        "{}",
+        stderr(&out)
     );
 }

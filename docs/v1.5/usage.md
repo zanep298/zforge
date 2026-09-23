@@ -90,7 +90,15 @@ zforge readiness FEATURE-001
 
 Kiểm trên **bản đã chốt**: mọi file đã accept và không còn bản nháp, cấu trúc và
 ID hợp lệ, không còn câu hỏi mở, mọi REQ có task, dependency không vòng, có mục
-kiểm chứng tích hợp, có git và có budget. Ghi `readiness.md` để đọc.
+kiểm chứng tích hợp, có git, có budget, có `test_command`, runner `claude` có
+trong registry và cài trên máy, và **không file nào cũ so với file nó dựa vào**.
+Ghi `readiness.md` để đọc.
+
+File cũ: một file được chốt trước khi file phía trên nó (stage trước, hoặc task
+mà nó phụ thuộc) có revision chốt mới hơn. Có thể nó vẫn đúng, nhưng bạn phải
+xác nhận: `zforge intake review` rồi `zforge intake accept` lại file đó, kể cả
+khi không sửa gì (revision tăng, hash giữ nguyên). Xác nhận lại `04-breakdown.md`
+làm các task thành cũ theo, nên đi từ trên xuống.
 
 ```bash
 zforge handover FEATURE-001

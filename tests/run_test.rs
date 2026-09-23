@@ -1097,6 +1097,7 @@ fn an_interrupted_handover_resumes_and_runs_one_at_a_time() {
     assert!(out.status.success(), "{}", err(&out));
     p.wait_for("RUN-002", "verify_started");
     let suite = p.pid_file("test.pid");
+    p.wait_for_recorded_child("RUN-002");
 
     // AC-04: one loop, one run of a task at a time.
     let out = p.zforge(&["run", "HANDOVER-001"]);

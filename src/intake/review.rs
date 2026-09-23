@@ -125,11 +125,16 @@ pub fn review(intake: &Intake, rel: &str) -> Result<Reviewed> {
     let log = record::read(intake)?;
     let st = status::derive(rel, &log, Some(&text));
     let current = hash::sha256(&text);
+    // Unchanged since it was accepted: nothing to review — unless something
+    // it builds on was accepted since (D6), when the user confirms it again
+    // as a new revision with the same text.
     if let Some(a) = st.accepted.as_ref().filter(|a| a.sha256 == current) {
-        bail!(
-            "{rel} is already accepted as revision {}; edit it first",
-            a.revision
-        );
+        if !super::readiness::stale(intake)?.contains(rel) {
+            bail!(
+                "{rel} is already accepted as revision {}; edit it first",
+                a.revision
+            );
+        }
     }
     if let Some(r) = st.in_review.as_ref().filter(|r| r.sha256 == current) {
         return Ok(Reviewed {

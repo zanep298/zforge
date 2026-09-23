@@ -11,7 +11,7 @@ use super::record;
 use super::review;
 use super::status::DocState;
 use super::{Intake, STAGES};
-use crate::config::ExecutionConfig;
+use crate::config::Config;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -67,8 +67,9 @@ pub fn check(
     intake: &Intake,
     project_root: &Path,
     requested: &[String],
-    execution: &ExecutionConfig,
+    config: &Config,
 ) -> Result<Readiness> {
+    let execution = &config.execution;
     let statuses = review::statuses(intake)?;
     let all_tasks: Vec<String> = statuses.iter().filter_map(|s| task_id(&s.file)).collect();
     for t in requested {
@@ -217,8 +218,32 @@ pub fn check(
         },
     );
 
-    b.warnings
-        .extend(accepted_before_upstream(intake, &pinned, &metas)?);
+    b.check(
+        "test command",
+        match config.project.test_command.trim().is_empty() {
+            false => Vec::new(),
+            true => vec![
+                "no test command: set `project.test_command`; a run cannot verify without one"
+                    .into(),
+            ],
+        },
+    );
+
+    // D6: a file accepted before something it builds on changed may rest
+    // on the old version; the user confirms it again before it is handed
+    // over.
+    b.check(
+        "up to date with upstream",
+        accepted_before_upstream(intake, &pinned, &metas)?
+            .into_iter()
+            .map(|(file, why)| {
+                format!(
+                    "{why}; review it again (`zforge intake review {} {file}`) and accept it if it still holds",
+                    intake.id
+                )
+            })
+            .collect(),
+    );
 
     let ready = b.checks.iter().all(|c| c.ok);
     Ok(Readiness {
@@ -240,7 +265,7 @@ fn accepted_before_upstream(
     intake: &Intake,
     pinned: &[Pinned],
     metas: &BTreeMap<String, TaskMeta>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, String)>> {
     let log = record::read(intake)?;
     let accepted_at = |p: &Pinned| {
         log.iter()
@@ -280,14 +305,77 @@ fn accepted_before_upstream(
                 continue;
             };
             if accepted_at(u).is_some_and(|t| t > mine) {
-                warnings.push(format!(
-                    "{} was accepted before {} revision {}; check it still holds",
-                    p.file, u.file, u.revision
+                warnings.push((
+                    p.file.clone(),
+                    format!(
+                        "{} was accepted before {} revision {}",
+                        p.file, u.file, u.revision
+                    ),
                 ));
             }
         }
     }
     Ok(warnings)
+}
+
+/// Accepted files of the intake accepted before something they build on
+/// got a newer accepted revision. A file here may be reviewed again even
+/// though it did not change (`review::review`).
+pub fn stale(intake: &Intake) -> Result<BTreeSet<String>> {
+    let mut pinned = Vec::new();
+    let mut metas = BTreeMap::new();
+    for s in review::statuses(intake)? {
+        let Some(a) = &s.accepted else { continue };
+        if let Some(t) = task_id(&s.file) {
+            let text = record::read_snapshot(intake, &s.file, a.revision)?;
+            if let Ok(m) = lint::parse_task_meta(&text) {
+                metas.insert(t, m);
+            }
+        }
+        pinned.push(Pinned {
+            file: s.file.clone(),
+            revision: a.revision,
+            sha256: a.sha256.clone(),
+        });
+    }
+    Ok(accepted_before_upstream(intake, &pinned, &metas)?
+        .into_iter()
+        .map(|(file, _)| file)
+        .collect())
+}
+
+impl Readiness {
+    /// Add a check made outside [`check`] — [`runtime`] — to the report.
+    pub fn with(mut self, c: Check) -> Self {
+        self.ready &= c.ok;
+        self.checks.push(c);
+        self
+    }
+}
+
+/// The runner a run needs, as this machine has it: registered for the
+/// project, and its command found. Kept apart from [`check`], which reads
+/// only the intake and the config, because it depends on the machine.
+pub fn runtime(project_root: &Path) -> Check {
+    let runner = crate::run::execute::RUNNER;
+    let problems = match crate::registry::io::load() {
+        Err(e) => vec![format!("cannot read the agent registry: {e:#}")],
+        Ok(reg) => match reg.resolved_agent(runner, project_root) {
+            None => vec![format!(
+                "runner `{runner}` is not in the agent registry; run `zforge init --agent {runner}`"
+            )],
+            Some(spec) if which::which(&spec.command).is_err() => vec![format!(
+                "runner `{runner}` runs `{}`, which is not installed or not on PATH",
+                spec.command
+            )],
+            Some(_) => Vec::new(),
+        },
+    };
+    Check {
+        name: "runner",
+        ok: problems.is_empty(),
+        problems,
+    }
 }
 
 fn task_id(file: &str) -> Option<String> {

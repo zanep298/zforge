@@ -319,7 +319,7 @@ fn hand_over(root: &Path) {
         review::accept(&i, &f, None).unwrap();
     }
     let config = zforge::config::load_from(&root.join(".zforge/config.yaml")).unwrap();
-    let r = readiness::check(&i, root, &[], &config.execution).unwrap();
+    let r = readiness::check(&i, root, &[], &config).unwrap();
     assert!(r.ready, "{:?}", r.checks);
     handover::create(&i, root, &[], &config, &r.files, None).unwrap();
 }

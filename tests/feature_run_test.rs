@@ -193,6 +193,7 @@ fn a_killed_handover_resumes_without_redoing_work() {
         .success());
     p.wait_for("RUN-002", "verify_started");
     let suite = p.pid_file("test.pid");
+    p.wait_for_recorded_child("RUN-002");
     let loop_pid: i32 = std::fs::read_to_string(feature_dir(&p).join("pid"))
         .unwrap()
         .trim()
