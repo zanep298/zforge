@@ -44,6 +44,13 @@ pub fn create(project_root: &Path, handover_id: &str, retry_of: Option<&str>) ->
     let from = leaf_outputs(project_root, &h)?;
     let config = crate::config::load_from(&project_root.join(".zforge").join("config.yaml"))?;
     let checks = h.checks(&config.project.test_command)?;
+    let _claim = super::feature_ops::claim(
+        project_root,
+        &h.intake,
+        &h.manifest.id,
+        TASK,
+        RunKind::Integration,
+    )?;
     record::create(project_root, |id| RunMeta {
         id: id.to_string(),
         created_at: Utc::now(),

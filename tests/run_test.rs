@@ -1291,3 +1291,284 @@ fn status_of_a_handover_is_derived_from_its_runs() {
     // Nothing was written for the handover: its state is only derived.
     assert!(!p.root.join(".zforge/runs/features").exists());
 }
+
+// ─── MOC-C TASK-005: running a whole handover ───────────────────────────────
+
+/// TASK-001 ← TASK-002 ← TASK-003, and TASK-004 on its own. The integration
+/// check wants both chains' marks in one tree.
+fn feature_project(iterations: u32) -> Project {
+    Project::with(
+        3.0,
+        iterations,
+        &[
+            ("TASK-001", ""),
+            ("TASK-002", "TASK-001"),
+            ("TASK-003", "TASK-002"),
+            ("TASK-004", ""),
+        ],
+        "```bash\nsh test.sh\ntest -f TASK-001.done\ntest -f TASK-003.done\ntest -f TASK-004.done\n```",
+    )
+}
+
+/// Every task fixes `lib.sh` (the same way) and leaves `<task>.done`;
+/// `before` runs first with `$task` set.
+fn per_task(p: &Project, before: &str) -> String {
+    format!(
+        "task=$(sed -n '1s/^# Leaf task \\([^ ]*\\).*/\\1/p' {marks}/prompt)\n{before}\n{}\ntouch \"$task.done\"",
+        fix_and_report(),
+        marks = p.marks.display()
+    )
+}
+
+fn feature_dir(p: &Project) -> PathBuf {
+    p.root.join(".zforge/runs/features/F/HANDOVER-001")
+}
+
+/// AC-01: one command, four task runs in order — each dependent one from
+/// its dependency's output — then the integration.
+#[test]
+fn a_handover_runs_end_to_end() {
+    let p = feature_project(3);
+    p.stub(&per_task(&p, ""));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("feature: verified (RUN-005)"), "{text}");
+
+    let meta = |id: &str| status_json(&p, id)["meta"].clone();
+    let output = |id: &str| status_json(&p, id)["state"]["output"].clone();
+    for (run, task) in [
+        ("RUN-001", "TASK-001"),
+        ("RUN-002", "TASK-002"),
+        ("RUN-003", "TASK-003"),
+        ("RUN-004", "TASK-004"),
+    ] {
+        assert_eq!(meta(run)["task"], task);
+        assert_eq!(p.last(run)["event"], "verified", "{run}");
+    }
+    assert_eq!(meta("RUN-002")["start"]["commit"], output("RUN-001"));
+    assert_eq!(meta("RUN-003")["start"]["commit"], output("RUN-002"));
+    assert!(meta("RUN-004").get("start").is_none());
+    let integration = meta("RUN-005");
+    assert_eq!(integration["kind"], "integration");
+    let from: Vec<&str> = integration["start"]["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["task"].as_str().unwrap())
+        .collect();
+    assert_eq!(from, ["TASK-003", "TASK-004"]);
+    assert_eq!(p.last("RUN-005")["event"], "verified");
+
+    // Nothing left to do: running it again changes nothing.
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(!p.run_dir("RUN-006").exists());
+    // The loop is gone and says so.
+    assert!(!feature_dir(&p).join("pid").exists());
+}
+
+/// AC-02: a task that fails stops its chain; the independent task still
+/// runs; no integration; exit 1 with the picture.
+#[test]
+fn a_stopped_task_stops_only_its_chain() {
+    let p = feature_project(1);
+    // TASK-001 changes nothing, so its only verification fails.
+    p.stub(&per_task(
+        &p,
+        &format!("[ \"$task\" = TASK-001 ] && {{ cat {FIXTURE}; exit 0; }}"),
+    ));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("TASK-001     failed"), "{text}");
+    assert!(
+        text.contains("TASK-002     blocked   by TASK-001"),
+        "{text}"
+    );
+    assert!(
+        text.contains("TASK-003     blocked   by TASK-001"),
+        "{text}"
+    );
+    assert!(text.contains("TASK-004     verified  RUN-002"), "{text}");
+    assert!(
+        text.contains("integration  blocked   by TASK-001"),
+        "{text}"
+    );
+    assert!(
+        err(&out).contains("HANDOVER-001 is not verified"),
+        "{}",
+        err(&out)
+    );
+    assert!(!p.run_dir("RUN-003").exists(), "nothing else ran");
+
+    // A failure is a verdict: running again does not retry it.
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(!out.status.success());
+    assert!(!p.run_dir("RUN-003").exists());
+}
+
+/// AC-03 and AC-04: a killed loop is resumed where it stopped; while a loop
+/// runs, a second loop or a run of the same task is refused. The kill lands
+/// while TASK-002 verifies, after its agent call was paid for, so its
+/// budget allows a new run.
+#[test]
+fn an_interrupted_handover_resumes_and_runs_one_at_a_time() {
+    let p = feature_project(3);
+    let wake = p.marks.join("wake");
+    // Until woken, TASK-002's agent swaps in a suite that hangs.
+    p.stub(&per_task(
+        &p,
+        &format!(
+            "[ \"$task\" = TASK-002 ] && [ ! -e {} ] && {{ printf '#!/bin/sh\\necho $$ > {m}/test.pid\\nsleep 30\\n' > test.sh; cat {FIXTURE}; exit 0; }}",
+            wake.display(),
+            m = p.marks.display()
+        ),
+    ));
+    let out = p.zforge(&["run", "HANDOVER-001", "--async"]);
+    assert!(out.status.success(), "{}", err(&out));
+    p.wait_for("RUN-002", "verify_started");
+    let suite = p.pid_file("test.pid");
+
+    // AC-04: one loop, one run of a task at a time.
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains("HANDOVER-001 is already being run by pid"),
+        "{}",
+        err(&out)
+    );
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains("TASK-002 already has RUN-002 verifying in HANDOVER-001"),
+        "{}",
+        err(&out)
+    );
+    let status = p.zforge(&["run", "status", "HANDOVER-001", "--json"]);
+    let f: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(f["tasks"][1]["state"], "running");
+
+    // Kill the loop outright: nothing gets to record anything.
+    let loop_pid: i32 = std::fs::read_to_string(feature_dir(&p).join("pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: the test's own background worker.
+    unsafe { libc::kill(loop_pid, libc::SIGKILL) };
+    assert!(dies_within(loop_pid, Duration::from_secs(5)));
+    std::fs::write(&wake, "").unwrap();
+
+    // AC-03: run it again; the dead run is found interrupted (and its suite
+    // stopped), TASK-001 is not run again, TASK-002 gets a new run.
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        dies_within(suite, Duration::from_secs(5)),
+        "the orphaned suite was stopped"
+    );
+    let failed = p.last("RUN-002");
+    assert_eq!(failed["event"], "failed");
+    assert!(
+        failed["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("interrupted"),
+        "{failed}"
+    );
+    assert_eq!(status_json(&p, "RUN-003")["meta"]["task"], "TASK-002");
+    assert_eq!(status_json(&p, "RUN-003")["meta"]["retry_of"], "RUN-002");
+    let task_001_runs = (1..=6)
+        .filter(|n| {
+            p.run_dir(&format!("RUN-{n:03}")).exists()
+                && status_json(&p, &format!("RUN-{n:03}"))["meta"]["task"] == "TASK-001"
+        })
+        .count();
+    assert_eq!(task_001_runs, 1);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("feature: verified"));
+}
+
+/// AC-04: cancelling a handover stops its loop and the agent at work. That
+/// agent call's allotment — all TASK-001 had — counts as spent (Mốc B), so
+/// running again refuses TASK-001 for its budget, says so, and still runs
+/// the task that does not depend on it.
+#[test]
+fn cancel_stops_a_background_handover() {
+    let p = feature_project(3);
+    let wake = p.marks.join("wake");
+    p.stub(&per_task(
+        &p,
+        &format!(
+            "[ \"$task\" = TASK-001 ] && [ ! -e {} ] && {{ echo $$ > {}/agent.pid; sleep 30; }}",
+            wake.display(),
+            p.marks.display()
+        ),
+    ));
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--async"])
+        .status
+        .success());
+    p.wait_for("RUN-001", "attempt_started");
+    let agent = p.pid_file("agent.pid");
+    let loop_pid: i32 = std::fs::read_to_string(feature_dir(&p).join("pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    let out = p.zforge(&["run", "cancel", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        dies_within(loop_pid, Duration::from_secs(10)),
+        "the loop stopped"
+    );
+    assert!(
+        dies_within(agent, Duration::from_secs(10)),
+        "its agent stopped"
+    );
+    assert_eq!(p.last("RUN-001")["event"], "cancelled");
+    assert!(
+        !p.run_dir("RUN-002").exists(),
+        "nothing started after the cancel"
+    );
+    let out = p.zforge(&["run", "cancel", "HANDOVER-001"]);
+    assert!(
+        err(&out).contains("nothing of HANDOVER-001 is running"),
+        "{}",
+        err(&out)
+    );
+
+    // The log of the background loop is kept.
+    let out = p.zforge(&["run", "log", "HANDOVER-001"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("RUN-001 — TASK-001"));
+
+    std::fs::write(&wake, "").unwrap();
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(!out.status.success());
+    assert!(
+        err(&out).contains("✗ TASK-001: budget of TASK-001 in HANDOVER-001 is used up"),
+        "{}",
+        err(&out)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("TASK-001     cancelled"), "{text}");
+    assert!(text.contains("TASK-004     verified  RUN-002"), "{text}");
+    assert!(!p.run_dir("RUN-003").exists());
+}
+
+/// `run wait <HANDOVER>` follows a background handover to its end.
+#[test]
+fn wait_follows_a_background_handover() {
+    let p = feature_project(3);
+    p.stub(&per_task(&p, ""));
+    assert!(p
+        .zforge(&["run", "HANDOVER-001", "--async"])
+        .status
+        .success());
+    let out = p.zforge(&["run", "wait", "HANDOVER-001", "--timeout", "120"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("feature: verified (RUN-005)"));
+}

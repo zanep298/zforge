@@ -500,8 +500,9 @@ thích nghi và UI chuyên dụng chỉ bổ sung khi có nhu cầu và bằng c
 | Điểm xuất phát | Task có dependency chạy được bằng `--task`: worktree tạo tại output của dependency, nhiều dependency thì merge theo thứ tự task liệt kê; `run.yaml` ghi `start` (commit + nguồn). Dependency chưa có output thì từ chối, không tạo gì; merge xung đột thì run `failed` nêu task và file, không gọi agent (TASK-002) |
 | Kiểm chứng tích hợp | `zforge run <HANDOVER> --integration`: run `kind: integration` khi mọi task đã có output; worktree chứa output các task lá; chạy lệnh trong khối code đầu tiên của mục "Kiểm chứng tích hợp" đã pin (không có thì `project.test_command`), lệnh ghi trong `run.yaml`, output ở `checks.log`; lệnh fail đầu tiên làm run `failed`; không gọi agent, không tốn budget (TASK-003) |
 | Trạng thái feature | `zforge run status <HANDOVER>`: mỗi task `ready`/`waiting`/`running`/`verified`/`failed`…/`blocked by`, và bước tích hợp — là hàm thuần của record các run, không có file trạng thái. Run verified mới nhất thắng run fail sau nó; task dừng chặn mọi task phía sau; việc làm trên output cũ của dependency được đánh dấu `outdated` (TASK-004) |
+| Vòng chạy cả handover | `zforge run <HANDOVER> [--async]`: task theo thứ tự rồi tích hợp; chạy lại thì tiếp tục (task verified bỏ qua, run bị ngắt/hủy được chạy lại, `failed`/`blocked` giữ nguyên); khóa theo handover và theo task nên không có hai run của một task cùng lúc; `run cancel|log|wait <HANDOVER>`; MCP `run_start` không kèm task. Hạn chế: hủy lúc agent đang làm tiêu hết budget còn lại của task (quy tắc Mốc B), nên task đó cần handover mới (TASK-005) |
 
-Còn lại: vòng chạy cả handover, tái dùng, knowledge ba mức, nghiệm thu.
+Còn lại: tái dùng, knowledge ba mức, nghiệm thu.
 
 ## 13. Kịch bản nghiệm thu workflow
 

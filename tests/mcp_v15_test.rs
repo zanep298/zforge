@@ -323,3 +323,58 @@ fn hand_over(root: &Path) {
     assert!(r.ready, "{:?}", r.checks);
     handover::create(&i, root, &[], &config, &r.files, None).unwrap();
 }
+
+/// MOC-C TASK-005 AC-05: a whole handover over MCP — start it without a
+/// task, watch it by its id, cancel it.
+#[test]
+fn an_agent_runs_a_whole_handover() {
+    let p = Project::new();
+    let stub = p.root.join("claude-stub");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\ncat > /dev/null\necho working\nsleep 30\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(p.root.join(".home")).unwrap();
+    std::fs::write(
+        p.root.join(".home/registry.yaml"),
+        format!(
+            "agents:\n  claude:\n    command: {}\n    args: [\"-p\"]\nfallback_policy:\n  max_retries: 0\n",
+            stub.display()
+        ),
+    )
+    .unwrap();
+    hand_over(&p.root);
+
+    let frames = p.mcp(&[call(1, "run_start", json!({"handover": "HANDOVER-001"}))]);
+    let started = json_result(&frames[0]);
+    assert_eq!(started["handover"], "F/HANDOVER-001");
+    assert!(started["worker_pid"].as_u64().is_some());
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let frames = p.mcp(&[call(1, "run_status", json!({"run": "HANDOVER-001"}))]);
+        let f = json_result(&frames[0]);
+        if f["tasks"][0]["state"] == "running" {
+            assert_eq!(f["integration"]["state"], "waiting");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "never started: {f}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let frames = p.mcp(&[
+        call(1, "run_log", json!({"run": "HANDOVER-001"})),
+        call(2, "run_cancel", json!({"run": "HANDOVER-001"})),
+    ]);
+    assert!(
+        text(&frames[0]).contains("RUN-001 — TASK-001"),
+        "{:?}",
+        text(&frames[0])
+    );
+    let f = json_result(&frames[1]);
+    assert_eq!(f["tasks"][0]["state"], "stopped");
+    assert_eq!(f["tasks"][0]["status"], "cancelled");
+}

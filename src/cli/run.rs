@@ -4,12 +4,15 @@
 //! leaf task in its own worktree: in the foreground by default (Ctrl-C
 //! records the run as `cancelled` and exits 130), or in the background.
 //! `zforge run <HANDOVER> --integration` checks the handover's verified
-//! outputs together (MOC-C TASK-003), without an agent.
+//! outputs together (MOC-C TASK-003), without an agent. `zforge run
+//! <HANDOVER>` does all of it: every task in order, then the integration,
+//! continuing where an earlier invocation stopped (TASK-005). `status`,
+//! `cancel`, `log` and `wait` take a handover as well as a run.
 //! `status`, `list`, `cancel`, `retry` and `clean` operate existing runs.
 
 use crate::config;
 use crate::run::record::{Run, RunState, RunStatus};
-use crate::run::{execute, ops, view};
+use crate::run::{execute, feature_ops, is_handover, ops, view};
 use anyhow::{anyhow, bail, Result};
 use clap::{Args, Subcommand};
 use colored::Colorize;
@@ -95,6 +98,11 @@ pub fn run(args: RunArgs) -> Result<()> {
     match args.cmd {
         Some(RunCmd::Status { run, json }) => status(&root, &run, json),
         Some(RunCmd::List { handover, json }) => list(&root, handover.as_deref(), json),
+        Some(RunCmd::Cancel { run }) if is_handover(&run) => {
+            let f = feature_ops::cancel(&root, &run)?;
+            print!("{}", view::feature(&f));
+            Ok(())
+        }
         Some(RunCmd::Cancel { run }) => {
             let r = Run::open(&root, &run)?;
             let state = ops::cancel(&root, &r)?;
@@ -133,15 +141,21 @@ pub fn run(args: RunArgs) -> Result<()> {
             run,
             timeout,
             poll_ms,
+        }) if is_handover(&run) => wait_feature(&root, &run, timeout, poll_ms),
+        Some(RunCmd::Wait {
+            run,
+            timeout,
+            poll_ms,
         }) => wait(&root, &run, timeout, poll_ms),
         None => {
-            const USAGE: &str = "usage: zforge run <HANDOVER> --task <TASK> | --integration [--async], or a subcommand (see --help)";
+            const USAGE: &str = "usage: zforge run <HANDOVER> [--task <TASK> | --integration] [--async], or a subcommand (see --help)";
             let Some(handover) = args.handover else {
                 bail!(USAGE);
             };
             let r = match (args.task, args.integration) {
                 (Some(task), false) => execute::create(&root, &handover, &task, None)?,
                 (None, true) => crate::run::integrate::create(&root, &handover, None)?,
+                (None, false) => return run_feature(&root, &handover, args.background),
                 _ => bail!(USAGE),
             };
             start(&root, &r, args.background)
@@ -229,11 +243,69 @@ fn start(root: &Path, run: &Run, background: bool) -> Result<()> {
     }
 }
 
-/// `HANDOVER-001` or `<INTAKE>/HANDOVER-001`, as opposed to a run id.
-fn is_handover(id: &str) -> bool {
-    id.rsplit('/')
-        .next()
-        .is_some_and(|last| last.starts_with("HANDOVER-"))
+/// Every task of a handover, then its integration check.
+fn run_feature(root: &Path, handover: &str, background: bool) -> Result<()> {
+    if background {
+        let (qualified, pid) = feature_ops::spawn_async(root, handover)?;
+        println!(
+            "{} {qualified} running in the background (worker {pid}); follow with `zforge run log {qualified} --follow`",
+            "✓".green()
+        );
+        return Ok(());
+    }
+    crate::process::catch_interrupts();
+    let f = match feature_ops::run_feature(root, handover) {
+        Ok(f) => f,
+        Err(e) if e.downcast_ref::<feature_ops::Interrupted>().is_some() => {
+            eprintln!(
+                "{} {handover} interrupted; run it again to continue",
+                "✗".red()
+            );
+            std::process::exit(130)
+        }
+        Err(e) => return Err(e),
+    };
+    print!("{}", view::feature(&f));
+    feature_verdict(&f)
+}
+
+fn feature_verdict(f: &crate::run::feature::FeatureState) -> Result<()> {
+    match f.is_verified() {
+        true => Ok(()),
+        false => Err(anyhow!("{} is not verified", f.handover)),
+    }
+}
+
+/// Body of the hidden `zforge run-worker --handover <H>`.
+pub fn feature_worker(handover: &str) -> Result<()> {
+    let root = project_root()?;
+    let f = feature_ops::worker(&root, handover)?;
+    feature_verdict(&f)
+}
+
+/// Block until nothing of the handover is running any more; exit 0 only
+/// when it is verified.
+fn wait_feature(root: &Path, handover: &str, timeout_secs: u64, poll_ms: u64) -> Result<()> {
+    let h = crate::run::contract::load_handover(root, handover)?;
+    let dir = feature_ops::dir(root, &h.intake, &h.manifest.id);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        let f = crate::run::feature::load(root, handover)?;
+        let running = f
+            .tasks
+            .iter()
+            .map(|t| &t.progress)
+            .chain([&f.integration])
+            .any(|p| matches!(p, crate::run::feature::Progress::Running { .. }));
+        if !running && feature_ops::loop_pid(&dir).is_none() {
+            print!("{}", view::feature(&f));
+            return feature_verdict(&f);
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!("{} is still running after {timeout_secs}s", h.manifest.id);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(poll_ms));
+    }
 }
 
 fn describe(state: &RunState) -> String {
@@ -324,8 +396,24 @@ pub fn worker(run_id: &str) -> Result<()> {
 /// Print a background run's log; `--follow` until the run ends.
 fn log(root: &Path, id: &str, follow: bool, tail: Option<usize>) -> Result<()> {
     use std::io::{Read, Seek, SeekFrom};
-    let run = Run::open(root, id)?;
-    let path = run.dir.join(crate::run::ops::LOG);
+    // What says the writer is done: the run ended, or the handover's loop
+    // is gone.
+    let (path, done): (std::path::PathBuf, Box<dyn Fn() -> Result<bool>>) = if is_handover(id) {
+        let h = crate::run::contract::load_handover(root, id)?;
+        let dir = feature_ops::dir(root, &h.intake, &h.manifest.id);
+        let path = dir.join(feature_ops::LOG);
+        (
+            path,
+            Box::new(move || Ok(feature_ops::loop_pid(&dir).is_none())),
+        )
+    } else {
+        let run = Run::open(root, id)?;
+        let path = run.dir.join(crate::run::ops::LOG);
+        (
+            path,
+            Box::new(move || Ok(ops::refresh(&run)?.status.is_final())),
+        )
+    };
     if !path.exists() {
         bail!("{id} has no log; only a run started with --async writes one");
     }
@@ -354,7 +442,7 @@ fn log(root: &Path, id: &str, follow: bool, tail: Option<usize>) -> Result<()> {
             print!("{}", String::from_utf8_lossy(&buf));
             pos += n as u64;
         }
-        if ops::refresh(&run)?.status.is_final() && n == 0 {
+        if n == 0 && done()? {
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(200));

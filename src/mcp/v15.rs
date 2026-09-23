@@ -12,7 +12,7 @@
 
 use crate::config;
 use crate::intake::{self, knowledge, readiness, review, Intake};
-use crate::run::{execute, ops, record::Run};
+use crate::run::{execute, feature, feature_ops, is_handover, ops, record::Run};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -188,12 +188,20 @@ fn knowledge_index(_args: &Value) -> Result<String> {
     Ok(serde_json::to_string_pretty(&knowledge::build(&root()?)?)?)
 }
 
-/// Start a run of a handed-over task in the background. The budget the user
-/// set in the handover is the cap; a run cannot raise it.
+/// Start a run of a handed-over task in the background — or, without a
+/// task, the whole handover. The budget the user set in the handover is the
+/// cap; a run cannot raise it.
 fn run_start(args: &Value) -> Result<String> {
     let root = root()?;
     let handover = str_arg(args, "handover")?;
-    let task = str_arg(args, "task")?;
+    let Some(task) = opt_str(args, "task") else {
+        let (qualified, pid) = feature_ops::spawn_async(&root, &handover)?;
+        return Ok(serde_json::to_string_pretty(&json!({
+            "handover": qualified,
+            "worker_pid": pid,
+            "next": format!("poll run_status with run={qualified}"),
+        }))?);
+    };
     let run = execute::create(&root, &handover, &task, None)?;
     let meta = run.meta()?;
     let pid = ops::spawn_async(&root, &run)?;
@@ -210,7 +218,11 @@ fn run_start(args: &Value) -> Result<String> {
 
 fn run_status(args: &Value) -> Result<String> {
     let root = root()?;
-    let run = Run::open(&root, &str_arg(args, "run")?)?;
+    let id = str_arg(args, "run")?;
+    if is_handover(&id) {
+        return Ok(serde_json::to_string_pretty(&feature::load(&root, &id)?)?);
+    }
+    let run = Run::open(&root, &id)?;
     let state = ops::refresh(&run)?;
     let (traces, _) = crate::trace::log::read(&crate::run::runs_dir(&root), &run.id);
     Ok(serde_json::to_string_pretty(&json!({
@@ -231,10 +243,16 @@ fn run_list(args: &Value) -> Result<String> {
 }
 
 fn run_log(args: &Value) -> Result<String> {
-    let run = Run::open(&root()?, &str_arg(args, "run")?)?;
-    let path = run.dir.join(ops::LOG);
+    let root = root()?;
+    let id = str_arg(args, "run")?;
+    let path = if is_handover(&id) {
+        let h = crate::run::contract::load_handover(&root, &id)?;
+        feature_ops::dir(&root, &h.intake, &h.manifest.id).join(feature_ops::LOG)
+    } else {
+        Run::open(&root, &id)?.dir.join(ops::LOG)
+    };
     let text = std::fs::read_to_string(&path)
-        .map_err(|_| anyhow!("{} has no log; only a background run writes one", run.id))?;
+        .map_err(|_| anyhow!("{id} has no log; only a background run writes one"))?;
     let tail = args.get("tail").and_then(Value::as_u64).unwrap_or(200) as usize;
     let lines: Vec<&str> = text.lines().collect();
     Ok(lines[lines.len().saturating_sub(tail)..].join("\n"))
@@ -242,7 +260,13 @@ fn run_log(args: &Value) -> Result<String> {
 
 fn run_cancel(args: &Value) -> Result<String> {
     let root = root()?;
-    let run = Run::open(&root, &str_arg(args, "run")?)?;
+    let id = str_arg(args, "run")?;
+    if is_handover(&id) {
+        return Ok(serde_json::to_string_pretty(&feature_ops::cancel(
+            &root, &id,
+        )?)?);
+    }
+    let run = Run::open(&root, &id)?;
     let state = ops::cancel(&root, &run)?;
     Ok(format!(
         "{} {}{}",
@@ -322,17 +346,17 @@ pub fn definitions() -> Vec<Value> {
         }),
         json!({
             "name": "run_start",
-            "description": "v1.5: execute a handed-over leaf task in the background, in its own git worktree on its own branch. Spends only the budget the user set in the handover, shared by every run of that task. Poll run_status; the work lands on the run's branch, never on the user's checkout.",
+            "description": "v1.5: in the background, execute a handed-over leaf task in its own git worktree on its own branch — or, without `task`, every task of the handover in dependency order and then its integration check, continuing where an earlier run stopped. Spends only the budget the user set in the handover, per task. Poll run_status; the work lands on run branches, never on the user's checkout.",
             "inputSchema": { "type": "object", "properties": {
                 "handover": { "type": "string", "description": "HANDOVER-001, or <INTAKE>/HANDOVER-001 when ambiguous" },
-                "task": { "type": "string" }
-            }, "required": ["handover", "task"] }
+                "task": { "type": "string", "description": "One task; omit to run the whole handover" }
+            }, "required": ["handover"] }
         }),
         json!({
             "name": "run_status",
-            "description": "v1.5: a run's state, events (agent calls with cost, verifications with the candidate tested), and the trace of each agent call. Records a dead worker as interrupted.",
+            "description": "v1.5: a run's state, events (agent calls with cost, verifications with the candidate tested), and the trace of each agent call — or, given a handover, where each of its tasks and its integration check stand. Records a dead worker as interrupted.",
             "inputSchema": { "type": "object", "properties": {
-                "run": { "type": "string", "description": "e.g. RUN-001" }
+                "run": { "type": "string", "description": "e.g. RUN-001, or HANDOVER-001" }
             }, "required": ["run"] }
         }),
         json!({
@@ -344,7 +368,7 @@ pub fn definitions() -> Vec<Value> {
         }),
         json!({
             "name": "run_log",
-            "description": "v1.5: the tail of a background run's worker log.",
+            "description": "v1.5: the tail of a background run's worker log, or of a background handover's (run=HANDOVER-001).",
             "inputSchema": { "type": "object", "properties": {
                 "run": { "type": "string" },
                 "tail": { "type": "number", "description": "Lines from the end (default 200)" }
@@ -352,7 +376,7 @@ pub fn definitions() -> Vec<Value> {
         }),
         json!({
             "name": "run_cancel",
-            "description": "v1.5: stop a run's agent and tests and record it cancelled. The worktree and branch are kept.",
+            "description": "v1.5: stop a run's agent and tests and record it cancelled — or, given a handover, stop its loop and whatever of it is running. Worktrees and branches are kept.",
             "inputSchema": { "type": "object", "properties": {
                 "run": { "type": "string" }
             }, "required": ["run"] }

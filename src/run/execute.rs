@@ -98,6 +98,9 @@ pub fn create(
         );
     }
     let baseline = c.manifest.baseline.commit.clone();
+    // One run of a task at a time in a handover (MOC-C REQ-008).
+    let _claim =
+        super::feature_ops::claim(project_root, &c.intake, &c.manifest.id, task, RunKind::Task)?;
     record::create(project_root, |id| RunMeta {
         id: id.to_string(),
         created_at: Utc::now(),

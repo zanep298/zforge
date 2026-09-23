@@ -103,7 +103,22 @@ Bàn giao một phần:
 zforge handover FEATURE-001 --task TASK-001 --task TASK-002
 ```
 
-## 3. Chạy một task
+## 3. Chạy
+
+Cả handover — mọi task theo thứ tự dependency, rồi kiểm chứng tích hợp:
+
+```bash
+zforge run HANDOVER-001
+```
+
+Task có dependency bắt đầu từ output đã verified của dependency. Task dừng
+(`failed`, `blocked`) chặn các task phía sau nó; task không phụ thuộc vẫn chạy
+tiếp. Bị ngắt thì chạy lại đúng lệnh đó: task đã verified được bỏ qua, run bị
+ngắt hoặc bị hủy được chạy lại (`retry_of`); run `failed`/`blocked` là kết luận,
+giữ nguyên cho bạn quyết. Chạy nền thì thêm `--async`, rồi
+`zforge run log|wait|cancel HANDOVER-001`.
+
+Một task riêng:
 
 ```bash
 zforge run HANDOVER-001 --task TASK-001
@@ -150,7 +165,9 @@ các task, sửa qua amendment.
 Agent trong chat làm được phần chuẩn bị và theo dõi qua MCP: `intake_new`,
 `intake_task`, `intake_status`, `intake_review`, `intake_diff`, `change_new`,
 `readiness`, `knowledge_index`, `run_start`, `run_status`, `run_list`,
-`run_log`, `run_cancel`. **Không** có tool nào chốt hay handover được.
+`run_log`, `run_cancel`. `run_start` không kèm `task` chạy cả handover trong
+nền; `run_status`, `run_log`, `run_cancel` nhận `HANDOVER-001` như một run.
+**Không** có tool nào chốt hay handover được.
 
 Kết thúc thế nào:
 
@@ -163,7 +180,11 @@ Kết thúc thế nào:
 
 Budget là **tổng cho mọi lần chạy của một task trong một handover**. Hết thì phải
 handover mới, tức bạn quyết định chi thêm. Lần gọi agent bị kill giữa chừng bị
-tính là đã tiêu hết phần được cấp, vì không biết nó đã tiêu bao nhiêu.
+tính là đã tiêu hết phần được cấp, vì không biết nó đã tiêu bao nhiêu — và phần
+được cấp là **toàn bộ budget còn lại của task**. Nên hủy hay Ctrl-C lúc agent
+đang làm thì task đó không chạy lại được trong handover này (lệnh báo `budget …
+is used up`); bị ngắt lúc đang verify thì chạy lại được, vì chi phí lần gọi
+agent đã được chốt.
 
 ## 4. Xem kết quả và dọn
 
@@ -205,10 +226,8 @@ Không có lệnh "accept change request". Sửa hợp đồng luôn đi qua rev
 
 ## Giới hạn hiện tại
 
-- Task có `depends_on` chạy được từng task một bằng `--task`, sau khi mọi
-  dependency đã `verified`; worktree của nó xuất phát từ output của chúng. Chạy cả
-  feature bằng một lệnh, kiểm chứng tích hợp và tái dùng qua handover: đang làm
-  (Mốc C).
+- Chạy tuần tự, một run một lúc. Tái dùng task không đổi qua handover mới:
+  đang làm (Mốc C).
 - Chỉ Claude chạy được leaf task.
 - Run chạy với `--dangerously-skip-permissions` để không cần người trả lời quyền.
   Agent bị giữ trong worktree bằng cwd, nhưng quyền trên máy vẫn là quyền của bạn.
