@@ -1,0 +1,13 @@
+{"at":"2026-09-23T04:34:27.368772Z","file":"01-outcome.md","revision":1,"sha256":"4a60c8259cb5309bf25f9076a4c0aab9467a58917b868083df3b5b9c42f53e99","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:34:58.086319Z","file":"02-behavior.md","revision":1,"sha256":"19ec80963683ef0987f5e11211d50a64f8e80a67bccf99c72716d7d9f41cd93b","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:36:28.776621Z","file":"03-solution.md","revision":1,"sha256":"5453093bba85f2fe29528758ca82828e159c4cc4380fbe7d6f8aaa9a252b8c67","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:36:37.288692Z","file":"02-behavior.md","revision":2,"sha256":"a23d4d0357a1801216f1eabb8100b477ee1e5bc5bcf1d560c51979896e056ce0","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.356513Z","file":"04-breakdown.md","revision":1,"sha256":"754bb1f100518dfbc743249bd75a099596f17426dde76721269bcb21f1cfc4b7","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.375481Z","file":"tasks/TASK-001.md","revision":1,"sha256":"e161f8c6082c513ba6a3621ca9fbda36f610efec66a74b21bbec68b5baa7768c","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.396439Z","file":"tasks/TASK-002.md","revision":1,"sha256":"98af1c96aa774d3f3c44033d71ba5c9569167d9760364346eb6706884596bbf1","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.413513Z","file":"tasks/TASK-003.md","revision":1,"sha256":"3db66770ee9270ea9992113a61765149cd8acd1bffcbcff4bfec943ab1f9b69a","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.430542Z","file":"tasks/TASK-004.md","revision":1,"sha256":"e60747b996a4616ade0bc7efbb6b1e2de90c516702ea485abfec7aaaa707fbf8","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.447471Z","file":"tasks/TASK-005.md","revision":1,"sha256":"623020258fe2a68d68a1685b29e97d339fc66db4d5a5307997207977a715931f","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.464449Z","file":"tasks/TASK-006.md","revision":1,"sha256":"d6292b4fa1e4d37ecbd8dedb411eea3d2c45b1f7aeb5b58c2c6626a8f63363cf","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.481442Z","file":"tasks/TASK-007.md","revision":1,"sha256":"77febd07cdaebec8d0d13c4c95f07b88ef530be7dfe5079360f13407aa6b9bf6","decision":"review","channel":"cli"}
+{"at":"2026-09-23T04:38:13.499422Z","file":"tasks/TASK-008.md","revision":1,"sha256":"6e44c352bc4784bcd578b99f7b2d841083c6c30d51461f283b3163e42ead6d72","decision":"review","channel":"cli"}
