@@ -102,12 +102,14 @@ enum Commands {
         #[command(subcommand)]
         cmd: crate::cli::intake::IntakeCmd,
     },
-    /// v1.5 Mốc B: execute a handed-over leaf task in its own worktree
-    /// (`zforge run <HANDOVER> --task <TASK> [--async]`), or operate runs
-    /// (`status`, `list`, `cancel`, `retry`, `clean`).
+    /// Build a handover — every task in its own worktree, then the
+    /// integration check (`zforge run <HANDOVER> [--task <TASK>] [--async]`)
+    /// — or operate runs (`status`, `list`, `log`, `wait`, `cancel`, `retry`,
+    /// `clean`).
     Run(crate::cli::run::RunArgs),
-    /// Which model runs each phase, per client: show, `set`, `unset`.
-    /// zforge names no model of its own; unset phases use the client's default.
+    /// Which model runs each phase (`code`, `review`), per client: show,
+    /// `set`, `unset`. Unset phases use zforge's default tier (Claude:
+    /// sonnet for code, opus for review) or the client's own default.
     Models(crate::cli::models::ModelsArgs),
     /// INTERNAL: background run worker — started by `zforge run --async`,
     /// for one run or (`--handover`) a whole handover.
