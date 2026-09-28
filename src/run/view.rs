@@ -115,6 +115,32 @@ pub fn event_line(e: &RunEvent) -> String {
             }
         ),
         RunEvent::VerifyStarted { .. } => format!("{t} verifying"),
+        RunEvent::ReviewStarted { allotted_usd, .. } => {
+            format!("{t} review started (up to ${allotted_usd:.2})")
+        }
+        RunEvent::Reviewed {
+            approved,
+            cost_usd,
+            allotted_usd,
+            findings,
+            ..
+        } => format!(
+            "{t} review {}, {}{}",
+            if *approved {
+                "approved"
+            } else {
+                "asked for changes"
+            },
+            match cost_usd {
+                Some(c) => format!("${c:.2}"),
+                None => format!("cost unknown (counted ${allotted_usd:.2})"),
+            },
+            if findings.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", findings.join("; "))
+            }
+        ),
         RunEvent::Verified {
             candidate, commit, ..
         } => format!(

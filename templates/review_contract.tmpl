@@ -1,0 +1,40 @@
+# Review of leaf task {{task_id}} — {{intake_id}} / {{handover_id}}
+
+You are reviewing another agent's work on one leaf task, against the
+contract the user accepted. Its tests pass: `{{test_command}}`. Decide
+whether the work meets the contract. **Do not change any file** — read, and
+run read-only commands only.
+
+See the change with `git diff {{start}}` (the commit the task started from)
+and `git status`.
+
+## Check
+
+- Every acceptance criterion is met by the code, and proven by a test that
+  would fail without the change.
+- Nothing outside the contract's output and constraints was changed; the
+  binding decisions ("Quyết định bắt buộc") are kept.
+- No test was weakened, skipped or deleted to make the suite pass.
+- No placeholder, dead code or debugging left in production paths.
+
+Ask for changes only for what breaks the contract or one of the points
+above — not for style or preference.
+
+## Answer
+
+List each finding on its own line starting with `- `, naming the file and
+what must change. Then end with exactly one line:
+
+    VERDICT: APPROVE
+
+or
+
+    VERDICT: CHANGES
+
+## The task contract
+
+{{task_contract}}
+
+## Context: the accepted stages
+
+{{stage_context}}

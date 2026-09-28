@@ -18,6 +18,7 @@ use anyhow::{bail, Context, Result};
 use std::path::Path;
 
 const TEMPLATE: &str = include_str!("../../templates/contract.tmpl");
+const REVIEW_TEMPLATE: &str = include_str!("../../templates/review_contract.tmpl");
 
 /// One pinned file, as accepted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,18 +288,6 @@ impl Contract {
         checklists: &[std::path::PathBuf],
         test_command: &str,
     ) -> String {
-        let stages: Vec<String> = STAGES
-            .iter()
-            .filter_map(|s| self.files.iter().find(|f| f.file == *s))
-            .map(|f| {
-                format!(
-                    "### {} (revision {})\n\n{}",
-                    f.file,
-                    f.revision,
-                    f.text.trim_end()
-                )
-            })
-            .collect();
         let feedback = match feedback {
             Some(text) if !text.trim().is_empty() => format!(
                 "## Verifier feedback\n\nThe previous attempt did not pass verification. Fix the \
@@ -328,7 +317,37 @@ impl Contract {
             .replace("{{change_request_path}}", change_request_path)
             .replace("{{verifier_feedback}}\n", &feedback)
             .replace("{{task_contract}}", self.task_file().text.trim_end())
-            .replace("{{stage_context}}", &stages.join("\n\n"))
+            .replace("{{stage_context}}", &self.stage_context())
+    }
+
+    /// The prompt for reviewing a run's passing work (`run::review`):
+    /// `start` is the commit the task started from.
+    pub fn review_prompt(&self, start: &str, test_command: &str) -> String {
+        REVIEW_TEMPLATE
+            .replace("{{test_command}}", test_command)
+            .replace("{{start}}", start)
+            .replace("{{task_id}}", &self.task)
+            .replace("{{intake_id}}", &self.intake)
+            .replace("{{handover_id}}", &self.manifest.id)
+            .replace("{{task_contract}}", self.task_file().text.trim_end())
+            .replace("{{stage_context}}", &self.stage_context())
+    }
+
+    /// The accepted stages, as pinned, in order.
+    fn stage_context(&self) -> String {
+        STAGES
+            .iter()
+            .filter_map(|s| self.files.iter().find(|f| f.file == *s))
+            .map(|f| {
+                format!(
+                    "### {} (revision {})\n\n{}",
+                    f.file,
+                    f.revision,
+                    f.text.trim_end()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 }
 

@@ -159,6 +159,24 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
     },
+    /// A review of the passing work started with `allotted_usd` of budget
+    /// (`execution.review`). In flight like an attempt: killed mid-call, it
+    /// counts all of it.
+    ReviewStarted {
+        at: DateTime<Utc>,
+        allotted_usd: f64,
+    },
+    /// The review finished. Not `approved` sends the run back to work with
+    /// `findings`, through a `verify_failed`.
+    Reviewed {
+        at: DateTime<Utc>,
+        approved: bool,
+        allotted_usd: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        findings: Vec<String>,
+    },
     /// The suite failed; the run goes back to work within the contract.
     VerifyFailed {
         at: DateTime<Utc>,
@@ -198,6 +216,8 @@ impl RunEvent {
             | Self::AttemptStarted { at, .. }
             | Self::Attempt { at, .. }
             | Self::VerifyStarted { at }
+            | Self::ReviewStarted { at, .. }
+            | Self::Reviewed { at, .. }
             | Self::Verified { at, .. }
             | Self::VerifyFailed { at, .. }
             | Self::Blocked { at, .. }
@@ -213,6 +233,8 @@ impl RunEvent {
             Self::AttemptStarted { .. } => "attempt_started",
             Self::Attempt { .. } => "attempt",
             Self::VerifyStarted { .. } => "verify_started",
+            Self::ReviewStarted { .. } => "review_started",
+            Self::Reviewed { .. } => "reviewed",
             Self::Verified { .. } => "verified",
             Self::VerifyFailed { .. } => "verify_failed",
             Self::Blocked { .. } => "blocked",
@@ -268,6 +290,9 @@ pub struct RunState {
     pub pid: Option<u32>,
     pub attempts: u32,
     pub verifications: u32,
+    /// Reviews that finished (`execution.review`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub reviews: u32,
     /// Spent so far: reported costs, the allotment of any attempt that
     /// reported none, and the allotment of an attempt still in flight.
     pub cost_usd: f64,
@@ -286,6 +311,10 @@ pub struct RunState {
     pub reused_from: Option<String>,
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 impl Default for RunState {
     fn default() -> Self {
         Self {
@@ -294,6 +323,7 @@ impl Default for RunState {
             pid: None,
             attempts: 0,
             verifications: 0,
+            reviews: 0,
             cost_usd: 0.0,
             in_flight_usd: None,
             last_candidate: None,
@@ -351,6 +381,25 @@ impl RunState {
                     return refuse();
                 }
                 next.status = Verifying;
+            }
+            RunEvent::ReviewStarted { allotted_usd, .. } => {
+                if self.status != Verifying || self.in_flight_usd.is_some() {
+                    return refuse();
+                }
+                next.in_flight_usd = Some(*allotted_usd);
+                next.cost_usd += allotted_usd;
+            }
+            RunEvent::Reviewed {
+                allotted_usd,
+                cost_usd,
+                ..
+            } => {
+                if self.status != Verifying {
+                    return refuse();
+                }
+                next.cost_usd -= next.in_flight_usd.take().unwrap_or(0.0);
+                next.reviews += 1;
+                next.cost_usd += cost_usd.unwrap_or(*allotted_usd);
             }
             RunEvent::Verified {
                 candidate, commit, ..
@@ -639,6 +688,40 @@ pub(crate) mod tests {
         assert_eq!(s.last_candidate.as_deref(), Some("c2"));
         assert_eq!(s.output.as_deref(), Some("k2"));
         assert_eq!(RunState::replay(&events).unwrap(), s);
+    }
+
+    /// A review is paid like an attempt, and only while verifying.
+    #[test]
+    fn a_review_is_accounted_like_an_attempt() {
+        let verifying = RunState::default()
+            .apply(&RunEvent::Started { at: now(), pid: 1 })
+            .unwrap()
+            .apply(&RunEvent::VerifyStarted { at: now() })
+            .unwrap();
+        let started = RunEvent::ReviewStarted {
+            at: now(),
+            allotted_usd: 0.5,
+        };
+        let in_flight = verifying.apply(&started).unwrap();
+        assert_eq!(in_flight.cost_usd, 0.5);
+        assert_eq!(in_flight.in_flight_usd, Some(0.5));
+        assert!(in_flight.apply(&started).is_err(), "one review at a time");
+        let done = in_flight
+            .apply(&RunEvent::Reviewed {
+                at: now(),
+                approved: false,
+                allotted_usd: 0.5,
+                cost_usd: Some(0.1),
+                findings: vec!["a: b".into()],
+            })
+            .unwrap();
+        assert_eq!(done.cost_usd, 0.1);
+        assert_eq!(done.reviews, 1);
+        assert_eq!(done.status, RunStatus::Verifying);
+        let running = RunState::default()
+            .apply(&RunEvent::Started { at: now(), pid: 1 })
+            .unwrap();
+        assert!(running.apply(&started).is_err(), "only while verifying");
     }
 
     /// MOC-C TASK-006: a reused run goes straight from ready to verified.

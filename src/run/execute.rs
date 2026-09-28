@@ -243,45 +243,24 @@ fn work(
             &checklists,
             &config.project.test_command,
         );
-        let (spec, named) = agent_spec(base, project_root, &work_dir, left);
         eprintln!("{}: attempt {n} (up to ${left:.2})", run.id);
         run.append(&RunEvent::AttemptStarted {
             at: Utc::now(),
             n,
             allotted_usd: left,
         })?;
-        let out = spawn::spawn_agent_in(&spec, &prompt, timeout_secs, &work_dir)?;
-
-        let trace = crate::trace::from_invocation(crate::trace::Invocation {
-            task_id: &run.id,
+        let (out, cost) = call_agent(&Call {
+            run,
+            project_root,
+            config,
+            base,
+            work_dir: &work_dir,
             phase: "code",
             attempt: n,
-            runner: RUNNER,
-            command: std::iter::once(spec.command.clone())
-                .chain(spec.args.iter().cloned())
-                .collect(),
-            expected: trace_record::expected_for(
-                RUNNER,
-                "code",
-                &work_dir,
-                &named,
-                model_for(project_root).as_deref(),
-                Some(&config.project.language),
-            ),
-            stdout: &out.stdout,
-            stderr: &out.stderr,
-            exit_code: out.exit_code,
-            timed_out: out.timed_out,
-            duration_ms: out.duration_ms,
-        });
-        let cost = trace
-            .observed
-            .as_ref()
-            .and_then(|o| o.result.as_ref())
-            .and_then(|r| r.cost_usd);
-        if let Err(e) = crate::trace::log::append(&super::runs_dir(project_root), &trace) {
-            eprintln!("warning: trace not recorded: {e:#}");
-        }
+            prompt: &prompt,
+            left_usd: left,
+            timeout_secs,
+        })?;
         run.append(&RunEvent::Attempt {
             at: Utc::now(),
             n,
@@ -335,13 +314,71 @@ fn work(
                     .changed(&work_dir, &start)
                     .map_err(|e| Halt::Failed(format!("could not check the tests: {e:#}")))?;
                 if !changed.is_empty() {
-                    return protected_tests_changed(
+                    return refused_pass(
                         run,
                         &last_output,
                         outcome,
                         candidate,
-                        &changed,
+                        changed
+                            .iter()
+                            .map(|p| format!("protected test changed: {p}"))
+                            .collect(),
+                        format!(
+                            "The tests passed, but these test files differ from where this task \
+                             started:\n{}\n\nRestore them. A task may not change existing tests \
+                             unless its contract lists them under `tests_may_change`; if the \
+                             contract has to change, write a change request instead.",
+                            bullets(&changed)
+                        ),
                     );
+                }
+                if config.execution.review {
+                    let state = run.state()?;
+                    let left = meta.budget_usd - state.cost_usd;
+                    if left < MIN_ALLOTMENT_USD {
+                        return Err(Halt::Blocked(format!(
+                            "budget: nothing left to review the passing work (${:.2} of ${:.2} used)",
+                            state.cost_usd, meta.budget_usd
+                        ))
+                        .into());
+                    }
+                    let prompt = contract.review_prompt(&start, &config.project.test_command);
+                    let verdict = super::review::review(
+                        &Call {
+                            run,
+                            project_root,
+                            config,
+                            base,
+                            work_dir: &work_dir,
+                            phase: "review",
+                            attempt: state.reviews + 1,
+                            prompt: &prompt,
+                            left_usd: left,
+                            timeout_secs,
+                        },
+                        &candidate,
+                    )?;
+                    interrupted()?;
+                    if !verdict.approved {
+                        return refused_pass(
+                            run,
+                            &last_output,
+                            outcome,
+                            candidate,
+                            verdict
+                                .findings
+                                .iter()
+                                .map(|f| format!("review: {f}"))
+                                .collect(),
+                            format!(
+                                "The tests passed, but the review of your change against the \
+                                 contract asked for changes:\n{}\n\nAddress them within the \
+                                 contract; if one cannot be met without changing the contract, \
+                                 write a change request instead.",
+                                bullets(&verdict.findings)
+                            ),
+                        );
+                    }
                 }
                 // The output a dependent task starts from: the tested tree,
                 // sealed before anything else can touch the worktree.
@@ -435,41 +472,37 @@ fn amendment_requested(path: &str, intake: &str) -> Option<String> {
     })
 }
 
-/// The suite passed, but only after protected tests changed: not a pass.
-/// The agent is told which, and may restore them within its iterations.
-fn protected_tests_changed(
+/// The suite passed, but the pass does not count — a protected test
+/// changed, or the review asked for changes. Recorded as a failed
+/// verification whose reasons go back to the agent as feedback.
+fn refused_pass(
     run: &Run,
     last_output: &RefCell<String>,
     outcome: VerifyOutcome,
     candidate: String,
-    changed: &[String],
+    failed_tests: Vec<String>,
+    feedback: String,
 ) -> Result<VerifyOutcome> {
-    let failed_tests: Vec<String> = changed
-        .iter()
-        .map(|p| format!("protected test changed: {p}"))
-        .collect();
     run.append(&RunEvent::VerifyFailed {
         at: Utc::now(),
         candidate: Some(candidate),
         failed_tests: failed_tests.clone(),
     })?;
-    *last_output.borrow_mut() = format!(
-        "The tests passed, but these test files differ from where this task started:\n{}\n\n\
-         Restore them. A task may not change existing tests unless its contract lists \
-         them under `tests_may_change`; if the contract has to change, write a change \
-         request instead.",
-        changed
-            .iter()
-            .map(|p| format!("- {p}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
+    *last_output.borrow_mut() = feedback;
     Ok(VerifyOutcome {
         passed: false,
         failed_tests: failed_tests.len(),
         failed_names: failed_tests,
         ..outcome
     })
+}
+
+fn bullets(items: &[String]) -> String {
+    items
+        .iter()
+        .map(|i| format!("- {i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A caught SIGINT/SIGTERM/SIGHUP stops the run (see `process::catch_interrupts`).
@@ -480,21 +513,75 @@ fn interrupted() -> Result<()> {
     }
 }
 
+/// One agent call of a run.
+pub(super) struct Call<'a> {
+    pub run: &'a Run,
+    pub project_root: &'a Path,
+    pub config: &'a Config,
+    pub base: &'a AgentSpec,
+    pub work_dir: &'a Path,
+    /// `code`, or `review`: picks the named agent and the model.
+    pub phase: &'a str,
+    pub attempt: u32,
+    pub prompt: &'a str,
+    pub left_usd: f64,
+    pub timeout_secs: u64,
+}
+
+/// Run the agent in the worktree, record its trace, and return what it
+/// did with the cost it reported (if any). The caller records the events.
+pub(super) fn call_agent(c: &Call) -> Result<(spawn::SpawnOutcome, Option<f64>)> {
+    let (spec, named) = agent_spec(c.base, c.project_root, c.work_dir, c.left_usd, c.phase);
+    let out = spawn::spawn_agent_in(&spec, c.prompt, c.timeout_secs, c.work_dir)?;
+    let trace = crate::trace::from_invocation(crate::trace::Invocation {
+        task_id: &c.run.id,
+        phase: c.phase,
+        attempt: c.attempt,
+        runner: RUNNER,
+        command: std::iter::once(spec.command.clone())
+            .chain(spec.args.iter().cloned())
+            .collect(),
+        expected: trace_record::expected_for(
+            RUNNER,
+            c.phase,
+            c.work_dir,
+            &named,
+            model_for(c.project_root, c.phase).as_deref(),
+            Some(&c.config.project.language),
+        ),
+        stdout: &out.stdout,
+        stderr: &out.stderr,
+        exit_code: out.exit_code,
+        timed_out: out.timed_out,
+        duration_ms: out.duration_ms,
+    });
+    let cost = trace
+        .observed
+        .as_ref()
+        .and_then(|o| o.result.as_ref())
+        .and_then(|r| r.cost_usd);
+    if let Err(e) = crate::trace::log::append(&super::runs_dir(c.project_root), &trace) {
+        eprintln!("warning: trace not recorded: {e:#}");
+    }
+    Ok((out, cost))
+}
+
 /// Registered Claude spec, run headless in the worktree: permission bypass,
-/// the phase's named agent when the worktree has one, the configured code
-/// model, and the budget left.
+/// the phase's named agent when the worktree has one, the phase's
+/// configured model, and the budget left.
 fn agent_spec(
     base: &AgentSpec,
     project_root: &Path,
     work_dir: &Path,
     left_usd: f64,
+    phase: &str,
 ) -> (AgentSpec, NamedAgent) {
     let mut spec = base.clone();
     let mut args = headless_args::headless_args_for_agent(RUNNER);
     args.append(&mut spec.args);
-    let named = named_agent_for(RUNNER, "code", work_dir);
+    let named = named_agent_for(RUNNER, phase, work_dir);
     args.extend(named.args());
-    if let Some(model) = model_for(project_root) {
+    if let Some(model) = model_for(project_root, phase) {
         args.extend(model_args::model_args_for_agent(RUNNER, &model));
     }
     args.push("--max-budget-usd".into());
@@ -503,9 +590,9 @@ fn agent_spec(
     (spec, named)
 }
 
-fn model_for(project_root: &Path) -> Option<String> {
+fn model_for(project_root: &Path, phase: &str) -> Option<String> {
     crate::config::load_models_from_root(project_root)?
-        .for_assistant(RUNNER, "code")
+        .for_assistant(RUNNER, phase)
         .map(str::to_string)
 }
 

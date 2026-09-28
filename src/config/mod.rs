@@ -76,6 +76,11 @@ pub struct ExecutionConfig {
     /// means the conventional locations, an empty list protects nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protected_tests: Option<Vec<String>>,
+    /// Have an agent review a run's passing work against its contract
+    /// before it is verified (`run::review`). Off by default: each review
+    /// is another agent call on the task's budget.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub review: bool,
 }
 
 impl Default for ExecutionConfig {
@@ -84,6 +89,7 @@ impl Default for ExecutionConfig {
             max_iterations: default_max_iterations(),
             budget_usd: None,
             protected_tests: None,
+            review: false,
         }
     }
 }

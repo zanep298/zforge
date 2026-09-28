@@ -1604,3 +1604,130 @@ fn a_run_warns_about_claude_config_it_cannot_bring() {
     let args = std::fs::read_to_string(p.marks.join("args")).unwrap();
     assert!(!args.contains("--agent code-agent"), "{args}");
 }
+
+// ─── workflow §7: reviewing the passing work (execution.review) ─────────────
+
+/// Turn on `execution.review` for runs of this project.
+fn enable_review(p: &Project) {
+    let cfg = p.root.join(".zforge/config.yaml");
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    std::fs::write(&cfg, format!("{text}  review: true\n")).unwrap();
+}
+
+/// A stub that codes like `fix_and_report` and, called to review, answers
+/// with `review` — the text of its result — after running `before_review`.
+fn coder_and_reviewer(p: &Project, before_review: &str, review: &str) -> String {
+    let result = serde_json::json!({
+        "type": "result", "subtype": "success", "is_error": false,
+        "total_cost_usd": 0.01, "result": review,
+    });
+    format!(
+        "if head -1 {m}/prompt | grep -q '^# Review of leaf task'; then\n  \
+         {before_review}\n  printf '%s\\n' '{result}'\n  exit 0\nfi\n{fix}",
+        m = p.marks.display(),
+        result = result.to_string().replace('\'', "'\\''"),
+        fix = fix_and_report(),
+    )
+}
+
+#[test]
+fn an_approved_review_lets_the_run_be_verified() {
+    let p = Project::new(3.0, 2);
+    enable_review(&p);
+    p.stub(&coder_and_reviewer(
+        &p,
+        "true",
+        "- lib.sh: correct\nVERDICT: APPROVE",
+    ));
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(
+        out.status.success(),
+        "{}\n{:?}",
+        err(&out),
+        p.events("RUN-001")
+    );
+    let names: Vec<String> = p
+        .events("RUN-001")
+        .iter()
+        .map(|e| e["event"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "started",
+            "attempt_started",
+            "attempt",
+            "verify_started",
+            "review_started",
+            "reviewed",
+            "verified"
+        ]
+    );
+    let reviewed = p.events("RUN-001")[5].clone();
+    assert_eq!(reviewed["approved"], true);
+    assert_eq!(reviewed["cost_usd"], 0.01);
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(prompt.contains("git diff "), "{prompt}");
+}
+
+/// The review's findings go back to the coder, whose next attempt is
+/// reviewed again.
+#[test]
+fn a_review_asking_for_changes_sends_the_work_back() {
+    let p = Project::new(3.0, 2);
+    enable_review(&p);
+    let seen = p.marks.join("reviewed-once");
+    p.stub(&coder_and_reviewer(
+        &p,
+        &format!(
+            "if [ ! -e {s} ]; then touch {s}; printf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.01,\"result\":\"- lib.sh: AC-01 has no test of its own\\nVERDICT: CHANGES\"}}'; exit 0; fi",
+            s = seen.display()
+        ),
+        "VERDICT: APPROVE",
+    ));
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let failed = p
+        .events("RUN-001")
+        .into_iter()
+        .find(|e| e["event"] == "verify_failed")
+        .unwrap();
+    assert_eq!(
+        failed["failed_tests"],
+        serde_json::json!(["review: lib.sh: AC-01 has no test of its own"])
+    );
+    assert_eq!(p.count("RUN-001", "attempt"), 2);
+    assert_eq!(p.count("RUN-001", "reviewed"), 2);
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+}
+
+/// A reviewer may only read: one that changes a file does not count.
+#[test]
+fn a_reviewer_that_changes_files_is_not_an_approval() {
+    let p = Project::new(3.0, 1);
+    enable_review(&p);
+    p.stub(&coder_and_reviewer(
+        &p,
+        "echo tweak >> lib.sh",
+        "VERDICT: APPROVE",
+    ));
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(!out.status.success());
+    let reviewed = p
+        .events("RUN-001")
+        .into_iter()
+        .find(|e| e["event"] == "reviewed")
+        .unwrap();
+    assert_eq!(reviewed["approved"], false);
+    assert!(
+        reviewed["findings"][0]
+            .as_str()
+            .unwrap()
+            .contains("changed files in the worktree"),
+        "{reviewed}"
+    );
+    assert_eq!(p.count("RUN-001", "verified"), 0);
+}

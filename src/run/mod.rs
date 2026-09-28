@@ -18,6 +18,7 @@ pub mod output;
 pub mod reconcile;
 pub mod record;
 pub mod reuse;
+pub mod review;
 pub mod start;
 pub mod view;
 pub mod worktree;

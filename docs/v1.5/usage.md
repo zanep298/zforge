@@ -204,6 +204,19 @@ vào worktree để `code-agent`, skill nạp sẵn, và luật quyền/hook c�
 ignore thì run không chép (output sẽ mang theo nó) và cảnh báo: commit nó, hoặc
 thêm vào `.gitignore`.
 
+**Review trước khi xác nhận (tùy chọn).** Bật trong config:
+
+```yaml
+execution:
+  review: true
+```
+
+Khi test pass, một agent thứ hai (`review-agent` nếu có) đọc thay đổi so với
+hợp đồng và kết luận `VERDICT: APPROVE` hoặc `VERDICT: CHANGES`. Chỉ approve mới
+được `verified`; yêu cầu sửa được gửi lại cho agent code trong số vòng còn lại.
+Không có kết luận, lỗi, hay reviewer sửa file đều không tính là approve. Mỗi lần
+review là một lần gọi agent, tính vào budget của task — nên mặc định tắt.
+
 **Test là của hợp đồng, không phải của agent.** Khi test pass, zforge kiểm
 các file test có sẵn so với lúc task bắt đầu: file nào bị sửa, xóa hay đổi tên
 thì lần pass đó bị tính là fail (`protected test changed: <file>`), và agent
