@@ -77,12 +77,21 @@ fn row(rows: &serde_json::Value, client: &str, phase: &str) -> (serde_json::Valu
 }
 
 #[test]
-fn nothing_is_chosen_until_the_user_chooses() {
+fn zforge_defaults_to_tiers_until_the_user_chooses() {
     let p = Project::new();
     let rows = p.rows();
     assert_eq!(
         row(&rows, "claude", "code"),
-        (serde_json::Value::Null, "client default".into())
+        ("sonnet".into(), "zforge default".into())
+    );
+    assert_eq!(
+        row(&rows, "claude", "plan"),
+        ("opus".into(), "zforge default".into())
+    );
+    assert_eq!(
+        row(&rows, "codex", "code"),
+        (serde_json::Value::Null, "client default".into()),
+        "no tiers for other clients"
     );
 
     p.ok(&["models", "set", "code", "sonnet"]);
@@ -93,9 +102,9 @@ fn nothing_is_chosen_until_the_user_chooses() {
     );
     let yaml = std::fs::read_to_string(p.root.join(".zforge/models.yaml")).unwrap();
     assert_eq!(yaml, "claude:\n  code: sonnet\n");
-    // The agent definitions follow at once; the rest keep the default.
+    // The agent definitions follow at once; the rest keep zforge's default.
     assert!(p.agent("claude", "code").contains("\nmodel: sonnet\n"));
-    assert!(p.agent("claude", "plan").contains("\nmodel: inherit\n"));
+    assert!(p.agent("claude", "plan").contains("\nmodel: opus\n"));
     assert!(
         !p.agent("codex", "code").contains("model:"),
         "codex chose nothing"
@@ -154,4 +163,20 @@ fn a_model_in_the_agent_definition_is_shown_as_such() {
         row(&p.rows(), "claude", "review"),
         ("opus".into(), "project".into())
     );
+}
+
+/// `inherit` hands a phase to the client's own default; `unset` brings
+/// zforge's default back.
+#[test]
+fn inherit_and_unset() {
+    let p = Project::new();
+    p.ok(&["models", "set", "plan", "inherit"]);
+    assert!(p.agent("claude", "plan").contains("\nmodel: inherit\n"));
+    assert_eq!(
+        row(&p.rows(), "claude", "plan"),
+        ("inherit".into(), "project".into())
+    );
+    let out = p.ok(&["models", "unset", "plan"]);
+    assert!(out.contains("zforge's default (`opus`)"), "{out}");
+    assert!(p.agent("claude", "plan").contains("\nmodel: opus\n"));
 }

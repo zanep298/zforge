@@ -96,12 +96,29 @@ pub fn agent_model_for_dispatch(agents_dir: &Path, assistant: &str, phase: &str)
 /// Precedence:
 /// 1. `models.yaml` for `(assistant, phase)`.
 /// 2. Agent template frontmatter for that assistant.
+/// 3. zforge's default tier (`config::default_tier`, Claude only).
+///
+/// `inherit` at any level means the client's own default: `None`, so no
+/// `--model` is passed.
 ///
 /// Codex/OpenCode rendered agent directories contain a single `model:` key,
 /// while the canonical `.zforge/agents` templates contain `codex_model:` and
 /// `opencode_model:`. Accept both so CLI dispatch, artifact metadata, and
 /// orchestrator telemetry can share one resolver.
 pub fn agent_model_for_phase_with_models(
+    agents_dir: &Path,
+    assistant: &str,
+    phase: &str,
+    models: Option<&ModelsConfig>,
+) -> Option<String> {
+    chosen_model(agents_dir, assistant, phase, models)
+        .or_else(|| crate::config::default_tier(assistant, phase).map(String::from))
+        .filter(|m| m != crate::config::INHERIT)
+}
+
+/// What the user chose for `(assistant, phase)`: models.yaml, else a model
+/// written into the agent definition.
+fn chosen_model(
     agents_dir: &Path,
     assistant: &str,
     phase: &str,

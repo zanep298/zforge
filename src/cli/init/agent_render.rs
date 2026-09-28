@@ -127,10 +127,10 @@ pub fn frontmatter_target_model(content: &str, target: &str) -> Option<String> {
     None
 }
 
-/// The model the user chose for `(target, phase)`: `models.yaml`, else a
-/// `model:` they wrote into the agent definition. zforge names no model of
-/// its own — models change too fast for a built-in choice to stay right —
-/// so `None` means the client's own default.
+/// The model for `(target, phase)`: the user's choice — `models.yaml`, else
+/// a `model:` they wrote into the agent definition — else zforge's default
+/// tier (`config::default_tier`: an alias such as `sonnet`, never a model
+/// name, so it follows new models). `None` means the client's own default.
 pub fn resolve_model(
     target: &str,
     phase: &str,
@@ -141,6 +141,7 @@ pub fn resolve_model(
         return Some(m.to_string());
     }
     frontmatter_target_model(template_content, target)
+        .or_else(|| crate::config::default_tier(target, phase).map(String::from))
 }
 
 /// The `model:` value written for `target`: the chosen model, or — for
@@ -248,12 +249,20 @@ text\n"
     }
 
     #[test]
-    fn nothing_chosen_means_the_clients_own_default() {
+    fn nothing_chosen_means_zforges_tier_or_the_clients_default() {
         let stripped = "---\nname: x\n---\nbody\n";
-        for target in ["claude", "codex", "opencode"] {
+        assert_eq!(
+            resolve_model("claude", "code", stripped, None).as_deref(),
+            Some("sonnet")
+        );
+        assert_eq!(
+            resolve_model("claude", "plan", stripped, None).as_deref(),
+            Some("opus")
+        );
+        for target in ["codex", "opencode"] {
             assert_eq!(resolve_model(target, "code", stripped, None), None);
         }
-        // Claude gets `inherit`; the others no `model:` line at all.
+        // Without a tier, Claude gets `inherit`; the others no `model:` line.
         assert_eq!(model_line_for("claude", None).as_deref(), Some("inherit"));
         assert_eq!(model_line_for("codex", None), None);
         let out = rewrite_frontmatter(stripped, None, "");

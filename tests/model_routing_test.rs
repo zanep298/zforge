@@ -144,7 +144,7 @@ fn claude_phase_code_gets_model_sonnet_injected() {
 
 #[test]
 #[serial]
-fn no_models_yaml_means_no_injection() {
+fn no_models_yaml_means_zforges_default_tier() {
     ensure_fake_agent_built();
     let _h = TestHome::new();
 
@@ -168,9 +168,11 @@ fn no_models_yaml_means_no_injection() {
     std::env::remove_var("FAKE_ARGV_DUMP");
 
     let argv = read_argv_dump(&dump_path);
-    assert!(
-        !argv.iter().any(|a| a == "--model"),
-        "no models.yaml → no --model injection, got: {argv:?}"
+    let pos = argv.iter().position(|a| a == "--model").expect("--model");
+    assert_eq!(
+        argv.get(pos + 1).map(|s| s.as_str()),
+        Some("opus"),
+        "no models.yaml → zforge's tier for plan, got: {argv:?}"
     );
 }
 

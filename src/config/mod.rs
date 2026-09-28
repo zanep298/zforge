@@ -314,6 +314,22 @@ impl PhaseModels {
     }
 }
 
+/// A model value meaning "the client's own default": written as-is into
+/// Claude's agent file, and no `--model` is passed.
+pub const INHERIT: &str = "inherit";
+
+/// zforge's default for `(client, phase)` when the user chose nothing: a
+/// *tier* — Anthropic's aliases, which follow the newest models — never a
+/// model name. Claude only; other clients have no stable tiers, so they run
+/// on their own default. Override with `zforge models set`.
+pub fn default_tier(client: &str, phase: &str) -> Option<&'static str> {
+    match (client, phase) {
+        ("claude", "plan" | "review") => Some("opus"),
+        ("claude", "spec" | "testspec" | "code") => Some("sonnet"),
+        _ => None,
+    }
+}
+
 /// Model configuration loaded from `models.yaml`. Top-level YAML keys are
 /// agent names (e.g. `claude`, `codex`, `opencode`, `agy`, or any custom name
 /// the user adds). Backward-compatible with the previous fixed-field shape:

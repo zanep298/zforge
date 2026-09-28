@@ -1,9 +1,11 @@
 //! `zforge models` — which model runs each phase, per client.
 //!
-//! zforge names no model of its own: models change faster than a built-in
-//! choice could follow. A phase runs on the model the user chose in
-//! `models.yaml` — the project's `.zforge/models.yaml` over the machine's
-//! `~/.zforge/models.yaml` — and otherwise on the client's own default.
+//! A phase runs on the model the user chose in `models.yaml` — the
+//! project's `.zforge/models.yaml` over the machine's `~/.zforge/models.yaml`
+//! — else a `model:` they wrote into the agent definition, else zforge's
+//! default *tier* (`config::default_tier`: `sonnet` / `opus` for Claude,
+//! aliases that follow new models; never a model name), else the client's
+//! own default. `inherit` chooses the client's default explicitly.
 //! `set` / `unset` edit one of those files in place (comments kept) and
 //! render the project's agent definitions again, so the definitions never
 //! lag behind the choice. Runs read `models.yaml` at every agent call.
@@ -32,7 +34,8 @@ pub enum ModelsCmd {
     Set {
         /// spec, testspec, plan, code, review — or `all`.
         phase: String,
-        /// As the client names it: `opus`, `sonnet`, a full model id, …
+        /// As the client names it: a tier (`opus`, `sonnet`, `haiku`), a full
+        /// model id, or `inherit` for the client's own default.
         model: String,
         #[arg(long, default_value = "claude")]
         client: String,
@@ -40,7 +43,7 @@ pub enum ModelsCmd {
         #[arg(long)]
         global: bool,
     },
-    /// Go back to the client's own default for a phase (`all` for every phase).
+    /// Go back to zforge's default for a phase (`all` for every phase).
     Unset {
         phase: String,
         #[arg(long, default_value = "claude")]
@@ -89,7 +92,8 @@ struct Row {
     client: &'static str,
     phase: &'static str,
     model: Option<String>,
-    /// `project`, `global`, `agent definition`, or `client default`.
+    /// `project`, `global`, `agent definition`, `zforge default` or
+    /// `client default`. A model of `inherit` is the client's default too.
     from: &'static str,
 }
 
@@ -110,7 +114,10 @@ fn show(project: Option<&config::Config>, json: bool) -> Result<()> {
                         .and_then(|p| crate::cli::init::model_in_definition(p, client, phase))
                     {
                         Some(m) => (Some(m), "agent definition"),
-                        None => (None, "client default"),
+                        None => match config::default_tier(client, phase) {
+                            Some(t) => (Some(t.to_string()), "zforge default"),
+                            None => (None, "client default"),
+                        },
                     }
                 }
             };
@@ -140,8 +147,9 @@ fn show(project: Option<&config::Config>, json: bool) -> Result<()> {
     }
     println!(
         "\n{}",
-        "A phase without a choice runs on the client's own default. \
-         Choose with `zforge models set <phase|all> <model> [--client C] [--global]`."
+        "zforge's defaults are tiers (`sonnet`, `opus`) that follow new models; `inherit` \
+         means the client's own default. Change with \
+         `zforge models set <phase|all> <model> [--client C] [--global]`."
             .dimmed()
     );
     Ok(())
@@ -188,7 +196,14 @@ fn change(
         std::fs::create_dir_all(dir)?;
     }
     crate::state::write_atomic(&path, text.as_bytes())?;
-    let what = model.map_or("the client's own default".to_string(), |m| format!("`{m}`"));
+    let what = match model {
+        Some(m) => format!("`{m}`"),
+        None if phases.len() == 1 => match config::default_tier(client, phases[0]) {
+            Some(t) => format!("zforge's default (`{t}`)"),
+            None => "the client's own default".to_string(),
+        },
+        None => "zforge's defaults".to_string(),
+    };
     println!(
         "{} {client} {} → {what} ({})",
         "✓".green(),

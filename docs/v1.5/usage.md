@@ -39,9 +39,10 @@ execution:
   budget_usd: 3.0
 ```
 
-**Chọn model.** zforge không tự đặt tên model nào; giai đoạn nào bạn chưa chọn
-thì chạy trên model mặc định của client (Claude Code: model bạn đặt bằng
-`/model`). Xem và chọn:
+**Chọn model.** Mặc định của zforge cho Claude là *hạng*, không phải tên model:
+`sonnet` cho spec, testspec và code; `opus` cho plan và review. Alias này do
+Anthropic cập nhật nên tự theo model mới. Codex và OpenCode không có hạng, nên
+dùng model mặc định của chính chúng. Xem và đổi:
 
 ```bash
 zforge models
@@ -51,7 +52,8 @@ zforge models set code sonnet
 ```
 
 `set all <model>` cho mọi giai đoạn, `--global` cho mọi project trên máy,
-`--client codex|opencode` cho client khác, `unset` để quay về mặc định. Lệnh
+`--client codex|opencode` cho client khác, `inherit` để dùng mặc định của client
+(Claude: model đặt bằng `/model`), `unset` để quay về mặc định của zforge. Lệnh
 sửa `models.yaml` (giữ comment) và cập nhật file agent ngay.
 
 ## 1. Intake: làm rõ và chốt

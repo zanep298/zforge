@@ -531,7 +531,8 @@ pub(super) struct Call<'a> {
 /// Run the agent in the worktree, record its trace, and return what it
 /// did with the cost it reported (if any). The caller records the events.
 pub(super) fn call_agent(c: &Call) -> Result<(spawn::SpawnOutcome, Option<f64>)> {
-    let (spec, named) = agent_spec(c.base, c.project_root, c.work_dir, c.left_usd, c.phase);
+    let model = model_for(c.config, c.project_root, c.phase);
+    let (spec, named) = agent_spec(c.base, c.work_dir, c.left_usd, c.phase, model.as_deref());
     let out = spawn::spawn_agent_in(&spec, c.prompt, c.timeout_secs, c.work_dir)?;
     let trace = crate::trace::from_invocation(crate::trace::Invocation {
         task_id: &c.run.id,
@@ -546,7 +547,7 @@ pub(super) fn call_agent(c: &Call) -> Result<(spawn::SpawnOutcome, Option<f64>)>
             c.phase,
             c.work_dir,
             &named,
-            model_for(c.project_root, c.phase).as_deref(),
+            model.as_deref(),
             Some(&c.config.project.language),
         ),
         stdout: &out.stdout,
@@ -571,18 +572,18 @@ pub(super) fn call_agent(c: &Call) -> Result<(spawn::SpawnOutcome, Option<f64>)>
 /// configured model, and the budget left.
 fn agent_spec(
     base: &AgentSpec,
-    project_root: &Path,
     work_dir: &Path,
     left_usd: f64,
     phase: &str,
+    model: Option<&str>,
 ) -> (AgentSpec, NamedAgent) {
     let mut spec = base.clone();
     let mut args = headless_args::headless_args_for_agent(RUNNER);
     args.append(&mut spec.args);
     let named = named_agent_for(RUNNER, phase, work_dir);
     args.extend(named.args());
-    if let Some(model) = model_for(project_root, phase) {
-        args.extend(model_args::model_args_for_agent(RUNNER, &model));
+    if let Some(model) = model {
+        args.extend(model_args::model_args_for_agent(RUNNER, model));
     }
     args.push("--max-budget-usd".into());
     args.push(format!("{left_usd:.2}"));
@@ -590,10 +591,14 @@ fn agent_spec(
     (spec, named)
 }
 
-fn model_for(project_root: &Path, phase: &str) -> Option<String> {
-    crate::config::load_models_from_root(project_root)?
-        .for_assistant(RUNNER, phase)
-        .map(str::to_string)
+fn model_for(config: &Config, project_root: &Path, phase: &str) -> Option<String> {
+    let models = crate::config::load_models_from_root(project_root);
+    crate::fs::reader::agent_model_for_phase_with_models(
+        &config.agents_dir(),
+        RUNNER,
+        phase,
+        models.as_ref(),
+    )
 }
 
 fn feedback_text(prev: &VerifyOutcome, output: &str) -> String {
