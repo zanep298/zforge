@@ -33,15 +33,6 @@ pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<usize> {
     let mut created = 0usize;
     let mut skipped = 0usize;
 
-    // Prompt templates (.tmpl) — read by Engine
-    for (name, body) in embedded::PROMPT_TEMPLATES {
-        if write_safe(&agents_dir.join(name), body, force)? {
-            created += 1;
-        } else {
-            skipped += 1;
-        }
-    }
-
     // Agent definitions (.md) — source material for Claude Code / OpenCode /
     // Codex project-local agent files.
     for (name, body) in embedded::AGENTS {
@@ -54,10 +45,9 @@ pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<usize> {
 
     if !quiet {
         println!(
-            "{} {} — {} prompt templates + {} agent definitions",
+            "{} {} — {} agent definitions",
             label(created > 0),
             display_path(&agents_dir),
-            embedded::PROMPT_TEMPLATES.len(),
             embedded::AGENTS.len(),
         );
     }
@@ -122,7 +112,7 @@ fn display_path(path: &Path) -> String {
 pub fn ensure_global_store() -> Result<PathBuf> {
     let root = embedded::global_store_dir()
         .ok_or_else(|| anyhow!("cannot determine home directory for ~/.zforge/"))?;
-    let marker = root.join("agents").join("spec-agent.md");
+    let marker = root.join("agents").join("code-agent.md");
     if !marker.exists() {
         eprintln!(
             "{} ~/.zforge/ not initialized — running first-time install…",
@@ -143,16 +133,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let written = install_into(tmp.path(), /* force */ false, /* quiet */ true).unwrap();
 
-        let expected = embedded::PROMPT_TEMPLATES.len()
-            + embedded::AGENTS.len()
-            + embedded::SKILLS.len()
-            + embedded::all_lang_skills().len();
+        let expected =
+            embedded::AGENTS.len() + embedded::SKILLS.len() + embedded::all_lang_skills().len();
         assert_eq!(written, expected);
 
         // Spot-check key files
-        assert!(tmp.path().join("agents/spec.tmpl").exists());
-        assert!(tmp.path().join("agents/spec-agent.md").exists());
-        assert!(tmp.path().join("skills/clarify-spec.md").exists());
+        assert!(tmp.path().join("agents/code-agent.md").exists());
+        assert!(tmp.path().join("skills/review-patch.md").exists());
         assert!(tmp.path().join("skills/rust-patterns.md").exists());
         assert!(tmp.path().join("skills/flutter-patterns.md").exists());
         assert!(tmp.path().join("skills/backend/api-contracts.md").exists());
@@ -162,7 +149,7 @@ mod tests {
     fn install_into_skips_existing_without_force() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("agents")).unwrap();
-        let preexisting = tmp.path().join("agents/spec.tmpl");
+        let preexisting = tmp.path().join("agents/code-agent.md");
         std::fs::write(&preexisting, "USER EDIT").unwrap();
 
         install_into(tmp.path(), /* force */ false, /* quiet */ true).unwrap();
@@ -175,7 +162,7 @@ mod tests {
     fn install_into_overwrites_with_force() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("agents")).unwrap();
-        let target = tmp.path().join("agents/spec.tmpl");
+        let target = tmp.path().join("agents/code-agent.md");
         std::fs::write(&target, "USER EDIT").unwrap();
 
         install_into(tmp.path(), /* force */ true, /* quiet */ true).unwrap();

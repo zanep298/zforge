@@ -2,54 +2,63 @@
 
 ## Purpose
 
-Review a completed implementation against its approved spec, testspec, and plan.
-Surface spec drift, missing test coverage, regression risk, and maintainability
-concerns. Produce a written verdict the team can act on.
+Decide whether a change meets its task contract — the one the user accepted —
+and say exactly what must change when it does not. Passing tests show the
+suite is green, not that the contract is met; check both.
 
 ## When to Use
 
-- After `zforge verify` passes and before marking a task Reviewed
-- When generating review-summary.md
-- When deciding whether to approve or request changes on a PR
+- Reviewing a run's work after its tests pass (`execution.review: true`
+  starts `review-agent` with this checklist preloaded)
+- Reviewing any change made for a zforge task before it is merged
 
 ## Required Inputs
 
-- `spec.md` — what was approved
-- `testspec.md` — what tests were required
-- `plan.md` — what implementation was approved
-- `verify.md` — actual test results
-- The implementation diff or changed files
+- The task contract: Output, Ràng buộc (constraints), Tự chủ (what the
+  implementer could decide), the acceptance criteria `AC-nn`, and
+  `tests_may_change` if the user allowed a test to change
+- The binding decisions ("Quyết định bắt buộc") of the accepted solution
+- The diff from the commit the task started from (`git diff <start>`) and
+  `git status`
+- The test command and its result
 
 ## Expected Outputs
 
-A `review-summary.md` with a clear verdict on each of the following:
+Findings, one per line starting with `- `, each naming the file and what must
+change, then exactly one verdict line:
 
-- **Spec coverage** — does the implementation satisfy every acceptance criterion?
-- **Test coverage** — does the test suite cover every case in testspec.md?
-- **Unplanned changes** — anything changed that was not in the plan
-- **Regression risk** — what could break in adjacent code
-- **Readability and maintainability** — is the code clear enough for the next engineer?
+```
+VERDICT: APPROVE
+```
+
+or
+
+```
+VERDICT: CHANGES
+```
 
 ## Checklist
 
-- [ ] Every acceptance criterion in spec.md is checked — passed or flagged
-- [ ] Every test case in testspec.md is accounted for — present or missing
-- [ ] Unplanned changes are documented — each one marked acceptable or concern
-- [ ] Regression risk is assessed with specific files or behaviors called out
-- [ ] Review summary includes a verdict: approved / approved-with-notes / changes-requested
-- [ ] Patterns worth keeping are listed for memory/patterns.md
-- [ ] Anti-patterns discovered are listed for memory/anti-patterns.md
+- [ ] Every `AC-nn` is met by the code — trace each one to where it happens
+- [ ] Every `AC-nn` is proven by a test that would fail without the change
+- [ ] Nothing changed outside the contract's Output and constraints
+- [ ] Every binding decision is kept; choices under Tự chủ are the implementer's
+- [ ] No test was weakened, skipped or deleted (outside `tests_may_change`)
+- [ ] No placeholder, dead code, debug output or silenced error in production paths
+- [ ] Regression risk named with the specific behavior or file that could break
 
 ## Constraints
 
-- Base every finding on evidence — cite the file, function, or test case
-- Calibrate severity honestly: minor style issues are not blockers
-- A passing test run does not guarantee spec coverage — check both
+- Base every finding on evidence — cite the file, function, test or `AC-nn`
+- Read and run read-only commands only; do not change any file
+- Ask for changes only for what breaks the contract or a checklist item — not
+  for style or preference
+- When the contract itself looks wrong, say so as a finding; the fix is an
+  amendment to the intake, not a change the implementer can make alone
 
 ## Do Not Do
 
-- Do not implement fixes — only identify and describe them
-- Do not approve with "looks good" — every section must have explicit content
-- Do not ignore unplanned changes even if the result is acceptable
+- Do not implement fixes — describe them
+- Do not approve with "looks good": each checklist item is checked or named
+- Do not treat a green test run as proof that every criterion is covered
 - Do not inflate minor issues into blockers
-- Do not skip checking that testspec.md coverage is complete in the actual test code

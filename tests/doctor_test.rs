@@ -208,10 +208,10 @@ fn missing_claude_fails_the_run() {
 #[test]
 fn a_broken_agent_definition_fails_the_run() {
     let env = Env::new();
-    let f = env.project.join(".claude/agents/plan-agent.md");
+    let f = env.project.join(".claude/agents/review-agent.md");
     let body = std::fs::read_to_string(&f)
         .unwrap()
-        .replace("name: plan-agent", "name: x");
+        .replace("name: review-agent", "name: x");
     std::fs::write(&f, body).unwrap();
 
     let (code, c) = env.doctor();
@@ -220,7 +220,7 @@ fn a_broken_agent_definition_fails_the_run() {
     assert!(c["agents"]["detail"]
         .as_str()
         .unwrap()
-        .contains("plan-agent"));
+        .contains("review-agent"));
 }
 
 /// A registered file is not a working server: absent, pending approval and
@@ -316,7 +316,7 @@ fn text_report_names_fixes() {
 fn native_skill_checks() {
     let env = Env::new();
     let skills = env.project.join(".claude/skills");
-    assert!(skills.join("zforge-clarify-spec/SKILL.md").is_file());
+    assert!(skills.join("zforge-review-patch/SKILL.md").is_file());
 
     std::fs::write(
         env.dir("mcp").join("validate-skills.txt"),

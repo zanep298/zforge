@@ -15,7 +15,7 @@ and dependency risk.
 ## Required Inputs
 
 - The implementation diff or changed files
-- `spec.md` — intended behavior and trust boundaries
+- The task contract and accepted stages — intended behavior and trust boundaries
 
 ## Expected Outputs
 

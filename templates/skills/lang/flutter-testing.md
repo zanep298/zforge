@@ -17,7 +17,7 @@ the prompt you work from names it.
 
 ## Test-First Rule
 
-1. Write the failing test for the testspec case ID.
+1. Write the failing test for the acceptance criterion (`AC-nn`).
 2. Run the test command and confirm the expected failure.
 3. Implement the minimum code to pass.
 4. Run the test command again.

@@ -1,63 +1,31 @@
 # .zforge — {{project_name}}
 
-This directory contains the agents, skills, and memory for your zforge workflow.
-OpenCode reads agent files as instructions. Skills are reference checklists.
+zforge's working directory for this project.
+
+| Path | What it holds | Edit it? |
+|------|---------------|----------|
+| `config.yaml` | Test command, runner, execution policy (`budget_usd`, `max_iterations`, `review`), knowledge baseline | yes |
+| `models.yaml` | Which model runs each phase (`code`, `review`); `zforge models` shows and sets it | yes |
+| `intakes/<ID>/` | An intake: `01-outcome.md` … `04-breakdown.md`, `tasks/`, `changes/` | yes — then send for review |
+| `intakes/<ID>/.records/` | Revisions, decisions, handover manifests | no — written by zforge |
+| `runs/RUN-nnn/` | A run: `run.yaml`, `events.jsonl` (the source of truth), `progress.md`, `result.md` | no |
+| `worktrees/<RUN>/` | A run's worktree, on branch `zforge/<task>/<run>` | no — `zforge run clean <RUN>` |
+| `knowledge/` | `index.md` / `index.json`: each requirement, decided and built | no — `zforge knowledge index` |
 
 ## Workflow
 
 ```
-zforge task import TASK-123     →  create task stub
-zforge spec TASK-123            →  generate spec prompt  →  fill spec.md in OpenCode
-zforge spec TASK-123 --done     →  mark spec complete
-zforge testspec TASK-123        →  generate testspec prompt  →  fill testspec.md
-zforge testspec TASK-123 --done →  mark testspec complete
-zforge approve TASK-123 testspec   ← human gate
-zforge plan TASK-123            →  generate plan prompt  →  fill plan.md
-zforge plan TASK-123 --done     →  mark plan complete
-zforge approve TASK-123 plan       ← human gate
-zforge code TASK-123            →  generate code prompt  →  implement in OpenCode
-zforge code TASK-123 --done     →  mark coding complete
-zforge verify TASK-123          →  run {{test_command}}
-zforge ship TASK-123            →  shortcut: code + verify in one step (idempotent)
-zforge review TASK-123          →  generate review prompt  →  fill review-summary.md
-zforge review TASK-123 --done   →  extract patterns, mark complete
+zforge intake new FEAT                 →  write the four stage files and tasks/
+zforge intake review FEAT <file>       →  send a file for review
+zforge intake accept FEAT <file>          ← the user, in a terminal
+zforge readiness FEAT                  →  can it be handed over?
+zforge handover FEAT                      ← the user, in a terminal
+zforge run HANDOVER-001                →  every task: code → {{test_command}} → sealed output;
+                                          then the integration check
+zforge status                          →  where each intake stands and what to do next
 ```
 
-Human gates are mandatory. `zforge plan` is blocked until testspec is approved.
-`zforge code` is blocked until plan is approved.
-
-## Agents
-
-| File | Purpose |
-|------|---------|
-| `agents/spec-agent.md` | Clarifies requirements, produces scoped spec |
-| `agents/testspec-agent.md` | Derives test cases from approved spec |
-| `agents/plan-agent.md` | Creates concrete implementation plan |
-| `agents/code-agent.md` | Implements approved plan, tests first |
-| `agents/review-agent.md` | Reviews completed implementation |
-
-Load an agent in OpenCode with `/agent .zforge/agents/spec-agent.md`.
-
-## Skills
-
-| File | Used by |
-|------|---------|
-| `skills/clarify-spec.md` | spec-agent |
-| `skills/derive-test-cases.md` | testspec-agent |
-| `skills/implementation-planning.md` | plan-agent |
-| `skills/write-tests-first.md` | code-agent |
-| `skills/implement-minimal-patch.md` | code-agent |
-| `skills/review-patch.md` | review-agent |
-
-Skills are checklists and constraints. Reference them in your agent prompts with
-`/file {{skills_dir}}/<name>.md`.
-
-## Memory
-
-| File | Purpose |
-|------|---------|
-| `memory/patterns.md` | Approved patterns extracted from reviews |
-| `memory/anti-patterns.md` | Lessons learned from failed verifications |
-| `memory/domain-glossary.md` | Project terminology and ubiquitous language |
-
-Memory files grow automatically when you run `zforge review --done`.
+Skills are checklists in `{{skills_dir}}/` (for example
+`{{skills_dir}}/review-patch.md`); agent definitions sit in the `agents/`
+directory next to it. `zforge init --force` refreshes the copies each client
+reads.

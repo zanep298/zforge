@@ -11,14 +11,9 @@
 //! - **[`OperationOutcome::Blocked`]** — a precondition gate refused the
 //!   request. No work was attempted and no state changed.
 //!
-//! Before this type existed, `Failed` and `Blocked` were both flattened into
-//! `Ok(())` and surfaced as exit code 0, so `zforge verify` reported success
-//! while `verify.md` recorded `passed: false`, and `ship --async` marked the
-//! job successful on a red test suite.
-//!
-//! Every transport renders the same outcome its own way — the CLI maps it to
-//! an exit code, the MCP server to `isError`, the job worker to a terminal job
-//! status — but none of them may invent a different verdict.
+//! Flattening `Failed` and `Blocked` into `Ok(())` would surface them as exit
+//! code 0 — a red result reported as success. The CLI maps each outcome to
+//! its own exit code instead.
 
 use std::process::ExitCode;
 

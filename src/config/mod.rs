@@ -19,11 +19,7 @@ pub enum ConfigError {
 pub struct Config {
     pub project: ProjectConfig,
     #[serde(default)]
-    pub opencode: OpencodeConfig,
-    #[serde(default)]
     pub paths: PathsConfig,
-    #[serde(default)]
-    pub review: ReviewConfig,
     #[serde(default)]
     pub runner: RunnerConfig,
     #[serde(default)]
@@ -35,8 +31,7 @@ pub struct Config {
     pub config_file: PathBuf,
 }
 
-/// Which agent CLI runs phases for tasks imported without `--agent`.
-/// Written by `zforge init` (FIX-015); a task's own `--agent` still wins.
+/// The client `zforge init` set up as the project's default (FIX-015).
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RunnerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,34 +116,14 @@ pub struct ProjectConfig {
     pub language: String,
     #[serde(default = "default_test_command")]
     pub test_command: String,
-    #[serde(default = "default_root_dir")]
-    pub root_dir: PathBuf,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct OpencodeConfig {
-    #[serde(default = "default_model")]
-    pub model: String,
-    #[serde(default)]
-    pub context_files: Vec<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PathsConfig {
-    #[serde(default = "default_tasks_path")]
-    pub tasks: PathBuf,
     #[serde(default = "default_agents_path")]
     pub agents: PathBuf,
-    #[serde(default = "default_memory_path")]
-    pub memory: PathBuf,
     #[serde(default = "default_skills_path")]
     pub skills: PathBuf,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ReviewConfig {
-    #[serde(default)]
-    pub auto_approve: bool,
 }
 
 fn default_language() -> String {
@@ -159,45 +134,18 @@ fn default_test_command() -> String {
     "cargo test".to_string()
 }
 
-fn default_root_dir() -> PathBuf {
-    PathBuf::from(".")
-}
-
-fn default_model() -> String {
-    "claude-sonnet-4-6".to_string()
-}
-
-fn default_tasks_path() -> PathBuf {
-    PathBuf::from("./.zforge/tasks")
-}
-
 fn default_agents_path() -> PathBuf {
     PathBuf::from("./.zforge/agents")
-}
-
-fn default_memory_path() -> PathBuf {
-    PathBuf::from("./.zforge/memory")
 }
 
 fn default_skills_path() -> PathBuf {
     PathBuf::from("./.zforge/skills")
 }
 
-impl Default for OpencodeConfig {
-    fn default() -> Self {
-        Self {
-            model: default_model(),
-            context_files: vec![],
-        }
-    }
-}
-
 impl Default for PathsConfig {
     fn default() -> Self {
         Self {
-            tasks: default_tasks_path(),
             agents: default_agents_path(),
-            memory: default_memory_path(),
             skills: default_skills_path(),
         }
     }
@@ -215,10 +163,6 @@ impl Config {
         Ok(())
     }
 
-    pub fn tasks_dir(&self) -> PathBuf {
-        self.resolve_path(&self.paths.tasks)
-    }
-
     pub fn agents_dir(&self) -> PathBuf {
         self.resolve_path(&self.paths.agents)
     }
@@ -226,10 +170,6 @@ impl Config {
     /// The skills store this project uses (`paths.skills`), absolute.
     pub fn skills_dir(&self) -> PathBuf {
         self.resolve_path(&self.paths.skills)
-    }
-
-    pub fn memory_dir(&self) -> PathBuf {
-        self.resolve_path(&self.paths.memory)
     }
 
     #[allow(dead_code)]
@@ -291,12 +231,14 @@ fn expand_tilde(p: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Per-phase model selection for one coding assistant.
+/// The phases a run calls an agent for: `code` writes the change, `review`
+/// (optional, `execution.review`) checks it against the contract.
+pub const PHASES: [&str; 2] = ["code", "review"];
+
+/// Per-phase model selection for one coding assistant. Keys of phases that
+/// no longer exist (`spec`, `testspec`, `plan`) are ignored.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct PhaseModels {
-    pub spec: Option<String>,
-    pub testspec: Option<String>,
-    pub plan: Option<String>,
     pub code: Option<String>,
     pub review: Option<String>,
 }
@@ -304,9 +246,6 @@ pub struct PhaseModels {
 impl PhaseModels {
     pub fn for_phase(&self, phase: &str) -> Option<&str> {
         match phase {
-            "spec" => self.spec.as_deref(),
-            "testspec" => self.testspec.as_deref(),
-            "plan" => self.plan.as_deref(),
             "code" => self.code.as_deref(),
             "review" => self.review.as_deref(),
             _ => None,
@@ -324,8 +263,8 @@ pub const INHERIT: &str = "inherit";
 /// on their own default. Override with `zforge models set`.
 pub fn default_tier(client: &str, phase: &str) -> Option<&'static str> {
     match (client, phase) {
-        ("claude", "plan" | "review") => Some("opus"),
-        ("claude", "spec" | "testspec" | "code") => Some("sonnet"),
+        ("claude", "review") => Some("opus"),
+        ("claude", "code") => Some("sonnet"),
         _ => None,
     }
 }
@@ -359,15 +298,6 @@ impl ModelsConfig {
 }
 
 fn overlay_phases(base: &mut PhaseModels, top: PhaseModels) {
-    if top.spec.is_some() {
-        base.spec = top.spec;
-    }
-    if top.testspec.is_some() {
-        base.testspec = top.testspec;
-    }
-    if top.plan.is_some() {
-        base.plan = top.plan;
-    }
     if top.code.is_some() {
         base.code = top.code;
     }
@@ -502,17 +432,24 @@ mod tests {
         let cfg = load_from(&path).unwrap();
         assert_eq!(cfg.project.language, "rust");
         assert_eq!(cfg.project.test_command, "cargo test");
-        assert_eq!(cfg.opencode.model, "claude-sonnet-4-6");
-        assert!(!cfg.review.auto_approve);
+        assert_eq!(cfg.execution.max_iterations, 3);
+        assert_eq!(cfg.execution.budget_usd, None);
     }
 
+    /// Keys of the removed task pipeline (`opencode`, `review`,
+    /// `paths.tasks`, `paths.memory`) are ignored, not an error.
     #[test]
-    fn test_tasks_dir_absolute() {
+    fn a_config_from_the_task_pipeline_still_loads() {
         let tmp = TempDir::new().unwrap();
-        let path = write_config(&tmp, "project:\n  name: myapp\n");
+        let path = write_config(
+            &tmp,
+            "project:\n  name: myapp\n  root_dir: .\nopencode:\n  model: x\n\
+             paths:\n  tasks: ./.zforge/tasks\n  memory: ./.zforge/memory\n\
+             review:\n  auto_approve: false\n",
+        );
         let cfg = load_from(&path).unwrap();
-        let tasks = cfg.tasks_dir();
-        assert!(tasks.is_absolute());
+        assert_eq!(cfg.project.name, "myapp");
+        assert!(cfg.skills_dir().is_absolute());
     }
 
     #[test]
@@ -533,21 +470,22 @@ mod tests {
     fn models_config_parses_arbitrary_agent_keys() {
         // BTreeMap-flattened — any top-level key becomes an agent entry,
         // including custom names the user adds.
-        let yaml = "claude:\n  plan: opus\nmystery_agent:\n  code: gpt-5\n";
+        let yaml = "claude:\n  review: opus\nmystery_agent:\n  code: gpt-5\n";
         let cfg: ModelsConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.for_assistant("claude", "plan"), Some("opus"));
+        assert_eq!(cfg.for_assistant("claude", "review"), Some("opus"));
         assert_eq!(cfg.for_assistant("mystery_agent", "code"), Some("gpt-5"));
-        assert_eq!(cfg.for_assistant("missing", "plan"), None);
+        assert_eq!(cfg.for_assistant("missing", "review"), None);
     }
 
     #[test]
-    fn models_config_legacy_three_agent_yaml_still_loads() {
-        // The pre-PR7 shape with fixed claude/codex/opencode keys must keep
-        // working without migration.
-        let yaml =
-            "claude:\n  plan: opus\ncodex:\n  code: zforge_code\nopencode:\n  review: haiku\n";
+    fn models_yaml_with_removed_phases_still_loads() {
+        // `spec`, `testspec` and `plan` were phases once; a file that still
+        // names them loads, and they are ignored.
+        let yaml = "claude:\n  plan: opus\n  code: sonnet\ncodex:\n  code: zforge_code\n\
+                    opencode:\n  review: haiku\n";
         let cfg: ModelsConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.for_assistant("claude", "plan"), Some("opus"));
+        assert_eq!(cfg.for_assistant("claude", "plan"), None);
+        assert_eq!(cfg.for_assistant("claude", "code"), Some("sonnet"));
         assert_eq!(cfg.for_assistant("codex", "code"), Some("zforge_code"));
         assert_eq!(cfg.for_assistant("opencode", "review"), Some("haiku"));
     }
@@ -558,9 +496,8 @@ mod tests {
         global.agents.insert(
             "claude".into(),
             PhaseModels {
-                plan: Some("opus".into()),
+                review: Some("opus".into()),
                 code: Some("sonnet".into()),
-                ..PhaseModels::default()
             },
         );
         let mut local = ModelsConfig::default();
@@ -572,8 +509,8 @@ mod tests {
             },
         );
         let merged = global.overlay(local);
-        // plan inherited from global; code overridden by local.
-        assert_eq!(merged.for_assistant("claude", "plan"), Some("opus"));
+        // review inherited from global; code overridden by local.
+        assert_eq!(merged.for_assistant("claude", "review"), Some("opus"));
         assert_eq!(merged.for_assistant("claude", "code"), Some("haiku"));
     }
 
@@ -584,12 +521,12 @@ mod tests {
         local.agents.insert(
             "agy".into(),
             PhaseModels {
-                spec: Some("agy-mini".into()),
+                code: Some("agy-mini".into()),
                 ..PhaseModels::default()
             },
         );
         let merged = global.overlay(local);
-        assert_eq!(merged.for_assistant("agy", "spec"), Some("agy-mini"));
+        assert_eq!(merged.for_assistant("agy", "code"), Some("agy-mini"));
     }
 
     #[test]

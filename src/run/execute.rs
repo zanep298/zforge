@@ -33,7 +33,7 @@ pub const RUNNER: &str = "claude";
 const MIN_ALLOTMENT_USD: f64 = 0.01;
 /// Lines of test output handed back to the agent after a failed verification.
 const FEEDBACK_LINES: usize = 60;
-/// Test suite time limit, as `zforge verify`'s default.
+/// Test suite time limit.
 const TEST_TIMEOUT_SECS: u64 = 300;
 
 /// Why a run stopped before the verifier loop finished.

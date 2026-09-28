@@ -12,6 +12,9 @@
 //! - entries zforge itself used to write and no longer does
 //!   ([`RETIRED_ALLOW`]) are removed — no other entry is ever dropped.
 //!
+//! Every allowed zforge tool prepares or observes; the user's decisions are
+//! denied (D1).
+//!
 //! Without `--force` an existing file is left alone, as before.
 
 use anyhow::{bail, Context, Result};
@@ -22,12 +25,20 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
   "permissions": {
     "allow": [
       "Bash(zforge *)",
-      "mcp__zforge__task_import",
-      "mcp__zforge__get_prompt",
-      "mcp__zforge__approve",
-      "mcp__zforge__verify",
-      "mcp__zforge__ship",
       "mcp__zforge__status",
+      "mcp__zforge__intake_new",
+      "mcp__zforge__intake_task",
+      "mcp__zforge__intake_status",
+      "mcp__zforge__intake_diff",
+      "mcp__zforge__intake_review",
+      "mcp__zforge__change_new",
+      "mcp__zforge__readiness",
+      "mcp__zforge__knowledge_index",
+      "mcp__zforge__run_start",
+      "mcp__zforge__run_status",
+      "mcp__zforge__run_log",
+      "mcp__zforge__run_list",
+      "mcp__zforge__run_cancel",
       "mcp__codegraph__codegraph_search",
       "mcp__codegraph__codegraph_context",
       "mcp__codegraph__codegraph_files",
@@ -52,12 +63,17 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
 "#;
 
 /// Allow entries earlier zforge versions wrote that name tools which no
-/// longer exist (CodeGraph before 0.9).
-const RETIRED_ALLOW: [&str; 4] = [
+/// longer exist: CodeGraph before 0.9, and the v1 task pipeline's tools.
+const RETIRED_ALLOW: [&str; 9] = [
     "mcp__codegraph__query",
     "mcp__codegraph__context",
     "mcp__codegraph__files",
     "mcp__codegraph__affected",
+    "mcp__zforge__task_import",
+    "mcp__zforge__get_prompt",
+    "mcp__zforge__approve",
+    "mcp__zforge__verify",
+    "mcp__zforge__ship",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -186,7 +202,7 @@ mod tests {
         let user = json!({
             "env": {"FOO": "1"},
             "permissions": {
-                "allow": ["Bash(make *)", "mcp__codegraph__query", "mcp__zforge__ship"],
+                "allow": ["Bash(make *)", "mcp__codegraph__query", "mcp__zforge__status"],
                 "deny": ["Bash(rm -rf *)"]
             },
             "hooks": {"Stop": [{"command": "make lint"}]}
@@ -209,7 +225,7 @@ mod tests {
         );
         let allow = out["permissions"]["allow"].as_array().unwrap();
         assert_eq!(allow[0], "Bash(make *)", "user entries keep their place");
-        assert_eq!(allow[1], "mcp__zforge__ship");
+        assert_eq!(allow[1], "mcp__zforge__status");
         assert!(
             !allow.contains(&json!("mcp__codegraph__query")),
             "retired CodeGraph name removed"

@@ -3,81 +3,69 @@
 **Language:** {{language}}
 **Test command:** `{{test_command}}`
 **Workflow manager:** zforge
-**AI agent:** OpenAI Codex CLI
 
 ---
 
 ## Workflow
 
-This project uses a gated TDD workflow managed by `zforge`. Every task moves through
-the phases of its **flow** (chosen at import time, recorded in `.state.yaml`).
+Work is agreed before it is built. zforge keeps the agreement in an **intake**
+(`.zforge/intakes/<ID>/`) and builds it in **runs**, each in its own git
+worktree, so the user's checkout is never touched.
 
 ```
-task import → spec → testspec → [APPROVE testspec] → plan → [APPROVE plan] → code → verify → review
+intake new → write 01-outcome … 04-breakdown + tasks/ → review → [USER accepts]
+          → readiness → [USER hands over] → run (code → verify, per task)
+          → integration check → merge → knowledge index
 ```
 
-The default `full` flow shown above runs every phase. Shorter presets skip phases
-that don't make sense for smaller work:
+| Stage | Command | Who |
+|-------|---------|-----|
+| Start an intake | `zforge intake new <ID>`, `zforge intake task <ID> <TASK>` | agent or user |
+| Send a file for review | `zforge intake review <ID> <file>` | agent or user |
+| Accept or ask for changes | `zforge intake accept\|revise <ID> <file>` | **user, in a terminal** |
+| Check it can be handed over | `zforge readiness <ID>` | agent or user |
+| Hand over | `zforge handover <ID>` | **user, in a terminal** |
+| Build every task, then check integration | `zforge run <HANDOVER> [--async]` | agent or user |
+| Follow a run or a handover | `zforge run status\|log\|cancel <ID>` | agent or user |
+| Record what is built | `zforge knowledge index` | agent or user |
 
-| Flow | Phases | Pick when |
-|------|--------|-----------|
-| `full` (default) | full pipeline above | Features, risky changes |
-| `fixbug` | spec → testspec → code → verify | Bug with a clear reproducer |
-| `spike` | spec → code | Research, throwaway prototypes |
-| `docs` | code | Docs / README / comments only |
+Accepting, asking for changes and handing over are the user's decisions. They
+need an interactive terminal and a typed confirmation; there is no flag, env
+var or MCP tool that makes them for you. Prepare the files, send them for
+review, and tell the user what to decide.
 
-```bash
-zforge task import BUG-42 --flow fixbug --title "Login crash"
+Runs execute with Claude Code (`claude`), whichever client prepared the
+intake. Where things stand, and the next command, for every intake:
+
 ```
-
-Always check the active flow + state first:
-
+zforge status
 ```
-zforge status <TASK-ID>
-```
-
-The `Next:` line in `zforge status` (and every phase command's output) already
-follows the active flow — trust it. Phases that are not part of the flow fail with
-a clear error.
-
-Never skip a phase that is in the flow. For the `full` flow, never write code before
-testspec and plan are both approved.
 
 ---
 
-## Before Implementing Any Task
+## When You Are Asked To Build Something
 
-Read whichever of these files exist (short flows skip some):
-
-```
-.zforge/tasks/<TASK-ID>/task.md
-.zforge/tasks/<TASK-ID>/spec.md          # missing on docs flow
-.zforge/tasks/<TASK-ID>/testspec.md      # missing on spike/docs flows
-.zforge/tasks/<TASK-ID>/plan.md          # missing on fixbug/spike/docs flows
-.zforge/memory/patterns.md
-.zforge/memory/anti-patterns.md
-```
-
-Follow the approved plan exactly when one exists. On shorter flows without a plan,
-follow `task.md` + `spec.md` directly.
+- If there is no intake for it yet, help the user write one (the intake
+  skill below). Ask about anything the files leave open; list it as an open
+  question (`- [ ]`) rather than guessing.
+- If a handover exists, run it (`zforge run <HANDOVER>`) instead of editing
+  the code yourself.
+- If a run stopped, read `zforge run status <RUN>` first. A task that cannot
+  be done as agreed needs an amendment to the intake, handed over again.
 
 ---
 
 {{lang_skills_section}}
 ## Workflow Skills
 
-Use these skill files as checklists during each phase:
+Load the file before starting that work:
 
-| Phase | Skill file |
-|-------|-----------|
-| Writing spec | `{{skills_dir}}/clarify-spec.md` |
-| Deriving tests | `{{skills_dir}}/derive-test-cases.md` |
-| Planning | `{{skills_dir}}/implementation-planning.md` |
+| When | Skill file |
+|------|-----------|
+| Preparing an intake | `{{skills_dir}}/intake.md` |
 | Writing tests | `{{skills_dir}}/write-tests-first.md` |
-| Implementing | `{{skills_dir}}/implement-minimal-patch.md` |
-| Reviewing | `{{skills_dir}}/review-patch.md` |
-
-Load the file directly before starting that phase.
+| Implementing a task | `{{skills_dir}}/implement-minimal-patch.md` |
+| Reviewing a change against its contract | `{{skills_dir}}/review-patch.md` |
 
 ---
 
@@ -104,81 +92,37 @@ Load these only when the task touches that area:
 
 ## MCP Tools
 
-zforge registers an MCP server (`zforge mcp`) globally at `~/.codex/config.toml`
-under the `[mcp_servers.zforge]` table. Run `zforge mcp register --agent codex` to
-add or refresh the entry.
+`zforge mcp register --agent codex` (or `--agent opencode`) registers zforge.
+The tools prepare and observe; none of them accepts, revises or hands over.
 
-Available tools: `task_import`, `get_prompt`, `approve`, `status`, `verify`, `ship`
-
-`ship` combines the `Coded` state advance + `verify` into a single tool call — call it after you've finished writing code from `get_prompt(phase="code")` instead of advancing state and calling `verify` separately.
-
-## Agents
-
-Workflow agent prompts live in `.codex/agents/`. They are materialized from the
-zforge agent templates with a Codex-specific `model:` frontmatter line.
-Reference them when running each pipeline phase:
-
-| Phase | Agent prompt |
-|-------|--------------|
-| `zforge spec <ID>` | `.codex/agents/spec-agent.md` |
-| `zforge testspec <ID>` | `.codex/agents/testspec-agent.md` |
-| `zforge plan <ID>` | `.codex/agents/plan-agent.md` |
-| `zforge code <ID>` | `.codex/agents/code-agent.md` |
-| `zforge review <ID>` | `.codex/agents/review-agent.md` |
-
-## Codex Profiles
-
-`zforge init` writes per-phase model profiles to `~/.codex/config.toml` from the
-same resolved models used in `.codex/agents/`. Edit `.zforge/models.yaml` and
-re-run `zforge init --agent codex --force` to change them:
-
-| Profile | Phase | Default model |
-|---------|-------|---------------|
-| `zforge_spec` | spec | `gpt-5.4-mini` |
-| `zforge_testspec` | testspec | `gpt-5.4-mini` |
-| `zforge_plan` | plan | `gpt-5.4` |
-| `zforge_code` | code | `gpt-5.3-codex` |
-| `zforge_review` | review | `gpt-5.4` |
-
-```bash
-codex --profile zforge_code "implement the approved plan for TASK-123"
-```
-
-Override a model by editing `.zforge/models.yaml`, or by editing the
-`[profiles.zforge_<phase>]` block in `~/.codex/config.toml` for a one-off local
-change.
+| Tool | Use |
+|------|-----|
+| `status` | Every intake, its handovers and runs, and the next step (`global` for all projects) |
+| `intake_new`, `intake_task` | Start an intake or a task contract |
+| `intake_status`, `intake_diff` | Files, their review state, open questions, lint issues; what changed |
+| `intake_review` | Send a file for the user's review |
+| `change_new` | Start a change request for an intake |
+| `readiness` | Can the accepted files be handed over, and why not |
+| `run_start`, `run_status`, `run_log`, `run_list`, `run_cancel` | Build a handover or one task, and follow it |
+| `knowledge_index` | Rebuild `.zforge/knowledge/` from accepted intakes and runs |
+| `project_list`, `project_add`, `project_remove`, `switch_project` | The registry of zforge projects |
 
 ---
 
 ## Permissions
 
 Codex CLI handles command approval through global sandbox and approval modes
-configured in `~/.codex/config.toml` (e.g. `approval_policy`, `[shell]` block).
-There is no project-scoped permissions file at this time — see
-`.codex/README.md` and current Codex CLI docs for the supported keys.
-
-When running `zforge` commands through Codex, allow at minimum:
-
-- `zforge status`, `zforge get_prompt`, `zforge approve`, `zforge verify`, `zforge ship`
-- The configured test command (`{{test_command}}`)
+configured in `~/.codex/config.toml`. When running zforge through Codex, allow
+at minimum `zforge status`, `zforge intake …`, `zforge readiness`,
+`zforge run …` and the configured test command (`{{test_command}}`).
 
 ---
 
 ## Code Constraints
 
 - **Tests first** — write the failing test before any production code
-- **Minimal patch** — only change what is required by the approved spec
-- **No scope creep** — if you need to change something outside the plan, flag it first
+- **Minimal patch** — only change what the task contract requires
+- **No scope creep** — work outside the contract's scope needs an amendment first
+- **Never weaken a test** — protected tests stay as they were; add new ones instead
 - **No silent errors** — propagate errors explicitly; never swallow them
-- **Preserve public interfaces** — do not change signatures or error types unless the spec says so
-
----
-
-## Memory
-
-After each completed review, patterns and anti-patterns are extracted into:
-
-- `.zforge/memory/patterns.md` — approved patterns to follow
-- `.zforge/memory/anti-patterns.md` — known failure patterns to avoid
-
-Read both files before implementing any task.
+- **Preserve public interfaces** — do not change signatures or error types unless the contract says so

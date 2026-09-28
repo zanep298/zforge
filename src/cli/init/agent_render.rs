@@ -26,7 +26,7 @@ use std::path::Path;
 
 /// Pipeline phases that have an agent file. Mirrors `AGENT_NAMES` in the
 /// init scaffold but keyed by phase rather than filename.
-const PHASES: &[&str] = &["spec", "testspec", "plan", "code", "review"];
+use crate::config::PHASES;
 
 /// Strip every `model:` / `codex_model:` / `opencode_model:` line from the
 /// frontmatter and prepend a single `model: <resolved>` line right after
@@ -256,7 +256,7 @@ text\n"
             Some("sonnet")
         );
         assert_eq!(
-            resolve_model("claude", "plan", stripped, None).as_deref(),
+            resolve_model("claude", "review", stripped, None).as_deref(),
             Some("opus")
         );
         for target in ["codex", "opencode"] {

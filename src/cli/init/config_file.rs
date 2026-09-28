@@ -9,8 +9,8 @@
 //!   `paths.skills` — are set from the current init, because they encode
 //!   the choices made by this run (`--agent`, `--default-runner`, local vs
 //!   shared);
-//! - everything else (project name, language, test command, review
-//!   settings, other paths) is only written when the file is created.
+//! - everything else (project name, language, test command, execution
+//!   policy, knowledge baseline) is only written when the file is created.
 //!
 //! Managed keys are edited in the text itself, so the user's comments and
 //! layout survive a re-init ([`edit_in_place`]).
@@ -25,19 +25,22 @@ const CONFIG_TEMPLATE: &str = r#"project:
   name: ""
   language: "{{language}}"
   test_command: "{{test_command}}"
-  root_dir: "."
-opencode:
-  model: "claude-sonnet-4-6"
-  context_files: []
 runner:
   default: "{{default_runner}}"
 paths:
-  tasks: "./.zforge/tasks"
   agents: "{{paths_agents}}"
-  memory: "./.zforge/memory"
   skills: "{{paths_skills}}"
-review:
-  auto_approve: false
+execution:
+  # Code → verify attempts per run.
+  max_iterations: 3
+  # What each task may spend, in USD, across all its runs in a handover.
+  # `zforge readiness` refuses a handover until this is set.
+  # budget_usd: 5.0
+  # Have an agent review passing work against its contract before it counts.
+  # review: true
+knowledge:
+  # The branch "integrated" is judged against.
+  baseline: main
 "#;
 
 pub(crate) struct Managed<'a> {
@@ -259,7 +262,7 @@ mod tests {
             .unwrap()
             .replace("name: \"\"", "name: \"my-app\"")
             .replace("cargo test", "cargo nextest run")
-            .replace("auto_approve: false", "auto_approve: true");
+            .replace("max_iterations: 3", "max_iterations: 5");
         std::fs::write(&path, edited).unwrap();
 
         let shared = StorePaths::shared(Path::new("/opt/zf"), None);
@@ -269,7 +272,7 @@ mod tests {
         let cfg = load_from(&path).unwrap();
         assert_eq!(cfg.project.name, "my-app");
         assert_eq!(cfg.project.test_command, "cargo nextest run");
-        assert!(cfg.review.auto_approve);
+        assert_eq!(cfg.execution.max_iterations, 5);
         assert_eq!(cfg.default_runner(), "codex");
         assert_eq!(cfg.paths.skills, Path::new("/opt/zf/skills"));
     }
@@ -359,7 +362,6 @@ paths:
         assert_eq!(cfg.project.test_command, "make test");
         assert_eq!(cfg.default_runner(), "codex");
         assert_eq!(cfg.paths.agents, Path::new("/opt/zf/agents"));
-        assert_eq!(cfg.paths.tasks, Path::new("./t"));
     }
 
     #[test]

@@ -121,7 +121,7 @@ pub fn agents(ctx: &Ctx<'_>) -> Check {
         .fix("zforge init --agent claude");
     }
     let mut problems = Vec::new();
-    for phase in crate::cli::mcp_register::PHASES {
+    for phase in crate::config::PHASES {
         let name = format!("{phase}-agent");
         let file = dir.join(format!("{name}.md"));
         match MarkdownFile::read(&file) {
@@ -146,7 +146,7 @@ pub fn agents(ctx: &Ctx<'_>) -> Check {
             }
         }
     }
-    let total = crate::cli::mcp_register::PHASES.len();
+    let total = crate::config::PHASES.len();
     if !problems.is_empty() {
         return Check::new("agents", true, Level::Broken, problems.join("; "))
             .fix("zforge init --agent claude --force");

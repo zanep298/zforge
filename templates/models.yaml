@@ -1,20 +1,22 @@
 # Which model runs each zforge phase, per coding assistant.
 #
+# Phases: code (every attempt of a run) and review (optional check of passing
+# work, `execution.review: true`).
+#
 # A phase without an entry here runs on zforge's default. For Claude that is
-# a tier, not a model name — `sonnet` for spec, testspec and code, `opus` for
-# plan and review — so it follows new models by itself. Codex and OpenCode
-# have no tiers: they run on their own configured default. `inherit` picks
-# the client's own default explicitly (for Claude: the model set by /model).
+# a tier, not a model name — `sonnet` for code, `opus` for review — so it
+# follows new models by itself. Codex and OpenCode have no tiers: they run on
+# their own configured default. `inherit` picks the client's own default
+# explicitly (for Claude: the model set by /model).
 #
 # Choose with:   zforge models set <phase|all> <model> [--client claude] [--global]
 # See choices:   zforge models
-# or edit this file. Phases: spec, testspec, plan, code, review.
+# or edit this file.
 # ~/.zforge/models.yaml applies to every project; this file wins over it.
 #
 # Example:
 #
 # claude:
-#   plan: opus
 #   code: sonnet
 #   review: opus
 #

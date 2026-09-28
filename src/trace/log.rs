@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn appends_and_reads_back_in_order_skipping_torn_lines() {
         let tmp = tempfile::tempdir().unwrap();
-        append(tmp.path(), &record("spec")).unwrap();
+        append(tmp.path(), &record("review")).unwrap();
         std::fs::OpenOptions::new()
             .append(true)
             .open(path(tmp.path(), "T1"))
@@ -69,7 +69,7 @@ mod tests {
 
         let (records, skipped) = read(tmp.path(), "T1");
         let phases: Vec<&str> = records.iter().map(|r| r.phase.as_str()).collect();
-        assert_eq!(phases, ["spec", "code"]);
+        assert_eq!(phases, ["review", "code"]);
         assert_eq!(skipped, 1);
     }
 }

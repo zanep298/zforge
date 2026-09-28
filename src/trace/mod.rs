@@ -1,10 +1,9 @@
 //! Per-run trace of what an agent actually loaded and did (IMP-006).
 //!
 //! Configuration says what should happen; a trace records what the client
-//! reported while it happened. Each agent invocation appends one
-//! [`PhaseTrace`] to `<tasks_dir>/<ID>/trace.jsonl`. `zforge trace <ID>`
-//! joins those with the task's verification history so a reviewer can
-//! follow requirement → phase → runner/agent/skill/tool → verified candidate.
+//! reported while it happened. Each agent call of a run appends one
+//! [`PhaseTrace`] to `<run>/trace.jsonl`, which `zforge run status <RUN>`
+//! shows next to the run's events.
 //!
 //! Only Claude's stream is parsed today; any other runner gets a record
 //! whose `unavailable` says there is no trace, never an empty "all good".

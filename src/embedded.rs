@@ -1,40 +1,11 @@
 //! Embedded zforge templates baked into the binary via `include_str!`.
 //!
-//! Single source of truth for prompt templates, agent definitions, generic
-//! skill bundles, and per-language skill bundles. Consumed by:
+//! Single source of truth for agent definitions, generic skill bundles, and
+//! per-language skill bundles. Consumed by:
 //! - `cli::init` — writes files to `.zforge/` or `~/.zforge/`
 //! - `cli::install` — writes files to global `~/.zforge/` store
-//! - `prompt::engine` — falls back to embedded prompt templates when no
-//!   disk file is found in `agents_dir`
-
-pub const PROMPT_TEMPLATES: &[(&str, &str)] = &[
-    ("spec.tmpl", include_str!("../templates/spec.tmpl")),
-    ("testspec.tmpl", include_str!("../templates/testspec.tmpl")),
-    ("plan.tmpl", include_str!("../templates/plan.tmpl")),
-    ("code.tmpl", include_str!("../templates/code.tmpl")),
-    ("review.tmpl", include_str!("../templates/review.tmpl")),
-    (
-        "verify-analysis.tmpl",
-        include_str!("../templates/verify-analysis.tmpl"),
-    ),
-];
-
-pub const COMMANDS: &[(&str, &str)] =
-    &[("zforge.md", include_str!("../templates/commands/zforge.md"))];
 
 pub const AGENTS: &[(&str, &str)] = &[
-    (
-        "spec-agent.md",
-        include_str!("../templates/agents/spec-agent.md"),
-    ),
-    (
-        "testspec-agent.md",
-        include_str!("../templates/agents/testspec-agent.md"),
-    ),
-    (
-        "plan-agent.md",
-        include_str!("../templates/agents/plan-agent.md"),
-    ),
     (
         "code-agent.md",
         include_str!("../templates/agents/code-agent.md"),
@@ -46,18 +17,6 @@ pub const AGENTS: &[(&str, &str)] = &[
 ];
 
 pub const SKILLS: &[(&str, &str)] = &[
-    (
-        "clarify-spec.md",
-        include_str!("../templates/skills/clarify-spec.md"),
-    ),
-    (
-        "derive-test-cases.md",
-        include_str!("../templates/skills/derive-test-cases.md"),
-    ),
-    (
-        "implementation-planning.md",
-        include_str!("../templates/skills/implementation-planning.md"),
-    ),
     (
         "write-tests-first.md",
         include_str!("../templates/skills/write-tests-first.md"),
@@ -234,16 +193,6 @@ pub fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
     }
 }
 
-/// Look up a prompt template body by name (e.g. `"spec.tmpl"`).
-pub fn prompt_template(name: &str) -> Option<&'static str> {
-    PROMPT_TEMPLATES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, body)| *body)
-}
-
-/// Global zforge store directory (`~/.zforge/`). None if home dir cannot be
-/// determined.
 /// The global store (`~/.zforge`, or `$ZFORGE_HOME`). Same resolution as
 /// the registry, so a custom `ZFORGE_HOME` moves templates, agents and
 /// skills together with `registry.yaml` instead of splitting them.
@@ -271,7 +220,7 @@ mod tests {
 
     #[test]
     fn no_embedded_template_is_empty() {
-        for (name, body) in PROMPT_TEMPLATES.iter().chain(AGENTS).chain(SKILLS) {
+        for (name, body) in AGENTS.iter().chain(SKILLS) {
             assert!(
                 !body.trim().is_empty(),
                 "embedded template {name:?} is empty"
@@ -280,33 +229,13 @@ mod tests {
     }
 
     #[test]
-    fn five_agent_files_for_five_pipeline_phases() {
-        assert_eq!(AGENTS.len(), 5);
-    }
-
-    #[test]
-    fn every_prompt_template_name_ends_with_tmpl() {
-        for (name, _) in PROMPT_TEMPLATES {
-            assert!(name.ends_with(".tmpl"));
-        }
-    }
-
-    #[test]
-    fn prompt_template_lookup_finds_spec() {
-        assert!(prompt_template("spec.tmpl").is_some());
-        assert!(prompt_template("nonexistent.tmpl").is_none());
-    }
-
-    #[test]
-    fn slash_command_finishes_review_with_review_done_not_approve_review() {
-        let command = COMMANDS
+    fn one_agent_file_per_run_phase() {
+        let names: Vec<&str> = AGENTS.iter().map(|(n, _)| *n).collect();
+        let expected: Vec<String> = crate::config::PHASES
             .iter()
-            .find(|(name, _)| *name == "zforge.md")
-            .map(|(_, body)| *body)
-            .unwrap();
-
-        assert!(command.contains("zforge review <TASK_ID> --done"));
-        assert!(!command.contains("artifact=\"review\""));
+            .map(|p| format!("{p}-agent.md"))
+            .collect();
+        assert_eq!(names, expected);
     }
 
     #[test]

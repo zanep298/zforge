@@ -172,49 +172,6 @@ fn register_codex(force: bool) -> Outcome {
     Outcome::Registered
 }
 
-pub const PHASES: &[&str] = &["spec", "testspec", "plan", "code", "review"];
-
-/// Default codex model used when an agent template has no `codex_model:`
-/// frontmatter. Keeps `write_codex_profiles` producing a usable
-/// `~/.codex/config.toml` even when templates aren't fully annotated.
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-5-codex";
-
-/// Write `[profiles.zforge_<phase>]` blocks to `~/.codex/config.toml` for each
-/// pipeline phase. Reads `codex_model:` frontmatter from the matching agent
-/// template; falls back to `DEFAULT_CODEX_MODEL` so codex always has a usable
-/// profile per phase. Existing blocks are replaced (stripped then
-/// re-appended) so re-running `zforge init --force` picks up model changes.
-///
-/// Returns the list of `(phase, model)` pairs actually written so callers
-/// can report exactly which profiles landed and whether any fell back to
-/// the default.
-pub fn write_codex_profiles(agents_dir: &std::path::Path) -> Result<Vec<(&'static str, String)>> {
-    let Some(path) = codex_config_path() else {
-        return Ok(Vec::new());
-    };
-
-    let mut content = fs::read_to_string(&path).unwrap_or_default();
-    let mut written: Vec<(&'static str, String)> = Vec::new();
-
-    for phase in PHASES {
-        let model = crate::fs::reader::agent_codex_model(agents_dir, phase)
-            .unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string());
-        let header = format!("[profiles.zforge_{phase}]");
-        if content.lines().any(|l| l.trim() == header) {
-            content = strip_toml_section(&content, &header);
-        }
-        let block = format!("{header}\nmodel = \"{model}\"\n");
-        content = append_block(&content, &block);
-        written.push((*phase, model));
-    }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&path, content)?;
-    Ok(written)
-}
-
 pub(crate) fn strip_toml_section(content: &str, header: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut in_block = false;
@@ -368,55 +325,5 @@ mod tests {
         assert!(!stripped.contains("[profiles.zforge_code]"));
         assert!(stripped.contains("[other]"));
         assert!(stripped.contains("[trailing]"));
-    }
-
-    #[test]
-    fn write_codex_profiles_writes_all_phases() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let agents_dir = tmp.path().join("agents");
-        std::fs::create_dir_all(&agents_dir).unwrap();
-
-        // Write a minimal agent file with codex_model frontmatter
-        for (phase, model) in [
-            ("spec", "gpt-5.4-mini"),
-            ("testspec", "gpt-5.4-mini"),
-            ("plan", "gpt-5.4"),
-            ("code", "gpt-5.3-codex"),
-            ("review", "gpt-5.4"),
-        ] {
-            std::fs::write(
-                agents_dir.join(format!("{phase}-agent.md")),
-                format!("---\ncodex_model: {model}\n---\n"),
-            )
-            .unwrap();
-        }
-
-        let config_path = tmp.path().join("config.toml");
-        // Simulate codex_config_path returning our temp path by writing via the internal helper
-        let initial = "[existing]\nx = 1\n";
-        std::fs::write(&config_path, initial).unwrap();
-
-        // Manually call the logic that write_codex_profiles uses (since it reads HOME)
-        let mut content = std::fs::read_to_string(&config_path).unwrap();
-        for phase in PHASES {
-            let Some(model) = crate::fs::reader::agent_codex_model(&agents_dir, phase) else {
-                continue;
-            };
-            let header = format!("[profiles.zforge_{phase}]");
-            if content.lines().any(|l| l.trim() == header) {
-                content = strip_toml_section(&content, &header);
-            }
-            let block = format!("{header}\nmodel = \"{model}\"\n");
-            content = append_block(&content, &block);
-        }
-        std::fs::write(&config_path, &content).unwrap();
-
-        let result = std::fs::read_to_string(&config_path).unwrap();
-        assert!(result.contains("[existing]"));
-        assert!(result.contains("[profiles.zforge_spec]"));
-        assert!(result.contains("model = \"gpt-5.4-mini\""));
-        assert!(result.contains("[profiles.zforge_code]"));
-        assert!(result.contains("model = \"gpt-5.3-codex\""));
-        assert!(result.contains("[profiles.zforge_review]"));
     }
 }

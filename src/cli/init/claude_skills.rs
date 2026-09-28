@@ -35,33 +35,18 @@ struct BaseSkill {
 
 const BASE: &[BaseSkill] = &[
     BaseSkill {
-        source: "clarify-spec.md",
-        description: "Turn a vague task description into an unambiguous, scoped specification: goals, non-goals, acceptance criteria, open questions. Use when writing or revising spec.md.",
-        phases: &["spec"],
-    },
-    BaseSkill {
-        source: "derive-test-cases.md",
-        description: "Derive a complete set of test cases from an approved spec — happy paths, edge cases, errors, regressions — before any code is written. Use when writing testspec.md.",
-        phases: &["testspec"],
-    },
-    BaseSkill {
-        source: "implementation-planning.md",
-        description: "Produce a concrete, ordered implementation plan (files, interfaces, steps, risks) that can be executed without further design decisions. Use when writing plan.md.",
-        phases: &["plan"],
-    },
-    BaseSkill {
         source: "write-tests-first.md",
         description: "TDD discipline: write the failing test first, confirm it fails for the right reason, then implement. Use before writing any production code.",
         phases: &["code"],
     },
     BaseSkill {
         source: "implement-minimal-patch.md",
-        description: "Make the smallest working change that satisfies the approved spec and passes the tests, without unrelated refactors. Use while implementing a task.",
+        description: "Make the smallest working change that satisfies the task contract and passes the tests, without unrelated refactors. Use while implementing a task.",
         phases: &["code"],
     },
     BaseSkill {
         source: "review-patch.md",
-        description: "Review a completed implementation against its approved spec, testspec and plan: correctness, coverage, scope creep, risks. Use when reviewing a change or writing review-summary.md.",
+        description: "Review a change against its task contract: every acceptance criterion met and tested, nothing outside the scope, no weakened tests, risks named. Use when reviewing a run's work or any change made for a zforge task.",
         phases: &["review"],
     },
     BaseSkill {
@@ -426,15 +411,6 @@ mod tests {
 
     #[test]
     fn each_phase_preloads_its_checklists() {
-        assert_eq!(required_for("spec", "rust"), vec!["zforge-clarify-spec"]);
-        assert_eq!(
-            required_for("testspec", "rust"),
-            vec!["zforge-derive-test-cases"]
-        );
-        assert_eq!(
-            required_for("plan", "rust"),
-            vec!["zforge-implementation-planning"]
-        );
         assert_eq!(required_for("review", "rust"), vec!["zforge-review-patch"]);
         assert_eq!(
             required_for("code", "rust"),
@@ -461,8 +437,8 @@ mod tests {
     #[test]
     fn agent_frontmatter_lists_skills() {
         assert_eq!(
-            agent_frontmatter("spec", "rust"),
-            "skills:\n  - zforge-clarify-spec\n"
+            agent_frontmatter("review", "rust"),
+            "skills:\n  - zforge-review-patch\n"
         );
     }
 }

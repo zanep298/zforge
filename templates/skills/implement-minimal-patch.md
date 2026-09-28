@@ -14,21 +14,17 @@ directly required by the current task.
 
 ## Required Inputs
 
-The boundary of acceptable change, from whichever you were given:
-
-- **Pipeline task:** `spec.md` (scope), `testspec.md` (what must pass),
-  `plan.md` (files and order)
-- **Contract run (v1.5):** the task contract — Output, Ràng buộc (constraints),
-  Tự chủ (what you may decide) and the acceptance criteria — plus the binding
-  decisions ("Quyết định bắt buộc") in the accepted solution
+The boundary of acceptable change: the task contract — Output, Ràng buộc
+(constraints), Tự chủ (what you may decide) and the acceptance criteria — plus
+the binding decisions ("Quyết định bắt buộc") in the accepted solution.
 
 ## Expected Outputs
 
 A changeset that:
 
 - Passes the whole test suite, including the new tests
-- Stays inside the agreed scope (the plan's files, or the contract's output and
-  constraints), or says why it had to leave it
+- Stays inside the contract's output and constraints, or says why it had to
+  leave it (a change request, not a silent detour)
 - Preserves all existing public interfaces unless what was agreed changes them
 
 ## Checklist

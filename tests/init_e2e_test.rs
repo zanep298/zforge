@@ -224,7 +224,7 @@ fn claude_init_installs_native_skills_in_both_modes() {
         env.init(&args);
         let names = native_skill_names(&env);
         assert!(
-            names.contains(&"zforge-clarify-spec".to_string()),
+            names.contains(&"zforge-review-patch".to_string()),
             "{names:?}"
         );
         assert!(
@@ -279,8 +279,8 @@ fn phase_agents_preload_their_skills() {
             .join(format!(".claude/skills/{s}/SKILL.md"))
             .is_file());
     }
-    let spec = frontmatter(&env.read(".claude/agents/spec-agent.md"));
-    assert_eq!(spec["skills"][0].as_str(), Some("zforge-clarify-spec"));
+    let review = frontmatter(&env.read(".claude/agents/review-agent.md"));
+    assert_eq!(review["skills"][0].as_str(), Some("zforge-review-patch"));
 }
 
 /// Stale zforge skills go; the user's own skills stay — including one whose
@@ -548,26 +548,20 @@ fn refresh_keeps_custom_models_and_renders_them() {
     env.init(&agent_flag("claude"));
 
     let models = env.project.join(".zforge/models.yaml");
-    std::fs::write(&models, "claude:\n  spec: my-custom-model\n").unwrap();
-    std::fs::write(
-        env.project.join(".zforge/memory/patterns.md"),
-        "# mine\n- keep: me\n",
-    )
-    .unwrap();
+    std::fs::write(&models, "claude:\n  review: my-custom-model\n").unwrap();
 
     env.init(&agent_flag("claude")); // --force refresh
 
     assert_eq!(
         std::fs::read_to_string(&models).unwrap(),
-        "claude:\n  spec: my-custom-model\n",
+        "claude:\n  review: my-custom-model\n",
         "models.yaml must survive init --force"
     );
     assert!(
-        env.read(".claude/agents/spec-agent.md")
+        env.read(".claude/agents/review-agent.md")
             .contains("my-custom-model"),
         "the refreshed agent definition must use the custom model"
     );
-    assert!(env.read(".zforge/memory/patterns.md").contains("keep: me"));
 }
 
 /// `.claude/settings.json` is shared with the user: a refresh adds

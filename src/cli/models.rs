@@ -17,7 +17,7 @@ use colored::Colorize;
 use std::path::{Path, PathBuf};
 
 pub const CLIENTS: [&str; 3] = ["claude", "codex", "opencode"];
-pub const PHASES: [&str; 5] = ["spec", "testspec", "plan", "code", "review"];
+pub use crate::config::PHASES;
 
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
@@ -32,7 +32,7 @@ pub struct ModelsArgs {
 pub enum ModelsCmd {
     /// Choose the model for a phase (`all` for every phase).
     Set {
-        /// spec, testspec, plan, code, review — or `all`.
+        /// code or review — or `all`.
         phase: String,
         /// As the client names it: a tier (`opus`, `sonnet`, `haiku`), a full
         /// model id, or `inherit` for the client's own default.
@@ -349,19 +349,19 @@ mod tests {
 
     #[test]
     fn a_block_is_extended_replaced_and_emptied() {
-        let text = "# mine\nclaude:\n  plan: opus # thinking\n\ncodex:\n  code: x\n";
+        let text = "# mine\nclaude:\n  review: opus # thinking\n\ncodex:\n  code: x\n";
         let out = set_in_yaml(text, "claude", "code", Some("claude-sonnet-5")).unwrap();
         assert_eq!(
             out,
-            "# mine\nclaude:\n  plan: opus # thinking\n  code: claude-sonnet-5\n\ncodex:\n  code: x\n"
+            "# mine\nclaude:\n  review: opus # thinking\n  code: claude-sonnet-5\n\ncodex:\n  code: x\n"
         );
-        let out = set_in_yaml(&out, "claude", "plan", Some("opus-next")).unwrap();
-        assert!(out.contains("  plan: opus-next\n"));
-        let out = set_in_yaml(&out, "claude", "plan", None).unwrap();
+        let out = set_in_yaml(&out, "claude", "review", Some("opus-next")).unwrap();
+        assert!(out.contains("  review: opus-next\n"));
+        let out = set_in_yaml(&out, "claude", "review", None).unwrap();
         let out = set_in_yaml(&out, "claude", "code", None).unwrap();
         assert_eq!(out, "# mine\n\ncodex:\n  code: x\n");
         let m = models(&out);
-        assert_eq!(m.for_assistant("claude", "plan"), None);
+        assert_eq!(m.for_assistant("claude", "review"), None);
         assert_eq!(m.for_assistant("codex", "code"), Some("x"));
     }
 

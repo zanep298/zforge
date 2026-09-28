@@ -1,15 +1,11 @@
 //! Select the phase's named agent definition when launching a client
 //! (FIX-014).
 //!
-//! `zforge init` renders one definition per phase — `spec-agent`,
-//! `code-agent`, … — into `.claude/agents/` and `.opencode/agents/`, each
-//! with its own instructions and model. Dispatch launched `claude -p` and
-//! `opencode run` without naming one, so the definitions were written but
-//! never used; the legacy path even printed "agent: spec-agent" while not
-//! passing it. Both CLIs take `--agent <name>` (claude 2.1, opencode 1.14).
-//!
-//! Codex has no equivalent; its per-phase configuration is the
-//! `zforge_<phase>` profile (see `model_args::profile_args_for_agent`).
+//! `zforge init` renders one definition per phase — `code-agent`,
+//! `review-agent` — into `.claude/agents/` and `.opencode/agents/`, each
+//! with its own instructions, preloaded skills and model. A client launched
+//! without naming one would not use them. Both CLIs take `--agent <name>`
+//! (claude 2.1, opencode 1.14). Codex has no equivalent.
 //!
 //! Declared fallback: when the definition file is missing the client runs
 //! without `--agent` and a warning names the missing file. Re-running
@@ -83,16 +79,16 @@ mod tests {
     #[test]
     fn claude_and_opencode_use_the_phase_definition() {
         for client in ["claude", "opencode"] {
-            let p = project_with(client, "spec");
-            let na = named_agent_for(client, "spec", p.path());
-            assert_eq!(na, NamedAgent::Use("spec-agent".into()));
-            assert_eq!(na.args(), vec!["--agent", "spec-agent"]);
+            let p = project_with(client, "code");
+            let na = named_agent_for(client, "code", p.path());
+            assert_eq!(na, NamedAgent::Use("code-agent".into()));
+            assert_eq!(na.args(), vec!["--agent", "code-agent"]);
         }
     }
 
     #[test]
     fn missing_definition_is_reported_not_silently_dropped() {
-        let p = project_with("claude", "spec");
+        let p = project_with("claude", "review");
         match named_agent_for("claude", "code", p.path()) {
             NamedAgent::Missing(f) => assert!(f.ends_with(".claude/agents/code-agent.md")),
             other => panic!("expected Missing, got {other:?}"),
@@ -101,13 +97,13 @@ mod tests {
 
     #[test]
     fn codex_and_custom_runners_have_no_named_agent() {
-        let p = project_with("claude", "spec");
+        let p = project_with("claude", "code");
         assert_eq!(
-            named_agent_for("codex", "spec", p.path()),
+            named_agent_for("codex", "code", p.path()),
             NamedAgent::NotApplicable
         );
         assert_eq!(
-            named_agent_for("primary", "spec", p.path()),
+            named_agent_for("primary", "code", p.path()),
             NamedAgent::NotApplicable
         );
         assert!(NamedAgent::NotApplicable.args().is_empty());

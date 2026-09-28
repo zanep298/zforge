@@ -68,11 +68,6 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
     })
 }
 
-pub fn agent_codex_model(agents_dir: &Path, phase: &str) -> Option<String> {
-    let models = crate::config::load_models();
-    agent_model_for_phase_with_models(agents_dir, "codex", phase, models.as_ref())
-}
-
 /// Resolve an assistant-specific model for one workflow phase.
 ///
 /// Precedence:

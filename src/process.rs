@@ -25,16 +25,16 @@
 //! Worst-case wall time: `timeout + KILL_GRACE + 2 × DRAIN_GRACE`.
 //!
 //! Moving children out of zforge's own process group changes who receives
-//! group-directed signals: Ctrl-C at the terminal and `zforge job cancel`
+//! group-directed signals: Ctrl-C at the terminal and `zforge run cancel`
 //! (which signals the worker's group) would no longer reach them. Two
 //! mechanisms restore that:
 //!
 //! - A handler for SIGINT/SIGTERM/SIGHUP forwards the signal to every child
 //!   group currently running, then restores the default action and
 //!   re-raises, so zforge itself still terminates exactly as before.
-//! - When [`CHILD_PGIDS_FILE_ENV`] is set (the background worker sets it to
-//!   a file in its job directory), the active child groups are recorded
-//!   there, and `job cancel` escalates to SIGKILL on them too.
+//! - When [`CHILD_PGIDS_FILE_ENV`] is set (a background run's worker sets it
+//!   to a file in the run directory), the active child groups are recorded
+//!   there, and `run cancel` escalates to SIGKILL on them too.
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -485,9 +485,9 @@ pub fn read_child_pgids(path: &std::path::Path) -> Vec<i32> {
         .unwrap_or_default()
 }
 
-/// Path of the child-pgid file inside a job directory.
-pub fn child_pgids_file(job_dir: &std::path::Path) -> PathBuf {
-    job_dir.join("child-pgids")
+/// Path of the child-pgid file inside a run directory.
+pub fn child_pgids_file(run_dir: &std::path::Path) -> PathBuf {
+    run_dir.join("child-pgids")
 }
 
 /// `kill(pid, 0)` returns Ok if signal could be delivered (process exists +

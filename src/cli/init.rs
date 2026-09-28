@@ -6,10 +6,6 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::mcp_register::Agent;
 
-const PATTERNS_MD: &str = "# Coding Patterns\n\n## Approved Patterns\n\n## Test Patterns\n";
-const GLOSSARY_MD: &str = "# Domain Glossary\n";
-const ANTI_PATTERNS_MD: &str = "# Anti-Patterns\n";
-
 const FALLBACK_CODING_STYLE: &str = "# Coding Style\n\n\
 - Prefer immutability: create new values, don't mutate in place\n\
 - Functions under 50 lines; files under 800 lines\n\
@@ -57,7 +53,7 @@ impl InitStats {
 pub struct InitOptions {
     pub agent: Agent,
     /// Refresh generated files (agent definitions, instruction files,
-    /// settings). Never resets config.yaml, models.yaml or memory.
+    /// settings). Never resets config.yaml or models.yaml.
     pub force: bool,
     pub local: bool,
     pub no_register: bool,
@@ -181,15 +177,6 @@ pub fn run(opts: InitOptions) -> Result<()> {
     if local {
         let tmpl_dir = zforge_dir.join("agents");
         std::fs::create_dir_all(&tmpl_dir)?;
-        for (name, content) in prompt_templates() {
-            let created = write_safe(&tmpl_dir.join(name), content, force)?;
-            stats.record(created);
-        }
-        println!(
-            "{} .zforge/agents/ — prompt templates",
-            label(stats.created > 0)
-        );
-
         for (name, raw) in agent_templates() {
             let rendered = apply_vars(raw, &vars);
             let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
@@ -228,19 +215,6 @@ pub fn run(opts: InitOptions) -> Result<()> {
         );
     }
 
-    // Memory is user-owned: created once, never overwritten (FIX-017).
-    let mem_dir = zforge_dir.join("memory");
-    std::fs::create_dir_all(&mem_dir)?;
-    for (name, content) in [
-        ("patterns.md", PATTERNS_MD),
-        ("domain-glossary.md", GLOSSARY_MD),
-        ("anti-patterns.md", ANTI_PATTERNS_MD),
-    ] {
-        let created = write_safe(&mem_dir.join(name), content, false)?;
-        stats.record(created);
-    }
-    println!("{} .zforge/memory/ — 3 files", label(stats.created > 0));
-
     let readme = apply_vars(include_str!("../../templates/zforge-readme.md"), &vars);
     let created = write_safe(&zforge_dir.join("README.md"), &readme, force)?;
     stats.record(created);
@@ -254,10 +228,6 @@ pub fn run(opts: InitOptions) -> Result<()> {
         lang_skills_section: &lang_skills_section,
         claude_skills_section: &claude_skills_section,
     };
-
-    let tasks_dir = zforge_dir.join("tasks");
-    std::fs::create_dir_all(&tasks_dir)?;
-    println!("{} .zforge/tasks/", "✓".green());
 
     let tool_opts = ToolOptions {
         install_missing: opts.install_missing,
@@ -304,6 +274,8 @@ pub fn run(opts: InitOptions) -> Result<()> {
         "  {} created, {} skipped (already existed)",
         stats.created, stats.skipped
     );
+    retired::report(&cwd);
+
     println!();
     println!("Next steps:");
     println!("  1. Edit .zforge/config.yaml — set project.name");
@@ -314,7 +286,7 @@ pub fn run(opts: InitOptions) -> Result<()> {
     if want("codex") || want("opencode") {
         println!("  2. Verify AGENTS.md — project details correct");
     }
-    println!("  3. Run: zforge task import TASK-123");
+    println!("  3. Start an intake: zforge intake new <ID>   (then: zforge status)");
     if !local {
         println!();
         println!(
@@ -459,23 +431,6 @@ fn scaffold_claude(
         rule_count
     );
 
-    // .claude/commands/ — slash commands (e.g. /zforge <TASK-ID>)
-    let claude_commands_dir = claude_dir.join("commands");
-    std::fs::create_dir_all(&claude_commands_dir)?;
-    let mut cmd_count = 0usize;
-    for (name, content) in command_templates() {
-        let created = write_safe(&claude_commands_dir.join(name), content, force)?;
-        stats.record(created);
-        if created {
-            cmd_count += 1;
-        }
-    }
-    println!(
-        "{} .claude/commands/ — {} slash commands",
-        label(cmd_count > 0),
-        command_templates().len()
-    );
-
     // caveman — terse output mode
     ensure_caveman(tool_opts);
 
@@ -531,7 +486,7 @@ fn scaffold_codex(
     stats.record(created);
     print_file_status(created, ".codex/README.md");
 
-    // Auto-register Codex MCP server + profiles
+    // Auto-register the Codex MCP server
     println!();
     println!("Registering Codex MCP server…");
     if let Err(e) = crate::cli::mcp_register::run(Agent::Codex, force) {
@@ -539,27 +494,6 @@ fn scaffold_codex(
             "  {} Codex MCP registration reported errors: {e}",
             "⚠".yellow()
         );
-    }
-    match crate::cli::mcp_register::write_codex_profiles(&codex_agents_dir) {
-        Err(e) => eprintln!(
-            "  {} Codex profile write reported errors: {e}",
-            "⚠".yellow()
-        ),
-        Ok(written) if written.is_empty() => eprintln!(
-            "  {} Codex profile write produced no profiles (no agent templates found).",
-            "⚠".yellow()
-        ),
-        Ok(written) => {
-            let profiles = written
-                .iter()
-                .map(|(phase, model)| format!("zforge_{phase}={model}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let cfg = crate::cli::mcp_register::codex_config_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "~/.codex/config.toml".into());
-            println!("{} {cfg} — {}", "✓".green(), profiles);
-        }
     }
 
     Ok(())
@@ -672,6 +606,7 @@ mod config_file;
 mod detect;
 mod lang_skills;
 mod registry;
+mod retired;
 mod runner;
 mod store_paths;
 mod tools;
@@ -826,7 +761,7 @@ fn read_ecc_rule(ecc_rules: &Path, name: &str) -> Option<String> {
 }
 
 // Embedded template arrays live in init::registry.
-use registry::{agent_templates, command_templates, prompt_templates, skill_templates, SKILLS};
+use registry::{agent_templates, skill_templates, SKILLS};
 
 #[cfg(test)]
 mod tests {
@@ -888,10 +823,10 @@ mod tests {
         let rendered = apply_vars_ext(include_str!("../../templates/CLAUDE.md"), &ext);
         assert!(!rendered.contains("{{"), "unsubstituted placeholder");
         assert!(
-            !rendered.contains("skills/clarify-spec.md"),
+            !rendered.contains("skills/review-patch.md"),
             "no file paths"
         );
-        assert!(rendered.contains("`zforge-clarify-spec`"));
+        assert!(rendered.contains("`zforge-review-patch`"));
         assert!(rendered.contains("`zforge-rust-patterns`"));
     }
 
@@ -908,9 +843,7 @@ mod tests {
         assert!(rendered.contains("**Language:** rust"));
         assert!(rendered.contains("`cargo test`"));
         // Codex-specific anchors must survive substitution
-        assert!(rendered.contains("OpenAI Codex CLI"));
         assert!(rendered.contains("~/.codex/config.toml"));
-        assert!(rendered.contains(".codex/agents/spec-agent.md"));
         assert!(!rendered.contains("{{"), "unsubstituted handlebar present");
     }
 
@@ -924,8 +857,12 @@ mod tests {
     }
 
     #[test]
-    fn claude_settings_allow_ship_tool_used_by_command_template() {
-        assert!(claude_settings::CLAUDE_SETTINGS_JSON.contains("\"mcp__zforge__ship\""));
+    fn claude_settings_allow_the_v15_tools_only() {
+        let s = claude_settings::CLAUDE_SETTINGS_JSON;
+        for tool in ["status", "intake_review", "readiness", "run_start"] {
+            assert!(s.contains(&format!("\"mcp__zforge__{tool}\"")), "{tool}");
+        }
+        assert!(!s.contains("mcp__zforge__ship"));
     }
 
     #[test]
@@ -966,13 +903,13 @@ mod tests {
         let zforge_agents = zforge_dir.join("agents");
         std::fs::create_dir_all(&zforge_agents).unwrap();
         std::fs::write(
-            zforge_agents.join("spec-agent.md"),
+            zforge_agents.join("code-agent.md"),
             "---\nmodel: claude-haiku-4-5-20251001\ncodex_model: gpt-5-codex\n---\n",
         )
         .unwrap();
         let codex_agents = root.join(".codex").join("agents");
         std::fs::create_dir_all(&codex_agents).unwrap();
-        std::fs::write(codex_agents.join("spec-agent.md"), "preexisting\n").unwrap();
+        std::fs::write(codex_agents.join("code-agent.md"), "preexisting\n").unwrap();
 
         let (count, _) = materialize_agents_for(
             "codex",
@@ -986,7 +923,7 @@ mod tests {
         .unwrap();
         assert_eq!(count, 0);
         assert_eq!(
-            std::fs::read_to_string(codex_agents.join("spec-agent.md"))
+            std::fs::read_to_string(codex_agents.join("code-agent.md"))
                 .unwrap()
                 .trim(),
             "preexisting"

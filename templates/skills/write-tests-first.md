@@ -14,11 +14,8 @@ before implementation, not after.
 
 ## Required Inputs
 
-What the tests must prove, from whichever you were given:
-
-- **Pipeline task:** `testspec.md` (approved test cases) and `plan.md` (step order)
-- **Contract run (v1.5):** the task contract's acceptance criteria (`AC-01` …) and
-  the behavior in the accepted stages
+- The task contract's acceptance criteria (`AC-01` …) — what the tests must
+  prove — and the behavior described in the accepted stages
 - The relevant source file(s) being modified
 
 ## Expected Outputs
@@ -37,7 +34,7 @@ For each case or acceptance criterion being implemented:
 - [ ] Test fails with the expected reason (wrong behavior, not a compile error)
 - [ ] Production code change is minimal — only what is needed to pass this test
 - [ ] All existing tests still pass after the change
-- [ ] Each test traces to a testspec case or an acceptance criterion
+- [ ] Each test traces to an acceptance criterion
 - [ ] No `#[ignore]` (or equivalent) added without a documented reason
 
 ## Constraints

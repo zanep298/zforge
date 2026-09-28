@@ -17,7 +17,7 @@ impl Project {
         let agents = root.join(".zforge/agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::create_dir_all(&home).unwrap();
-        for phase in ["spec", "testspec", "plan", "code", "review"] {
+        for phase in ["code", "review"] {
             let src = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join(format!("templates/agents/{phase}-agent.md"));
             std::fs::copy(src, agents.join(format!("{phase}-agent.md"))).unwrap();
@@ -85,7 +85,7 @@ fn zforge_defaults_to_tiers_until_the_user_chooses() {
         ("sonnet".into(), "zforge default".into())
     );
     assert_eq!(
-        row(&rows, "claude", "plan"),
+        row(&rows, "claude", "review"),
         ("opus".into(), "zforge default".into())
     );
     assert_eq!(
@@ -104,7 +104,7 @@ fn zforge_defaults_to_tiers_until_the_user_chooses() {
     assert_eq!(yaml, "claude:\n  code: sonnet\n");
     // The agent definitions follow at once; the rest keep zforge's default.
     assert!(p.agent("claude", "code").contains("\nmodel: sonnet\n"));
-    assert!(p.agent("claude", "plan").contains("\nmodel: opus\n"));
+    assert!(p.agent("claude", "review").contains("\nmodel: opus\n"));
     assert!(
         !p.agent("codex", "code").contains("model:"),
         "codex chose nothing"
@@ -114,14 +114,14 @@ fn zforge_defaults_to_tiers_until_the_user_chooses() {
     p.ok(&["models", "set", "all", "opus", "--global"]);
     let rows = p.rows();
     assert_eq!(
-        row(&rows, "claude", "plan"),
+        row(&rows, "claude", "review"),
         ("opus".into(), "global".into())
     );
     assert_eq!(
         row(&rows, "claude", "code"),
         ("sonnet".into(), "project".into())
     );
-    assert!(p.agent("claude", "plan").contains("\nmodel: opus\n"));
+    assert!(p.agent("claude", "review").contains("\nmodel: opus\n"));
 
     p.ok(&["models", "unset", "code"]);
     assert_eq!(
@@ -170,13 +170,13 @@ fn a_model_in_the_agent_definition_is_shown_as_such() {
 #[test]
 fn inherit_and_unset() {
     let p = Project::new();
-    p.ok(&["models", "set", "plan", "inherit"]);
-    assert!(p.agent("claude", "plan").contains("\nmodel: inherit\n"));
+    p.ok(&["models", "set", "review", "inherit"]);
+    assert!(p.agent("claude", "review").contains("\nmodel: inherit\n"));
     assert_eq!(
-        row(&p.rows(), "claude", "plan"),
+        row(&p.rows(), "claude", "review"),
         ("inherit".into(), "project".into())
     );
-    let out = p.ok(&["models", "unset", "plan"]);
+    let out = p.ok(&["models", "unset", "review"]);
     assert!(out.contains("zforge's default (`opus`)"), "{out}");
-    assert!(p.agent("claude", "plan").contains("\nmodel: opus\n"));
+    assert!(p.agent("claude", "review").contains("\nmodel: opus\n"));
 }

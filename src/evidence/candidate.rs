@@ -1,9 +1,8 @@
 //! Identify the code a verification ran against (IMP-002).
 //!
-//! A passing `verify.md` used to count for whatever code happened to be on
-//! disk later: edit the code after a green run and `review --done` still
-//! signed off on the old report. The fix is to record *which* code was
-//! verified and compare it with the code being reviewed.
+//! A passing test run proves something only about the code it ran on. A run
+//! records *which* code that was, and its sealed output must be that same
+//! code.
 //!
 //! The fingerprint is a git tree hash of the working tree — tracked
 //! changes, staged or not, and untracked files that `.gitignore` does not

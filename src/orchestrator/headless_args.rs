@@ -1,12 +1,9 @@
 //! Per-agent CLI flags that disable interactive confirmation prompts.
 //!
-//! When zforge runs an agent **headless** (background worker spawned by
-//! `ship --async`), no human is around to answer `Allow write to foo.rs?
-//! [y/n]`. Without a bypass flag the child blocks on stdin forever, the
-//! worker hangs, and the job stays `running` until manually cancelled.
-//!
-//! Foreground mode (`zforge ship T1` without `--async`, or `zforge code
-//! T1`) does NOT inject bypass flags — a user is present to answer prompts.
+//! A run's agent is always **headless**: it works in the run's worktree with
+//! no human around to answer `Allow write to foo.rs? [y/n]`. Without a
+//! bypass flag the child blocks on stdin forever and the run hangs until
+//! cancelled.
 //!
 //! Each agent's bypass flags are documented in `docs/v1/agent-contracts.md`.
 

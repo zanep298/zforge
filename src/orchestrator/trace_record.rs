@@ -53,15 +53,15 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".codegraph")).unwrap();
         let e = expected_for(
             "claude",
-            "spec",
+            "review",
             tmp.path(),
-            &NamedAgent::Use("spec-agent".into()),
+            &NamedAgent::Use("review-agent".into()),
             Some("sonnet"),
             Some("rust"),
         );
-        assert_eq!(e.named_agent.as_deref(), Some("spec-agent"));
+        assert_eq!(e.named_agent.as_deref(), Some("review-agent"));
         assert_eq!(e.model.as_deref(), Some("sonnet"));
-        assert_eq!(e.skills, vec!["zforge-clarify-spec"]);
+        assert_eq!(e.skills, vec!["zforge-review-patch"]);
         assert_eq!(e.mcp_servers, vec!["codegraph"]);
     }
 
@@ -70,7 +70,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let e = expected_for(
             "claude",
-            "spec",
+            "code",
             tmp.path(),
             &NamedAgent::Missing(tmp.path().join("x.md")),
             None,
