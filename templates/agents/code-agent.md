@@ -1,10 +1,9 @@
 ---
 name: code-agent
 description: Implements an approved plan or task contract following TDD — tests first, minimal patch
-model: claude-sonnet-4-6
+model: sonnet
 codex_model: gpt-5-codex
 opencode_model: claude-sonnet-4-6
-temperature: 0.1
 ---
 
 ## Purpose

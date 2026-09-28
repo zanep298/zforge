@@ -1,10 +1,9 @@
 ---
 name: review-agent
 description: Reviews the completed implementation against spec, testspec, and plan
-model: claude-sonnet-4-6
+model: opus
 codex_model: gpt-5-codex
 opencode_model: claude-sonnet-4-6
-temperature: 0.2
 ---
 
 ## Purpose

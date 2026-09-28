@@ -30,7 +30,7 @@ const PHASES: &[&str] = &["spec", "testspec", "plan", "code", "review"];
 
 fn default_model_for(target: &str) -> &'static str {
     match target {
-        "claude" => "claude-sonnet-4-6",
+        "claude" => "sonnet",
         "codex" => "gpt-5-codex",
         "opencode" => "claude-sonnet-4-6",
         _ => "unknown",
