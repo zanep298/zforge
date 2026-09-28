@@ -1,10 +1,13 @@
 # zForge
 
-TDD-first AI development workflow CLI. Orchestrates a gated pipeline —
-spec → testspec → plan → code → verify → review — where each phase
-produces a markdown artifact, with human gates before planning and coding.
+Agree on the work, then let an agent build it. zForge keeps the agreement in
+an **intake** — outcome, behavior, solution, breakdown and one contract per
+task, each reviewed and accepted by you — and builds it in **runs**: an agent
+in its own git worktree, tests first, verified against your test command,
+never touching your checkout.
 
-Works with **Claude Code**, **OpenCode**, and **Codex**.
+Runs execute with **Claude Code**; **Codex** and **OpenCode** can prepare
+intakes and follow runs through the MCP server.
 
 ## Install
 
@@ -40,188 +43,61 @@ zforge --version
 
 ## Quick start
 
-### With Claude Code
-
 ```bash
-# 1. Scaffold project files for Claude Code (default agent)
-zforge init                    # same as: zforge init --agent claude
-
-# 2. Register zforge MCP server with Claude Code (local scope)
+# 1. Scaffold the project for Claude Code and register zforge's MCP server
+zforge init
 zforge mcp register --agent claude
 
-# 3. Open project in Claude Code — zforge MCP tools are available
+# 2. Set the test command and a budget in .zforge/config.yaml
+#    project.test_command, execution.budget_usd
 
-# 4. Run your first task
-zforge task import TASK-001 --title "Your task title"
-# edit .zforge/tasks/TASK-001/task.md, then ask Claude Code:
-# "run zforge spec TASK-001" → review → "zforge spec TASK-001 --done" → ...
-zforge spec TASK-001
-zforge spec TASK-001 --done
-zforge testspec TASK-001
-zforge testspec TASK-001 --done
-zforge approve TASK-001 testspec
-zforge plan TASK-001
-zforge plan TASK-001 --done
-zforge approve TASK-001 plan
-zforge code TASK-001
-zforge code TASK-001 --done
-zforge verify TASK-001
-zforge review TASK-001
-zforge review TASK-001 --done
+# 3. Agree on the work — Claude can draft the files (skill zforge-intake)
+zforge intake new FEAT-1
+zforge intake task FEAT-1 TASK-001
+zforge intake review FEAT-1 01-outcome.md      # … every file
+zforge intake accept FEAT-1 01-outcome.md      # you, in a terminal
+
+# 4. Hand over and build
+zforge readiness FEAT-1
+zforge handover FEAT-1                         # you, in a terminal
+zforge run HANDOVER-001                        # every task, then the integration check
+
+# Where things stand, and what to run next
+zforge status
 ```
 
-**Session starter prompt for Claude Code:**
+Accepting, asking for changes and handing over are yours: they need an
+interactive terminal and a typed confirmation, and no MCP tool offers them.
+
+## How a run works
 
 ```
-We're using zforge for this project. Run `zforge status` to see current task
-progress, then help me work through the pipeline. For each phase, run the zforge
-command, wait for my approval before proceeding, and follow the artifacts in
-.zforge/tasks/<ID>/. Use the zforge MCP tools when available.
+intake (accepted) → handover → per task, in dependency order:
+    worktree from the outputs it depends on → agent writes tests + code
+    → test command → protected tests unchanged? → [optional review agent]
+    → output sealed as a commit
+  → integration check on the merged outputs → merge → zforge knowledge index
 ```
 
-### With Codex
+Each run records everything in `.zforge/runs/RUN-nnn/events.jsonl` — the only
+source of truth; `zforge run status` and `zforge status` derive from it. A run
+stops `blocked` when the budget runs out or the agent asks to amend the
+contract; you amend the intake and hand over again.
 
-```bash
-# 1. Scaffold project files for Codex CLI
-#    (writes AGENTS.md, .codex/agents/, and auto-registers MCP + profiles
-#     in ~/.codex/config.toml)
-zforge init --agent codex
+## Init
 
-# 2. Start a Codex session in the project — zforge MCP tools are available
-
-# 3. Run your first task (same pipeline)
-zforge task import TASK-001 --title "Your task title"
-# edit .zforge/tasks/TASK-001/task.md, then:
-zforge spec TASK-001
-zforge spec TASK-001 --done
-zforge testspec TASK-001
-zforge testspec TASK-001 --done
-zforge approve TASK-001 testspec
-zforge plan TASK-001
-zforge plan TASK-001 --done
-zforge approve TASK-001 plan
-zforge code TASK-001
-zforge ship TASK-001
-zforge review TASK-001
-zforge review TASK-001 --done
-```
-
-Codex picks the right model per phase via profiles in `~/.codex/config.toml`:
-
-```bash
-codex --profile zforge_spec     "run zforge spec TASK-001"
-codex --profile zforge_testspec "run zforge testspec TASK-001"
-codex --profile zforge_plan     "run zforge plan TASK-001"
-codex --profile zforge_code     "run zforge code TASK-001"
-codex --profile zforge_review   "run zforge review TASK-001"
-```
-
-| Profile | Phase | Default model |
-|---------|-------|---------------|
-| `zforge_spec` | spec | `gpt-5.4-mini` |
-| `zforge_testspec` | testspec | `gpt-5.4-mini` |
-| `zforge_plan` | plan | `gpt-5.4` |
-| `zforge_code` | code | `gpt-5.3-codex` |
-| `zforge_review` | review | `gpt-5.4` |
-
-**Session starter prompt for Codex:**
-
-```
-We're using zforge for this project. Run `zforge status` to see current task
-progress, then help me work through the pipeline. For each phase, run the zforge
-command, wait for my approval before proceeding, and follow the artifacts in
-.zforge/tasks/<ID>/. Use the zforge MCP tools (task_import, get_prompt, approve, verify,
-ship, status) when available.
-```
-
-### With OpenCode
-
-```bash
-# 1. Scaffold project files for OpenCode
-#    (writes AGENTS.md, .opencode/agents/, and auto-registers MCP
-#     in ~/.config/opencode/opencode.json)
-zforge init --agent opencode
-
-# 2. Open project in OpenCode — zforge MCP tools are available
-
-# 3. Run your first task (same pipeline)
-zforge task import TASK-001 --title "Your task title"
-# edit .zforge/tasks/TASK-001/task.md, then:
-zforge spec TASK-001
-zforge spec TASK-001 --done
-zforge testspec TASK-001
-zforge testspec TASK-001 --done
-zforge approve TASK-001 testspec
-zforge plan TASK-001
-zforge plan TASK-001 --done
-zforge approve TASK-001 plan
-zforge code TASK-001
-zforge code TASK-001 --done
-zforge verify TASK-001
-zforge review TASK-001
-zforge review TASK-001 --done
-```
-
-**Session starter prompt for OpenCode:**
-
-```
-We're using zforge for this project. Run `zforge status` to see current task
-progress, then help me work through the pipeline. For each phase, run the zforge
-command, wait for my approval before proceeding, and follow the artifacts in
-.zforge/tasks/<ID>/. Use the zforge agents in .opencode/ for phase-specific guidance.
-```
-
-## Pipeline
-
-```
-task import → spec → testspec → [approve testspec] → plan → [approve plan] → code → verify → review
-```
-
-`zforge ship <ID>` is a shortcut for `code` + `verify` back-to-back — saves a tool round trip when chained via MCP, and is idempotent (skips the code phase if state is already `Coded`).
-
-## Flows (pipeline presets)
-
-The full nine-phase pipeline above is overkill for bug fixes, spikes, or doc edits.
-Pick a shorter preset at import time with `--flow`:
-
-| Flow | Phases | Use when |
-|------|--------|----------|
-| `full` (default) | spec → testspec → approve → plan → approve → code → verify → review | Cross-cutting feature work, anything risky |
-| `fixbug` | spec → testspec → code → verify | Bug fix with a clear reproducer (<50 LOC) |
-| `spike` | spec → code | Research, prototypes, throwaway exploration |
-| `docs` | code | Docs / README / comments only |
-
-```bash
-zforge task import BUG-42 --flow fixbug --title "Login crashes on empty email"
-zforge task import SPIKE-1 --flow spike --title "Try GraphQL adapter"
-zforge task import DOC-9   --flow docs  --title "Document MCP setup"
-```
-
-The flow is persisted in `.zforge/tasks/<ID>/.state.yaml`. Phases not in the chosen
-flow are rejected — e.g. `zforge plan TASK-1` fails on a `fixbug` task. `zforge status`
-displays the active flow and the correct next command.
-
-For UI tasks, attach Figma design context at import time — it flows through spec and code automatically:
-
-```
-Figma MCP → figma_context → task import → figma.md → spec prompt
-                                                    → code prompt
-```
-
-## Init commands
-
-`zforge init` scaffolds per agent. Pick exactly one (default: `claude`).
+`zforge init` scaffolds per client (default: `claude`).
 
 | Command | What it creates | MCP auto-register? |
 |---------|----------------|--------------------|
-| `zforge init` (default) | `.zforge/`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/rules/` | No — run `zforge mcp register --agent claude` |
-| `zforge init --agent codex` | `.zforge/`, `AGENTS.md`, `.codex/agents/`, `.codex/README.md` | Yes — `~/.codex/config.toml` + per-phase profiles |
+| `zforge init` (default) | `.zforge/`, `CLAUDE.md`, `.claude/settings.json`, `.claude/agents/`, `.claude/skills/`, `.claude/rules/` | No — run `zforge mcp register --agent claude` |
+| `zforge init --agent codex` | `.zforge/`, `AGENTS.md`, `.codex/agents/`, `.codex/README.md` | Yes — `~/.codex/config.toml` |
 | `zforge init --agent opencode` | `.zforge/`, `AGENTS.md`, `.opencode/agents/` | Yes — `~/.config/opencode/opencode.json` |
 | `zforge init --agent all` | All of the above | Yes — codex + opencode |
 
-`.zforge/agents/` is the shared source of truth. Agent-specific directories such
-as `.codex/agents/` and `.opencode/agents/` are materialized from it with the
-model frontmatter resolved for that tool.
+The agents are `code-agent` (every attempt of a run) and `review-agent`
+(optional review of passing work). Their models default to Claude tiers —
+`sonnet` for code, `opus` for review — and `zforge models set` changes them.
 
 ## Register the MCP server
 
@@ -247,36 +123,30 @@ Agents that are not installed are skipped, not failed.
 
 | Command | Description |
 |---------|-------------|
-| `zforge init` | Scaffold `.zforge/`, `CLAUDE.md`, `.claude/` files |
-| `zforge mcp register` | Register zforge MCP server with Claude Code, Codex, and/or OpenCode |
-| `zforge task import <ID>` | Create a new task (supports `--jira`, `--figma`, `--figma-context`, `--flow`) |
-| `zforge spec <ID>` | Generate spec prompt |
-| `zforge testspec <ID>` | Generate test spec prompt |
-| `zforge approve <ID> testspec` | Approve testspec (human gate) |
-| `zforge plan <ID>` | Generate implementation plan prompt |
-| `zforge approve <ID> plan` | Approve implementation plan (human gate) |
-| `zforge code <ID>` | Generate coding prompt (AI writes tests first) |
-| `zforge verify <ID>` | Run tests, record results |
-| `zforge ship <ID>` | Run `code` + `verify` in one step (idempotent — skips code if already Coded) |
-| `zforge review <ID>` | Generate review prompt, extract patterns |
-| `zforge status` | Show all task progress |
-| `zforge status <ID>` | Show single task status |
-| `zforge retry <ID> --from <phase>` | Reset and retry from a phase |
-| `zforge mcp` | Start MCP server (stdio) — called by AI tools automatically |
+| `zforge init` / `zforge install` | Scaffold a project; populate the global store `~/.zforge/` |
+| `zforge status [--global]` | Every intake, its handovers and runs, and the next step |
+| `zforge intake new\|task\|status\|review <ID> …` | Prepare an intake and send files for review |
+| `zforge intake accept\|revise <ID> <file>` | Record your decision (interactive terminal only) |
+| `zforge readiness <ID>` | Can the accepted files be handed over, and why not |
+| `zforge handover <ID>` | Hand the accepted contract over (interactive terminal only) |
+| `zforge run <HANDOVER> [--task T] [--async]` | Build a handover, or one task of it |
+| `zforge run status\|list\|log\|wait\|cancel\|retry\|clean` | Follow and manage runs |
+| `zforge knowledge index` | Rebuild `.zforge/knowledge/` — each requirement, decided and built |
+| `zforge models [set\|unset]` | Which model runs each phase |
+| `zforge doctor` | Check the Claude Code setup actually works |
+| `zforge project …` | The registry of zforge projects on this machine |
+| `zforge mcp` / `zforge mcp register` | MCP server (stdio); register it with a client |
+| `zforge update` | Install the latest release |
 
 ## Documentation
 
 | Guide | Description |
 |-------|-------------|
-| [docs/v1/getting-started.md](docs/v1/getting-started.md) | v1 install, init, first task |
-| [docs/v1/workflow.md](docs/v1/workflow.md) | v1 pipeline phases explained |
-| [docs/v1/commands.md](docs/v1/commands.md) | v1 command reference |
-| [docs/v1/flows.md](docs/v1/flows.md) | v1 flow presets: full, fixbug, spike, docs |
-| [docs/v1/retry.md](docs/v1/retry.md) | v1 phase retry behavior |
-| [docs/v1/memory.md](docs/v1/memory.md) | v1 pattern memory |
-| [docs/v1/mcp.md](docs/v1/mcp.md) | v1 MCP integration |
-| [docs/v1/install-global.md](docs/v1/install-global.md) | v1 global store and install modes |
-| [docs/v1/opencode.md](docs/v1/opencode.md) | v1 OpenCode integration |
+| [docs/v1.5/README.md](docs/v1.5/README.md) | v1.5: intake, handover, runs — the current workflow |
+| [docs/v1.5/usage.md](docs/v1.5/usage.md) | v1.5 step by step, from a request to verified code |
+| [docs/v1.5/workflow.md](docs/v1.5/workflow.md) | v1.5 design: states, records, runs |
+| [docs/v1.5/decisions.md](docs/v1.5/decisions.md) | v1.5 decisions |
+| [docs/v1/README.md](docs/v1/README.md) | v1 task pipeline — removed; kept for history |
 | [docs/v2/README.md](docs/v2/README.md) | v2 documentation index and recommended reading order |
 | [docs/v2/product-direction.md](docs/v2/product-direction.md) | Quality-first product objective, target users, autonomy boundary, and accepted outcomes |
 | [docs/v2/fleet-and-human-attention.md](docs/v2/fleet-and-human-attention.md) | Work batches, preflight, Decision Inbox, quality-first scheduling, and consolidated decisions |
@@ -299,7 +169,7 @@ Agents that are not installed are skipped, not failed.
 | [docs/v2/security-threat-model.md](docs/v2/security-threat-model.md) | Threat model for assets, trust boundaries, attack paths, controls, residual risk, and incident response |
 | [docs/v2/evaluation.md](docs/v2/evaluation.md) | Normative draft for benchmarks, metrics, evaluator integrity, release gates, and continuous evaluation |
 
-V2 is a design target, separate from the current v1 workflow above. It stops at
+V2 is a design target, separate from the current v1.5 workflow above. It stops at
 reviewable development results and excludes application deployment and production
 access/debugging. See [Development Handoff and Review](docs/v2/delivery-and-review.md)
 and [Project Onboarding and Local Testing](docs/v2/project-onboarding-and-local-testing.md).

@@ -40,7 +40,8 @@ execution:
 ```
 
 **Chọn model.** Mặc định của zforge cho Claude là *hạng*, không phải tên model:
-`sonnet` cho spec, testspec và code; `opus` cho plan và review. Alias này do
+`sonnet` cho `code` (mỗi lượt của run), `opus` cho `review` (duyệt tùy chọn,
+`execution.review: true`). Alias này do
 Anthropic cập nhật nên tự theo model mới. Codex và OpenCode không có hạng, nên
 dùng model mặc định của chính chúng. Xem và đổi:
 
@@ -55,6 +56,11 @@ zforge models set code sonnet
 `--client codex|opencode` cho client khác, `inherit` để dùng mặc định của client
 (Claude: model đặt bằng `/model`), `unset` để quay về mặc định của zforge. Lệnh
 sửa `models.yaml` (giữ comment) và cập nhật file agent ngay.
+
+**Đang ở đâu.** `zforge status` liệt kê mọi intake: trạng thái từng file, file
+cần xác nhận lại, các handover và task của chúng, và *lệnh nên chạy tiếp*.
+`zforge status --global` làm vậy cho mọi project đã đăng ký; MCP có tool
+`status` trả cùng JSON.
 
 ## 1. Intake: làm rõ và chốt
 
@@ -195,7 +201,7 @@ Lệnh tích hợp lấy từ khối code đầu tiên dưới mục "Kiểm ch�
 `project.test_command`. Không gọi agent: tích hợp fail là chuyện hợp đồng giữa
 các task, sửa qua amendment.
 
-Agent trong chat làm được phần chuẩn bị và theo dõi qua MCP: `intake_new`,
+Agent trong chat làm được phần chuẩn bị và theo dõi qua MCP: `status`, `intake_new`,
 `intake_task`, `intake_status`, `intake_review`, `intake_diff`, `change_new`,
 `readiness`, `knowledge_index`, `run_start`, `run_status`, `run_list`,
 `run_log`, `run_cancel`. `run_start` không kèm `task` chạy cả handover trong
