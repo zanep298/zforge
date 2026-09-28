@@ -3,7 +3,8 @@
 ## Purpose
 Enforce TDD-first iOS testing using XCTest and Swift Testing.
 Read this before writing any test.
-Test command: `{{test_command}}`
+Test command: the project's `project.test_command` (`.zforge/config.yaml`) —
+the prompt you work from names it.
 
 ## Framework Choice
 
@@ -159,9 +160,9 @@ Never use `XCTestExpectation` for `async/await` code — it is for callbacks onl
 
 ## Test-First Rule
 
-1. Write the failing test — run `{{test_command}}` and confirm it fails (red)
+1. Write the failing test — run the test command and confirm it fails (red)
 2. Write the minimal production code to make it pass (green)
-3. Run `{{test_command}}` again — confirm it passes
+3. Run the test command again — confirm it passes
 4. Refactor — confirm tests still pass
 
 Never write a ViewModel, UseCase, or Repository method before its failing test exists.

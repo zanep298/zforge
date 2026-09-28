@@ -255,6 +255,20 @@ pub fn global_store_dir() -> Option<std::path::PathBuf> {
 mod tests {
     use super::*;
 
+    /// The global store keeps skills verbatim — nothing renders them — and
+    /// runs and non-Claude clients read them from there. A `{{…}}` left in
+    /// one would reach the agent as is.
+    #[test]
+    fn skills_hold_no_template_placeholders() {
+        let all = SKILLS
+            .iter()
+            .map(|(n, b)| (n.to_string(), *b))
+            .chain(all_lang_skills());
+        for (name, body) in all {
+            assert!(!body.contains("{{"), "{name} has a placeholder");
+        }
+    }
+
     #[test]
     fn no_embedded_template_is_empty() {
         for (name, body) in PROMPT_TEMPLATES.iter().chain(AGENTS).chain(SKILLS) {

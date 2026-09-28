@@ -3,7 +3,8 @@
 ## Purpose
 Write TDD-first Flutter tests using unit, widget, and integration tests where each
 level covers the right behavior.
-Test command: `{{test_command}}`
+Test command: the project's `project.test_command` (`.zforge/config.yaml`) —
+the prompt you work from names it.
 
 ## Checklist
 
@@ -17,9 +18,9 @@ Test command: `{{test_command}}`
 ## Test-First Rule
 
 1. Write the failing test for the testspec case ID.
-2. Run `{{test_command}}` and confirm the expected failure.
+2. Run the test command and confirm the expected failure.
 3. Implement the minimum code to pass.
-4. Run `{{test_command}}` again.
+4. Run the test command again.
 
 ## Do Not Do
 

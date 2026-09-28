@@ -275,12 +275,14 @@ impl Contract {
     /// the previous attempt, if any. `change_request_path` is where the agent
     /// writes a change request when the contract must change. `checklists`
     /// are the project's checklists for writing code and tests, by absolute
-    /// path (`agent_env::checklists`).
+    /// path (`agent_env::checklists`); `test_command` is what verification
+    /// runs.
     pub fn prompt(
         &self,
         feedback: Option<&str>,
         change_request_path: &str,
         checklists: &[std::path::PathBuf],
+        test_command: &str,
     ) -> String {
         let stages: Vec<String> = STAGES
             .iter()
@@ -316,6 +318,7 @@ impl Contract {
         };
         TEMPLATE
             .replace("{{checklists}}\n", &checklists)
+            .replace("{{test_command}}", test_command)
             .replace("{{task_id}}", &self.task)
             .replace("{{intake_id}}", &self.intake)
             .replace("{{handover_id}}", &self.manifest.id)
@@ -453,6 +456,7 @@ pub(crate) mod tests {
             None,
             ".zforge/intakes/F/changes/CHANGE-001.md",
             &[],
+            "cargo test",
         );
         std::fs::write(
             f.intake.dir.join("tasks/TASK-001.md"),
@@ -464,6 +468,7 @@ pub(crate) mod tests {
             None,
             ".zforge/intakes/F/changes/CHANGE-001.md",
             &[],
+            "cargo test",
         );
         assert_eq!(before, after);
         assert!(!after.contains("SỬA"));
@@ -535,10 +540,12 @@ pub(crate) mod tests {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         let list = [std::path::PathBuf::from("/store/write-tests-first.md")];
-        let p = c.prompt(None, "CR.md", &list);
+        let p = c.prompt(None, "CR.md", &list, "cargo test");
         assert!(p.contains("## Checklists"), "{p}");
         assert!(p.contains("- `/store/write-tests-first.md`"), "{p}");
-        assert!(!c.prompt(None, "CR.md", &[]).contains("## Checklists"));
+        assert!(!c
+            .prompt(None, "CR.md", &[], "cargo test")
+            .contains("## Checklists"));
         assert!(!p.contains("{{checklists}}"));
     }
 
@@ -546,7 +553,7 @@ pub(crate) mod tests {
     fn prompt_carries_the_contract_context_feedback_and_change_path() {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
-        let p = c.prompt(None, "CR.md", &[]);
+        let p = c.prompt(None, "CR.md", &[], "cargo test");
         assert!(p.starts_with("# Leaf task TASK-001 — F / HANDOVER-001"));
         assert!(p.contains("## The task contract\n\n---\nid: TASK-001"));
         assert!(
@@ -555,9 +562,10 @@ pub(crate) mod tests {
         );
         assert!(!p.contains("### tasks/"), "other tasks are not context");
         assert!(p.contains("to `CR.md`"));
+        assert!(p.contains("Verification runs `cargo test` in this directory"));
         assert!(!p.contains("Verifier feedback") && !p.contains("{{"));
 
-        let p = c.prompt(Some("FAIL add_small"), "CR.md", &[]);
+        let p = c.prompt(Some("FAIL add_small"), "CR.md", &[], "cargo test");
         assert!(p.contains("## Verifier feedback") && p.contains("FAIL add_small"));
         assert!(p.find("Verifier feedback").unwrap() < p.find("The task contract").unwrap());
     }

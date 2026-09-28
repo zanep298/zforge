@@ -2,7 +2,8 @@
 
 ## Purpose
 Enforce TDD-first TypeScript testing in this project. Read this before writing any test.
-Test command: `{{test_command}}`
+Test command: the project's `project.test_command` (`.zforge/config.yaml`) —
+the prompt you work from names it.
 
 ## Structure
 
@@ -77,9 +78,9 @@ Use `jest.fn()` / `vi.fn()` for simple call assertions, not for complex dependen
 
 ## Test-First Rule
 
-1. Write the failing test — run `{{test_command}}` and confirm it fails
+1. Write the failing test — run the test command and confirm it fails
 2. Write the minimal production code to make it pass
-3. Run `{{test_command}}` again — confirm it passes and all existing tests still pass
+3. Run the test command again — confirm it passes and all existing tests still pass
 
 ## Do Not Do
 

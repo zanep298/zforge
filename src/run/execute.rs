@@ -237,7 +237,12 @@ fn work(
             .into());
         }
         let feedback = prev.map(|p| feedback_text(p, &last_output.borrow()));
-        let prompt = contract.prompt(feedback.as_deref(), &change_request, &checklists);
+        let prompt = contract.prompt(
+            feedback.as_deref(),
+            &change_request,
+            &checklists,
+            &config.project.test_command,
+        );
         let (spec, named) = agent_spec(base, project_root, &work_dir, left);
         eprintln!("{}: attempt {n} (up to ${left:.2})", run.id);
         run.append(&RunEvent::AttemptStarted {

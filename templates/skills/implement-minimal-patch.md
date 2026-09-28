@@ -2,50 +2,57 @@
 
 ## Purpose
 
-Make the smallest working change that satisfies the approved spec and passes the
-approved tests. Resist the urge to clean up, refactor, or improve things that are
-not directly required by the current task.
+Make the smallest working change that satisfies what was agreed and passes the
+tests. Resist the urge to clean up, refactor, or improve things that are not
+directly required by the current task.
 
 ## When to Use
 
-- During every coding step in plan.md
+- During every coding step
 - When reviewing whether a changeset is appropriately scoped
 - When deciding whether to include a "while I'm here" fix
 
 ## Required Inputs
 
-- `spec.md` — defines the boundary of acceptable change
-- `testspec.md` — defines what must pass
-- `plan.md` — defines which files to touch and in what order
+The boundary of acceptable change, from whichever you were given:
+
+- **Pipeline task:** `spec.md` (scope), `testspec.md` (what must pass),
+  `plan.md` (files and order)
+- **Contract run (v1.5):** the task contract — Output, Ràng buộc (constraints),
+  Tự chủ (what you may decide) and the acceptance criteria — plus the binding
+  decisions ("Quyết định bắt buộc") in the accepted solution
 
 ## Expected Outputs
 
 A changeset that:
 
-- Passes all tests in testspec.md
-- Touches only the files listed in plan.md (or documents why an unlisted file was needed)
-- Preserves all existing public interfaces unless the spec explicitly changes them
+- Passes the whole test suite, including the new tests
+- Stays inside the agreed scope (the plan's files, or the contract's output and
+  constraints), or says why it had to leave it
+- Preserves all existing public interfaces unless what was agreed changes them
 
 ## Checklist
 
-- [ ] Changed files match the impacted files list in plan.md
-- [ ] No public function signatures changed without spec approval
-- [ ] No error types renamed or removed without spec approval
+- [ ] Every changed file is needed for the agreed output
+- [ ] No public function signatures changed without that being agreed
+- [ ] No error types renamed or removed without that being agreed
 - [ ] No unrelated files modified
 - [ ] No speculative abstractions added ("we might need this later")
 - [ ] No formatting-only changes mixed with behavior changes
-- [ ] Implementation log updated with: files changed, behavior changed, assumptions used
+- [ ] The final message says what changed, why, and any assumption made
 
 ## Constraints
 
-- If a necessary change is not in the plan, document it and flag it — do not silently expand scope
-- "It's just a cleanup" is not a reason to change code outside the plan
+- If a necessary change is outside what was agreed, say so — in a contract run,
+  when it changes an output, interface, binding decision or criterion, write a
+  change request instead of making it
+- "It's just a cleanup" is not a reason to change code outside the scope
 - Keep changes reviewable: smaller diffs are reviewed more carefully
 
 ## Do Not Do
 
 - Do not refactor code that is not blocking the current task
 - Do not add abstractions for hypothetical future requirements
-- Do not rename things for style unless the plan explicitly calls for it
+- Do not rename things for style unless that was agreed
 - Do not introduce new dependencies without flagging it
 - Do not hide breaking changes in the middle of a large diff
