@@ -1,30 +1,23 @@
-# Model selection per coding assistant and pipeline phase.
-# Edit to change which model runs each phase.
-# Values here take precedence over agent frontmatter defaults.
-
-claude:
-  spec: claude-sonnet-5
-  testspec: claude-sonnet-5
-  plan: claude-opus-4-8
-  code: claude-sonnet-5
-  review: claude-opus-4-8
-
-# Codex models
-#  1. gpt-5.5 (default)  Frontier model for complex coding, research, and real-world work.
-#  2. gpt-5.4 (current)  Strong model for everyday coding.
-#  3. gpt-5.4-mini       Small, fast, and cost-efficient model for simpler coding tasks.
-#  4. gpt-5.3-codex      Coding-optimized model.
-#  5. gpt-5.2            Optimized for professional work and long-running agents.
-codex:
-  spec: gpt-5.4
-  testspec: gpt-5.4
-  plan: gpt-5.5
-  code: gpt-5.3-codex
-  review: gpt-5.5
-
-opencode:
-  spec: opencode-go/qwen3.5-plus
-  testspec: opencode-go/qwen3.5-plus
-  plan: opencode-go/kimi-k2.6
-  code: opencode-go/qwen3.6-plus
-  review: opencode-go/deepseek-v4-pro
+# Which model runs each zforge phase, per coding assistant.
+#
+# zforge names no model of its own: a phase without an entry here runs on
+# the client's default — for Claude Code, the model you chose with /model or
+# in its settings; for Codex and OpenCode, their configured default.
+#
+# Choose with:   zforge models set <phase|all> <model> [--client claude] [--global]
+# See choices:   zforge models
+# or edit this file. Phases: spec, testspec, plan, code, review.
+# ~/.zforge/models.yaml applies to every project; this file wins over it.
+#
+# Example:
+#
+# claude:
+#   plan: opus
+#   code: sonnet
+#   review: opus
+#
+# codex:
+#   code: <model>
+#
+# opencode:
+#   code: <provider>/<model>

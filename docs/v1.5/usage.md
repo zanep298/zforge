@@ -39,6 +39,21 @@ execution:
   budget_usd: 3.0
 ```
 
+**Chọn model.** zforge không tự đặt tên model nào; giai đoạn nào bạn chưa chọn
+thì chạy trên model mặc định của client (Claude Code: model bạn đặt bằng
+`/model`). Xem và chọn:
+
+```bash
+zforge models
+```
+```bash
+zforge models set code sonnet
+```
+
+`set all <model>` cho mọi giai đoạn, `--global` cho mọi project trên máy,
+`--client codex|opencode` cho client khác, `unset` để quay về mặc định. Lệnh
+sửa `models.yaml` (giữ comment) và cập nhật file agent ngay.
+
 ## 1. Intake: làm rõ và chốt
 
 Agent chuẩn bị nội dung (skill `zforge-intake`), bạn quyết định.

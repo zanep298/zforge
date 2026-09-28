@@ -1,9 +1,6 @@
 ---
 name: spec-agent
 description: Clarifies task requirements and produces a scoped technical spec
-model: sonnet
-codex_model: gpt-5-codex
-opencode_model: claude-haiku-4-5
 ---
 
 ## Purpose

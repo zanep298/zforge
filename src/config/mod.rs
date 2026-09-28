@@ -404,7 +404,19 @@ fn global_models_path() -> Option<PathBuf> {
 
 fn load_models_from_file(path: &Path) -> Option<ModelsConfig> {
     let content = std::fs::read_to_string(path).ok()?;
-    match serde_yaml::from_str::<ModelsConfig>(&content) {
+    parse_models(&content, path)
+}
+
+/// A file with nothing but comments — the template, before any choice — is
+/// an empty choice, not an error.
+fn parse_models(content: &str, path: &Path) -> Option<ModelsConfig> {
+    if matches!(
+        serde_yaml::from_str::<serde_yaml::Value>(content),
+        Ok(serde_yaml::Value::Null)
+    ) {
+        return Some(ModelsConfig::default());
+    }
+    match serde_yaml::from_str::<ModelsConfig>(content) {
         Ok(c) => Some(c),
         Err(e) => {
             eprintln!("warning: failed to parse {}: {e}", path.display());
@@ -597,5 +609,13 @@ mod tests {
         // Simulate finding config by verifying load_from works with given path
         let cfg = load_from(&path).unwrap();
         assert_eq!(cfg.project.name, "walk-up-test");
+    }
+
+    #[test]
+    fn a_models_file_of_comments_only_is_an_empty_choice() {
+        let template = include_str!("../../templates/models.yaml");
+        let m = parse_models(template, Path::new("models.yaml")).unwrap();
+        assert!(m.agents.is_empty(), "the template chooses no model");
+        assert!(parse_models("", Path::new("m")).unwrap().agents.is_empty());
     }
 }

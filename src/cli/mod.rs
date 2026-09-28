@@ -11,6 +11,7 @@ pub mod install;
 pub mod intake;
 pub mod job;
 pub mod mcp_register;
+pub mod models;
 pub mod outcome;
 pub mod output;
 pub mod plan;

@@ -28,38 +28,33 @@ use std::path::Path;
 /// init scaffold but keyed by phase rather than filename.
 const PHASES: &[&str] = &["spec", "testspec", "plan", "code", "review"];
 
-fn default_model_for(target: &str) -> &'static str {
-    match target {
-        "claude" => "sonnet",
-        "codex" => "gpt-5-codex",
-        "opencode" => "claude-sonnet-4-6",
-        _ => "unknown",
-    }
-}
-
 /// Strip every `model:` / `codex_model:` / `opencode_model:` line from the
 /// frontmatter and prepend a single `model: <resolved>` line right after
 /// the opening `---`. Body untouched.
 #[cfg(test)]
 pub fn rewrite_frontmatter_with_model(content: &str, resolved_model: &str) -> String {
-    rewrite_frontmatter(content, resolved_model, "")
+    rewrite_frontmatter(content, Some(resolved_model), "")
 }
 
 /// [`rewrite_frontmatter_with_model`] plus `extra` frontmatter lines (e.g.
 /// Claude's `skills:` block) placed after the `model:` line. Any `skills:`
-/// block already in the template is replaced, not duplicated.
-pub fn rewrite_frontmatter(content: &str, resolved_model: &str, extra: &str) -> String {
+/// block already in the template is replaced, not duplicated. With no
+/// model, no `model:` line is written: the client uses its own default.
+pub fn rewrite_frontmatter(content: &str, resolved_model: Option<&str>, extra: &str) -> String {
+    let model_line = resolved_model
+        .map(|m| format!("model: {m}\n"))
+        .unwrap_or_default();
     // Locate frontmatter bounds: file must begin with `---\n` and contain a
     // second `---\n` line. Anything else: return content unchanged with a
     // synthetic frontmatter prepended so the file still works.
     let rest = match content.strip_prefix("---\n") {
         Some(r) => r,
         None => {
-            return format!("---\nmodel: {resolved_model}\n{extra}---\n{content}");
+            return format!("---\n{model_line}{extra}---\n{content}");
         }
     };
     let Some(end_idx) = find_frontmatter_end(rest) else {
-        return format!("---\nmodel: {resolved_model}\n{extra}---\n{content}");
+        return format!("---\n{model_line}{extra}---\n{content}");
     };
     let frontmatter_body = &rest[..end_idx];
     let body = &rest[end_idx + "---\n".len()..];
@@ -88,7 +83,7 @@ pub fn rewrite_frontmatter(content: &str, resolved_model: &str, extra: &str) -> 
 
     let mut out = String::with_capacity(content.len());
     out.push_str("---\n");
-    out.push_str(&format!("model: {resolved_model}\n"));
+    out.push_str(&model_line);
     out.push_str(extra);
     out.push_str(&filtered);
     out.push_str("---\n");
@@ -132,21 +127,31 @@ pub fn frontmatter_target_model(content: &str, target: &str) -> Option<String> {
     None
 }
 
-/// Resolve the model for `(target, phase)` from `models.yaml` → frontmatter
-/// → hard default in that order.
+/// The model the user chose for `(target, phase)`: `models.yaml`, else a
+/// `model:` they wrote into the agent definition. zforge names no model of
+/// its own — models change too fast for a built-in choice to stay right —
+/// so `None` means the client's own default.
 pub fn resolve_model(
     target: &str,
     phase: &str,
     template_content: &str,
     models: Option<&ModelsConfig>,
-) -> String {
+) -> Option<String> {
     if let Some(m) = models.and_then(|m| m.for_assistant(target, phase)) {
-        return m.to_string();
+        return Some(m.to_string());
     }
-    if let Some(m) = frontmatter_target_model(template_content, target) {
-        return m;
+    frontmatter_target_model(template_content, target)
+}
+
+/// The `model:` value written for `target`: the chosen model, or — for
+/// Claude, where an omitted field is not documented — `inherit`, the model
+/// the session runs with.
+pub fn model_line_for(target: &str, resolved: Option<String>) -> Option<String> {
+    match (target, resolved) {
+        (_, Some(m)) => Some(m),
+        ("claude", None) => Some("inherit".to_string()),
+        (_, None) => None,
     }
-    default_model_for(target).to_string()
 }
 
 /// Render per-target agent files into `dst_dir`. Returns the count of files
@@ -168,8 +173,8 @@ pub fn materialize_agents_into(
         let Ok(content) = std::fs::read_to_string(&src) else {
             continue;
         };
-        let resolved = resolve_model(target, phase, &content, models);
-        let rewritten = rewrite_frontmatter(&content, &resolved, &extra_frontmatter(phase));
+        let model = model_line_for(target, resolve_model(target, phase, &content, models));
+        let rewritten = rewrite_frontmatter(&content, model.as_deref(), &extra_frontmatter(phase));
         let dst = dst_dir.join(&filename);
         if dst.exists() {
             if force {
@@ -233,20 +238,26 @@ text\n"
             },
         );
         let resolved = resolve_model("codex", "code", template_with_three_keys(), Some(&models));
-        assert_eq!(resolved, "gpt-5-mini");
+        assert_eq!(resolved.as_deref(), Some("gpt-5-mini"));
     }
 
     #[test]
     fn resolve_falls_back_to_frontmatter_when_no_yaml_override() {
         let resolved = resolve_model("codex", "code", template_with_three_keys(), None);
-        assert_eq!(resolved, "gpt-5-codex");
+        assert_eq!(resolved.as_deref(), Some("gpt-5-codex"));
     }
 
     #[test]
-    fn resolve_falls_back_to_default_when_template_lacks_key() {
+    fn nothing_chosen_means_the_clients_own_default() {
         let stripped = "---\nname: x\n---\nbody\n";
-        let resolved = resolve_model("codex", "code", stripped, None);
-        assert_eq!(resolved, "gpt-5-codex");
+        for target in ["claude", "codex", "opencode"] {
+            assert_eq!(resolve_model(target, "code", stripped, None), None);
+        }
+        // Claude gets `inherit`; the others no `model:` line at all.
+        assert_eq!(model_line_for("claude", None).as_deref(), Some("inherit"));
+        assert_eq!(model_line_for("codex", None), None);
+        let out = rewrite_frontmatter(stripped, None, "");
+        assert!(!out.contains("model:"), "{out}");
     }
 
     #[test]
@@ -319,7 +330,7 @@ text\n"
     #[test]
     fn extra_frontmatter_is_added_after_model_and_replaces_existing_skills() {
         let tmpl = "---\nname: code-agent\nskills:\n  - old-skill\ndescription: x\n---\nbody\n";
-        let out = rewrite_frontmatter(tmpl, "sonnet", "skills:\n  - zforge-a\n");
+        let out = rewrite_frontmatter(tmpl, Some("sonnet"), "skills:\n  - zforge-a\n");
         assert!(
             out.starts_with("---\nmodel: sonnet\nskills:\n  - zforge-a\n"),
             "{out}"

@@ -168,6 +168,8 @@ The agentless runner is `Config::default_runner()` — `runner.default` from `.z
 
 ### Per-phase model routing (PR6)
 
+**zforge names no model of its own** — models change faster than a built-in choice could follow. The agent templates carry no `model:`, the `models.yaml` template is comments only, and nothing in code falls back to a model name: a phase without a choice gets `model: inherit` in Claude's agent file (no `--model` at runtime, so Claude's own default) and no `model:` line for Codex/OpenCode. `zforge models [--json]` shows each client × phase with its source (`project` / `global` / `client default`); `zforge models set <phase|all> <model> [--client C] [--global]` and `unset` edit `.zforge/models.yaml` or `~/.zforge/models.yaml` as text (`cli/models.rs::set_in_yaml`: comments kept, the result parsed back and checked before writing) and re-render the project's `.<client>/agents/` (`cli::init::rerender_agents`). A `model:` the user wrote into a store agent definition still counts as their choice.
+
 `models.yaml` defines per-agent → per-phase model overrides. Two-layer precedence:
 
 1. **Local** `<project>/.zforge/models.yaml` — wins per (agent, phase) field

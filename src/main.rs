@@ -202,6 +202,9 @@ enum Commands {
     /// (`zforge run <HANDOVER> --task <TASK> [--async]`), or operate runs
     /// (`status`, `list`, `cancel`, `retry`, `clean`).
     Run(crate::cli::run::RunArgs),
+    /// Which model runs each phase, per client: show, `set`, `unset`.
+    /// zforge names no model of its own; unset phases use the client's default.
+    Models(crate::cli::models::ModelsArgs),
     /// INTERNAL: background run worker — started by `zforge run --async`,
     /// for one run or (`--handover`) a whole handover.
     #[command(hide = true)]
@@ -452,6 +455,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Trace { task_id, json } => cli::trace::run(&task_id, json),
         Commands::Intake { cmd } => cli::intake::run(cmd),
         Commands::Run(args) => cli::run::run(args),
+        Commands::Models(args) => cli::models::run(args),
         Commands::RunWorker { run_id, handover } => match (run_id, handover) {
             (Some(run_id), _) => cli::run::worker(&run_id),
             (None, Some(handover)) => cli::run::feature_worker(&handover),

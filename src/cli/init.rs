@@ -503,8 +503,8 @@ fn scaffold_codex(
         );
     }
 
-    // .codex/agents/ — per-target rendered copies. `model:` is resolved
-    // from models.yaml → frontmatter `codex_model:` → default gpt-5-codex.
+    // .codex/agents/ — per-target rendered copies. `model:` comes from
+    // models.yaml → frontmatter `codex_model:`; none chosen → no line.
     let codex_dir = cwd.join(".codex");
     std::fs::create_dir_all(&codex_dir)?;
     let codex_agents_dir = codex_dir.join("agents");
@@ -585,8 +585,8 @@ fn scaffold_opencode(
         );
     }
 
-    // .opencode/agents/ — per-target rendered copies. `model:` resolved from
-    // models.yaml → frontmatter `opencode_model:` → default claude-sonnet-4-6.
+    // .opencode/agents/ — per-target rendered copies. `model:` comes from
+    // models.yaml → frontmatter `opencode_model:`; none chosen → no line.
     let opencode_dir = cwd.join(".opencode");
     std::fs::create_dir_all(&opencode_dir)?;
     let opencode_agents_dir = opencode_dir.join("agents");
@@ -711,6 +711,40 @@ fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
 /// Replaces the older symlink-based approach (`symlink_agents_into`) for
 /// agent-CLI directories so each tool reads its own model rather than seeing
 /// all three `model:` / `codex_model:` / `opencode_model:` keys at once.
+/// Render the phase agents again for every client this project was set up
+/// for (its `.<client>/agents/` exists), after a model choice changed.
+/// Returns the directories rewritten, relative to the project.
+pub(crate) fn rerender_agents(
+    project_root: &Path,
+    config: &crate::config::Config,
+) -> Result<Vec<String>> {
+    let models = crate::config::load_models_from_root(project_root);
+    let src = config.agents_dir();
+    let language = config.project.language.clone();
+    let mut done = Vec::new();
+    for client in ["claude", "codex", "opencode"] {
+        let rel = format!(".{client}/agents");
+        let dst = project_root.join(&rel);
+        if !dst.is_dir() {
+            continue;
+        }
+        let claude_skills = |phase: &str| match client {
+            "claude" => claude_skills::agent_frontmatter(phase, &language),
+            _ => String::new(),
+        };
+        agent_render::materialize_agents_into(
+            client,
+            &src,
+            &dst,
+            models.as_ref(),
+            true,
+            &claude_skills,
+        )?;
+        done.push(rel);
+    }
+    Ok(done)
+}
+
 fn materialize_agents_for(
     target_agent: &str,
     cwd: &Path,
