@@ -9,19 +9,22 @@
 //! 1. [`checklists`]: the code phase's checklists, named in the prompt by
 //!    their absolute path in the skills store. Any client can read a path
 //!    outside the worktree; whether it does is the agent's choice.
-//! 2. [`bring_claude_config`]: Claude's `.claude/agents` and `.claude/skills`
-//!    from the main checkout, so `--agent code-agent` resolves and its skills
-//!    are preloaded. Brought only where git ignores them: then sealing the
-//!    output cannot commit them. A directory that is neither committed nor
-//!    ignored is left out, with a warning, since the output would carry it.
+//! 2. [`bring_claude_config`]: Claude's `.claude/agents`, `.claude/skills`
+//!    and `.claude/settings.json` from the main checkout, so `--agent
+//!    code-agent` resolves, its skills are preloaded, and the project's
+//!    permission rules and hooks apply. Brought only where git ignores them:
+//!    then sealing the output cannot commit them. One that is neither
+//!    committed nor ignored is left out, with a warning, since the output
+//!    would carry it.
 
 use super::git;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Claude's project configuration a run's agent depends on.
-pub const CLAUDE_DIRS: [&str; 2] = [".claude/agents", ".claude/skills"];
+/// Claude's project configuration a run's agent depends on: directories
+/// and files, relative to the project root.
+pub const CLAUDE_CONFIG: [&str; 3] = [".claude/agents", ".claude/skills", ".claude/settings.json"];
 
 /// Absolute paths of the code phase's checklists that exist in the store.
 pub fn checklists(config: &Config) -> Vec<PathBuf> {
@@ -39,7 +42,7 @@ pub fn checklists(config: &Config) -> Vec<PathBuf> {
         .collect()
 }
 
-/// What [`bring_claude_config`] did for each directory.
+/// What [`bring_claude_config`] did for each path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Brought {
     /// Copied from the main checkout.
@@ -50,33 +53,50 @@ pub enum Brought {
     NotIgnored(String),
 }
 
-/// Bring [`CLAUDE_DIRS`] into `work_dir` from `project_root` where the
-/// worktree lacks them and git ignores them. Directories the main checkout
-/// does not have are skipped.
+/// Bring [`CLAUDE_CONFIG`] into `work_dir` from `project_root` where the
+/// worktree lacks it and git ignores it. What the main checkout does not
+/// have is skipped.
 pub fn bring_claude_config(project_root: &Path, work_dir: &Path) -> Result<Vec<Brought>> {
     let mut out = Vec::new();
-    for dir in CLAUDE_DIRS {
-        let src = project_root.join(dir);
-        if !src.is_dir() {
+    for rel in CLAUDE_CONFIG {
+        let src = project_root.join(rel);
+        let is_dir = src.is_dir();
+        if !is_dir && !src.is_file() {
             continue;
         }
-        let dst = work_dir.join(dir);
+        let dst = work_dir.join(rel);
         if dst.exists() {
-            out.push(Brought::Present(dir.to_string()));
+            out.push(Brought::Present(rel.to_string()));
             continue;
         }
-        let probe = format!("{dir}/zforge-probe");
+        // A directory is ignored when what would go in it is.
+        let probe = match is_dir {
+            true => format!("{rel}/zforge-probe"),
+            false => rel.to_string(),
+        };
         let ignored = git::run(work_dir, &["check-ignore", "-q", &probe])?
             .status
             .success();
         if !ignored {
-            out.push(Brought::NotIgnored(dir.to_string()));
+            out.push(Brought::NotIgnored(rel.to_string()));
             continue;
         }
-        copy_dir(&src, &dst).with_context(|| format!("bring {dir} into the worktree"))?;
-        out.push(Brought::Copied(dir.to_string()));
+        let copied = match is_dir {
+            true => copy_dir(&src, &dst),
+            false => copy_file(&src, &dst),
+        };
+        copied.with_context(|| format!("bring {rel} into the worktree"))?;
+        out.push(Brought::Copied(rel.to_string()));
     }
     Ok(out)
+}
+
+fn copy_file(src: &Path, dst: &Path) -> Result<()> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(src, dst)?;
+    Ok(())
 }
 
 /// Copy a directory tree, following symlinks to what they point at.
@@ -89,7 +109,7 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
         if from.is_dir() {
             copy_dir(&from, &to)?;
         } else if from.is_file() {
-            std::fs::copy(&from, &to)?;
+            copy_file(&from, &to)?;
         }
     }
     Ok(())
@@ -138,6 +158,11 @@ mod tests {
         let skill = root.join(".claude/skills/zforge-debug");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "---\nname: zforge-debug\n---\n").unwrap();
+        std::fs::write(
+            root.join(".claude/settings.json"),
+            r#"{"permissions":{"deny":["Bash(zforge intake accept:*)"]}}"#,
+        )
+        .unwrap();
         (dir, root, work)
     }
 
@@ -151,11 +176,16 @@ mod tests {
             brought,
             [
                 Brought::Copied(".claude/agents".into()),
-                Brought::Copied(".claude/skills".into())
+                Brought::Copied(".claude/skills".into()),
+                Brought::Copied(".claude/settings.json".into())
             ]
         );
         assert!(work.join(".claude/agents/code-agent.md").is_file());
         assert!(work.join(".claude/skills/zforge-debug/SKILL.md").is_file());
+        assert_eq!(
+            std::fs::read_to_string(work.join(".claude/settings.json")).unwrap(),
+            std::fs::read_to_string(root.join(".claude/settings.json")).unwrap()
+        );
         assert!(git::is_clean(&work).unwrap(), "ignored, so nothing to seal");
     }
 
@@ -169,7 +199,8 @@ mod tests {
             brought,
             [
                 Brought::NotIgnored(".claude/agents".into()),
-                Brought::NotIgnored(".claude/skills".into())
+                Brought::NotIgnored(".claude/skills".into()),
+                Brought::NotIgnored(".claude/settings.json".into())
             ]
         );
         assert!(!work.join(".claude").exists());
@@ -200,7 +231,8 @@ mod tests {
             brought,
             [
                 Brought::Present(".claude/agents".into()),
-                Brought::Present(".claude/skills".into())
+                Brought::Present(".claude/skills".into()),
+                Brought::Present(".claude/settings.json".into())
             ]
         );
     }

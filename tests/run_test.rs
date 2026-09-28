@@ -1536,6 +1536,8 @@ fn a_run_gets_the_ignored_claude_config_and_the_checklists() {
         "---\nname: code-agent\n---\nCode.\n",
     )
     .unwrap();
+    let settings = r#"{"permissions":{"deny":["Bash(zforge intake accept:*)"]}}"#;
+    std::fs::write(p.root.join(".claude/settings.json"), settings).unwrap();
     let store = p.root.join(".zforge/skills");
     std::fs::create_dir_all(&store).unwrap();
     std::fs::write(store.join("write-tests-first.md"), "# Tests first\n").unwrap();
@@ -1549,6 +1551,19 @@ fn a_run_gets_the_ignored_claude_config_and_the_checklists() {
         err(&out).contains("RUN-001: brought .claude/agents from the main checkout"),
         "{}",
         err(&out)
+    );
+    assert!(
+        err(&out).contains("brought .claude/settings.json"),
+        "{}",
+        err(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            p.root
+                .join(".zforge/worktrees/RUN-001/.claude/settings.json")
+        )
+        .unwrap(),
+        settings
     );
     let args = std::fs::read_to_string(p.marks.join("args")).unwrap();
     assert!(args.contains("--agent code-agent"), "{args}");

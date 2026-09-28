@@ -198,8 +198,9 @@ Kết thúc thế nào:
 tự bổ sung: prompt liệt kê các checklist viết code và test (`write-tests-first`,
 `implement-minimal-patch`, `<ngôn ngữ>-patterns`/`-testing`) bằng đường dẫn tuyệt
 đối trong store skill; và nếu project **ignore** `.claude/`, run chép
-`.claude/agents` và `.claude/skills` từ checkout chính vào worktree để
-`code-agent` và skill nạp sẵn hoạt động. `.claude/` không commit mà cũng không
+`.claude/agents`, `.claude/skills` và `.claude/settings.json` từ checkout chính
+vào worktree để `code-agent`, skill nạp sẵn, và luật quyền/hook của project đều
+áp dụng. `.claude/` không commit mà cũng không
 ignore thì run không chép (output sẽ mang theo nó) và cảnh báo: commit nó, hoặc
 thêm vào `.gitignore`.
 
