@@ -1,7 +1,7 @@
 //! `zforge install` — populate the global zforge store at `~/.zforge/` with
 //! prompt templates, agent definitions, and skill bundles baked into the
 //! binary. One-time per-machine setup so multiple projects can share a
-//! single source of truth via `zforge init --shared`.
+//! single source of truth via `zforge init` (shared mode, the default).
 //!
 //! Re-run after upgrading the binary to refresh global files; pass `--force`
 //! to overwrite user edits.
@@ -50,7 +50,7 @@ fn migrate_store(root: &Path, to_stderr: bool) -> Result<()> {
 
 /// Install the embedded template/agent/skill payload under `root`. Returns
 /// the number of files written. `quiet` suppresses progress lines so other
-/// commands (e.g. `init --shared`) can auto-trigger install without
+/// commands (e.g. `init`) can auto-trigger install without
 /// flooding output.
 pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<usize> {
     let agents_dir = root.join("agents");
@@ -117,7 +117,7 @@ pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<usize> {
         );
         println!();
         println!("Next:");
-        println!("  zforge init --shared      # scaffold a project that uses this store");
+        println!("  zforge init               # scaffold a project that uses this store");
     }
 
     Ok(created)
