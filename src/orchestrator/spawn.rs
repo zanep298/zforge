@@ -8,9 +8,7 @@ use std::time::{Duration, Instant};
 ///
 /// - `exit_code = -1` → child killed by signal (no exit code).
 /// - `exit_code = 124` → zforge-side wall-clock timeout fired. Convention
-///   matches GNU `timeout`. `FallbackPolicy::default().retryable_exit_codes`
-///   already lists 124, so the orchestrator's retry loop fires fallback
-///   without extra wiring.
+///   matches GNU `timeout`.
 #[derive(Debug)]
 pub struct SpawnOutcome {
     pub exit_code: i32,

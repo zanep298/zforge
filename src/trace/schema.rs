@@ -14,7 +14,7 @@ pub struct PhaseTrace {
     pub timestamp: DateTime<Utc>,
     pub task_id: String,
     pub phase: String,
-    /// 1-based spawn attempt within this phase run (fallback swaps add one).
+    /// 1-based agent call within this run.
     pub attempt: u32,
     /// Registry name of the runner (`claude`, `codex`, …).
     pub runner: String,

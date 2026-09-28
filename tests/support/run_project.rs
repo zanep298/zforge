@@ -207,8 +207,7 @@ impl Project {
         std::fs::write(
             self.home.join("registry.yaml"),
             format!(
-                "agents:\n  claude:\n    command: {}\n    args: [\"-p\", \"--output-format\", \"stream-json\", \"--verbose\"]\n\
-                 fallback_policy:\n  max_retries: 0\n  cooldown_seconds: 0\n",
+                "agents:\n  claude:\n    command: {}\n    args: [\"-p\", \"--output-format\", \"stream-json\", \"--verbose\"]\n",
                 script.display()
             ),
         )

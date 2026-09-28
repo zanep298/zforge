@@ -162,7 +162,7 @@ fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, Age
         .ok_or_else(|| {
             anyhow!("runner `{RUNNER}` is not in the registry; leaf tasks run on Claude")
         })?;
-    let timeout = registry.fallback_policy.spawn_timeout_secs;
+    let timeout = registry.spawn_policy.spawn_timeout_secs;
     let wt = worktree::create(project_root, &meta.id, &meta.task, meta.start_commit())?;
     if let Some(start) = &meta.start {
         super::start::apply(&wt.path, &meta.id, start)?;

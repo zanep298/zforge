@@ -226,7 +226,7 @@ fn an_agent_starts_and_watches_a_run() {
     std::fs::write(
         p.root.join(".home/registry.yaml"),
         format!(
-            "agents:\n  claude:\n    command: {}\n    args: [\"-p\"]\nfallback_policy:\n  max_retries: 0\n",
+            "agents:\n  claude:\n    command: {}\n    args: [\"-p\"]\n",
             stub.display()
         ),
     )
@@ -341,7 +341,7 @@ fn an_agent_runs_a_whole_handover() {
     std::fs::write(
         p.root.join(".home/registry.yaml"),
         format!(
-            "agents:\n  claude:\n    command: {}\n    args: [\"-p\"]\nfallback_policy:\n  max_retries: 0\n",
+            "agents:\n  claude:\n    command: {}\n    args: [\"-p\"]\n",
             stub.display()
         ),
     )

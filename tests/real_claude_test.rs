@@ -172,55 +172,6 @@ fn claude_handles_large_prompt_without_pipe_deadlock() {
     );
 }
 
-/// Contract Q5: failure case emits an identifiable signature the
-/// orchestrator's fallback policy can match.
-///
-/// Originally this test set `ANTHROPIC_API_KEY` to a bogus value. On
-/// macOS/Linux Claude Code stores OAuth credentials separately from the
-/// env var, so a bogus key is silently ignored and the call succeeds —
-/// the env var is NOT a reliable failure trigger.
-///
-/// Use an invalid model name instead. Verified live (2026-05-25):
-///   - exit code: 1
-///   - stdout:    "There's an issue with the selected model (...)..."
-///   - stderr:    ""
-///
-/// IMPORTANT IMPLICATION: Claude prints its failure message to STDOUT, not
-/// stderr. `FallbackPolicy.retryable_stderr_patterns` matches stderr only —
-/// won't catch this on its own. Either:
-///   (a) the orchestrator must also scan stdout, or
-///   (b) failure modes that matter (rate limit, quota) emit to stderr.
-/// We default to exit-code-based fallback for claude; this test documents
-/// the gap.
-#[test]
-#[serial]
-fn claude_failure_emits_identifiable_signature() {
-    let Some(_) = claude_available() else {
-        return;
-    };
-
-    let spec = claude_spec(&["--model", "totally-invalid-model-name"]);
-    let outcome =
-        spawn_agent(&spec, "Respond with: AUTH\n", 60).expect("spawn must not panic on failure");
-
-    eprintln!(
-        "[claude-failure snapshot] exit={} stdout={:?} stderr={:?}",
-        outcome.exit_code, outcome.stdout, outcome.stderr
-    );
-
-    assert_ne!(
-        outcome.exit_code, 0,
-        "expected non-zero exit on invalid model"
-    );
-    let combined = format!("{} {}", outcome.stdout, outcome.stderr);
-    assert!(
-        combined.to_lowercase().contains("model"),
-        "failure output should mention `model`; got stdout={:?} stderr={:?}",
-        outcome.stdout,
-        outcome.stderr
-    );
-}
-
 /// Contract Q5b: bogus `ANTHROPIC_API_KEY` env does NOT invalidate auth on
 /// machines with Claude Code OAuth credentials cached. This locks the
 /// surprising behavior so future readers don't waste time on it.

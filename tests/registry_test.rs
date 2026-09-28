@@ -13,8 +13,8 @@ fn roundtrip_default_registry() {
     let back: Registry = serde_yaml::from_str(&y).unwrap();
     assert_eq!(back.projects.len(), 0);
     assert_eq!(
-        back.fallback_policy.max_retries,
-        r.fallback_policy.max_retries
+        back.spawn_policy.spawn_timeout_secs,
+        r.spawn_policy.spawn_timeout_secs
     );
 }
 
@@ -54,8 +54,7 @@ fn roundtrip_full_registry() {
 fn old_registry_without_fallback_policy_loads() {
     let y = "projects: []\nagents: {}\n";
     let r: Registry = serde_yaml::from_str(y).unwrap();
-    assert_eq!(r.fallback_policy.max_retries, 2);
-    assert_eq!(r.fallback_policy.cooldown_seconds, 30);
+    assert_eq!(r.spawn_policy.spawn_timeout_secs, 600);
 }
 
 #[test]

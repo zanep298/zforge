@@ -11,8 +11,8 @@ pub struct Registry {
     pub projects: Vec<ProjectEntry>,
     #[serde(default)]
     pub agents: BTreeMap<String, AgentSpec>,
-    #[serde(default)]
-    pub fallback_policy: FallbackPolicy,
+    #[serde(default, rename = "fallback_policy")]
+    pub spawn_policy: SpawnPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,31 +66,21 @@ impl Registry {
     }
 }
 
+/// Limits on an agent spawn. Stored under the historical key
+/// `fallback_policy` so existing registries keep their timeout; the fallback
+/// fields it once held (`max_retries`, `retryable_*`, …) are ignored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FallbackPolicy {
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-    #[serde(default = "default_cooldown_seconds")]
-    pub cooldown_seconds: u64,
-    #[serde(default = "default_retryable_exit_codes")]
-    pub retryable_exit_codes: Vec<i32>,
-    #[serde(default = "default_retryable_stderr_patterns")]
-    pub retryable_stderr_patterns: Vec<String>,
-    /// Per-spawn wall-clock timeout. Default 600s (10 min). Exceeded → kill
-    /// child, return synthesized exit code 124 (GNU timeout convention),
-    /// which `default_retryable_exit_codes` already classifies as retryable
-    /// so fallback fires.
+pub struct SpawnPolicy {
+    /// Per-spawn wall-clock timeout. Default 600s (10 min). Exceeded → the
+    /// agent's process tree is killed and exit code 124 is synthesized (GNU
+    /// timeout convention).
     #[serde(default = "default_spawn_timeout_secs")]
     pub spawn_timeout_secs: u64,
 }
 
-impl Default for FallbackPolicy {
+impl Default for SpawnPolicy {
     fn default() -> Self {
         Self {
-            max_retries: default_max_retries(),
-            cooldown_seconds: default_cooldown_seconds(),
-            retryable_exit_codes: default_retryable_exit_codes(),
-            retryable_stderr_patterns: default_retryable_stderr_patterns(),
             spawn_timeout_secs: default_spawn_timeout_secs(),
         }
     }
@@ -98,37 +88,6 @@ impl Default for FallbackPolicy {
 
 fn default_spawn_timeout_secs() -> u64 {
     600
-}
-
-fn default_max_retries() -> u32 {
-    2
-}
-fn default_cooldown_seconds() -> u64 {
-    30
-}
-fn default_retryable_exit_codes() -> Vec<i32> {
-    vec![2, 124, 137]
-}
-/// Default retryable patterns. Despite the name `retryable_stderr_patterns`
-/// (kept for backward compat with existing `registry.yaml` files), the
-/// orchestrator scans **stdout + stderr concatenated** against these patterns
-/// because real binaries (claude, codex) write failure text to stdout. See
-/// `docs/v1/agent-contracts.md` for the per-agent verification.
-fn default_retryable_stderr_patterns() -> Vec<String> {
-    vec![
-        // Generic LLM provider signals — appear in either stream.
-        r"(?i)rate.?limit".into(),
-        r"(?i)quota.?(exceeded|exhausted)".into(),
-        r"(?i)token.?exhausted".into(),
-        r"\b429\b".into(),
-        r"(?i)api.?network.?error".into(),
-        // Codex prints JSON to stdout even on transient failures. Match the
-        // status codes inside the JSON: 429 (rate limit), 5xx (server).
-        r#""status"\s*:\s*429"#.into(),
-        r#""status"\s*:\s*5\d{2}"#.into(),
-        r#""type"\s*:\s*"rate_limit_error""#.into(),
-        r#""type"\s*:\s*"overloaded_error""#.into(),
-    ]
 }
 
 #[cfg(test)]
@@ -141,15 +100,21 @@ mod tests {
         let y = serde_yaml::to_string(&r).unwrap();
         let back: Registry = serde_yaml::from_str(&y).unwrap();
         assert_eq!(back.projects.len(), 0);
-        assert_eq!(back.fallback_policy.max_retries, 2);
+        assert_eq!(back.spawn_policy.spawn_timeout_secs, 600);
     }
 
     #[test]
-    fn old_registry_without_fallback_policy_loads() {
-        let y = "projects: []\nagents: {}\n";
+    fn a_registry_from_the_fallback_era_keeps_its_timeout() {
+        let y = "projects: []\nagents: {}\nfallback_policy:\n  max_retries: 3\n  \
+                 retryable_exit_codes: [2]\n  spawn_timeout_secs: 90\n";
         let r: Registry = serde_yaml::from_str(y).unwrap();
-        assert_eq!(r.fallback_policy.max_retries, 2);
-        assert_eq!(r.fallback_policy.cooldown_seconds, 30);
+        assert_eq!(r.spawn_policy.spawn_timeout_secs, 90);
+        let saved = serde_yaml::to_string(&r).unwrap();
+        assert!(
+            saved.contains("fallback_policy:\n  spawn_timeout_secs: 90"),
+            "{saved}"
+        );
+        assert!(!saved.contains("max_retries"), "{saved}");
     }
 
     #[test]
