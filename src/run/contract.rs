@@ -273,8 +273,15 @@ impl Contract {
 
     /// The code prompt for this run. `feedback` is the verifier's report on
     /// the previous attempt, if any. `change_request_path` is where the agent
-    /// writes a change request when the contract must change.
-    pub fn prompt(&self, feedback: Option<&str>, change_request_path: &str) -> String {
+    /// writes a change request when the contract must change. `checklists`
+    /// are the project's checklists for writing code and tests, by absolute
+    /// path (`agent_env::checklists`).
+    pub fn prompt(
+        &self,
+        feedback: Option<&str>,
+        change_request_path: &str,
+        checklists: &[std::path::PathBuf],
+    ) -> String {
         let stages: Vec<String> = STAGES
             .iter()
             .filter_map(|s| self.files.iter().find(|f| f.file == *s))
@@ -295,7 +302,20 @@ impl Contract {
             ),
             _ => String::new(),
         };
+        let checklists = match checklists {
+            [] => String::new(),
+            files => format!(
+                "## Checklists\n\nRead these before writing code or tests; they are how this project \
+                 does both:\n\n{}\n\n",
+                files
+                    .iter()
+                    .map(|f| format!("- `{}`", f.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        };
         TEMPLATE
+            .replace("{{checklists}}\n", &checklists)
             .replace("{{task_id}}", &self.task)
             .replace("{{intake_id}}", &self.intake)
             .replace("{{handover_id}}", &self.manifest.id)
@@ -429,18 +449,22 @@ pub(crate) mod tests {
     #[test]
     fn editing_the_working_files_does_not_change_the_prompt() {
         let f = handed_over();
-        let before = load(&f.root, "HANDOVER-001", "TASK-001")
-            .unwrap()
-            .prompt(None, ".zforge/intakes/F/changes/CHANGE-001.md");
+        let before = load(&f.root, "HANDOVER-001", "TASK-001").unwrap().prompt(
+            None,
+            ".zforge/intakes/F/changes/CHANGE-001.md",
+            &[],
+        );
         std::fs::write(
             f.intake.dir.join("tasks/TASK-001.md"),
             task("TASK-001", "").replace("Lọc theo", "SỬA"),
         )
         .unwrap();
         std::fs::write(f.intake.dir.join("01-outcome.md"), "edited").unwrap();
-        let after = load(&f.root, "HANDOVER-001", "TASK-001")
-            .unwrap()
-            .prompt(None, ".zforge/intakes/F/changes/CHANGE-001.md");
+        let after = load(&f.root, "HANDOVER-001", "TASK-001").unwrap().prompt(
+            None,
+            ".zforge/intakes/F/changes/CHANGE-001.md",
+            &[],
+        );
         assert_eq!(before, after);
         assert!(!after.contains("SỬA"));
     }
@@ -504,11 +528,25 @@ pub(crate) mod tests {
             .contains("not found"));
     }
 
+    /// Layer 1 of `agent_env`: checklists are named by absolute path, and
+    /// the section is absent when there are none.
+    #[test]
+    fn prompt_names_the_checklists_by_path() {
+        let f = handed_over();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let list = [std::path::PathBuf::from("/store/write-tests-first.md")];
+        let p = c.prompt(None, "CR.md", &list);
+        assert!(p.contains("## Checklists"), "{p}");
+        assert!(p.contains("- `/store/write-tests-first.md`"), "{p}");
+        assert!(!c.prompt(None, "CR.md", &[]).contains("## Checklists"));
+        assert!(!p.contains("{{checklists}}"));
+    }
+
     #[test]
     fn prompt_carries_the_contract_context_feedback_and_change_path() {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
-        let p = c.prompt(None, "CR.md");
+        let p = c.prompt(None, "CR.md", &[]);
         assert!(p.starts_with("# Leaf task TASK-001 — F / HANDOVER-001"));
         assert!(p.contains("## The task contract\n\n---\nid: TASK-001"));
         assert!(
@@ -519,7 +557,7 @@ pub(crate) mod tests {
         assert!(p.contains("to `CR.md`"));
         assert!(!p.contains("Verifier feedback") && !p.contains("{{"));
 
-        let p = c.prompt(Some("FAIL add_small"), "CR.md");
+        let p = c.prompt(Some("FAIL add_small"), "CR.md", &[]);
         assert!(p.contains("## Verifier feedback") && p.contains("FAIL add_small"));
         assert!(p.find("Verifier feedback").unwrap() < p.find("The task contract").unwrap());
     }

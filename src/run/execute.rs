@@ -168,7 +168,26 @@ fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, Age
     if let Some(start) = &meta.start {
         super::start::apply(&wt.path, &meta.id, start)?;
     }
+    report_claude_config(
+        &meta.id,
+        &super::agent_env::bring_claude_config(project_root, &wt.path)?,
+    );
     Ok((contract, config, spec, timeout))
+}
+
+/// Say what the agent will find of Claude's project configuration.
+fn report_claude_config(run: &str, brought: &[super::agent_env::Brought]) {
+    use super::agent_env::Brought;
+    for b in brought {
+        match b {
+            Brought::Copied(dir) => eprintln!("{run}: brought {dir} from the main checkout"),
+            Brought::Present(_) => {}
+            Brought::NotIgnored(dir) => eprintln!(
+                "warning: {run}: {dir} is neither committed nor ignored, so the run's agent \
+                 does not get it; commit it, or ignore it to let runs bring it"
+            ),
+        }
+    }
 }
 
 /// The verifier loop over the worktree.
@@ -195,6 +214,7 @@ fn work(
         .display()
         .to_string();
     let last_output = RefCell::new(String::new());
+    let checklists = super::agent_env::checklists(config);
     // Where the agent starts: protected tests must still be as they are here
     // when the suite passes (`guard`).
     let start = super::git::head(&work_dir)?;
@@ -217,7 +237,7 @@ fn work(
             .into());
         }
         let feedback = prev.map(|p| feedback_text(p, &last_output.borrow()));
-        let prompt = contract.prompt(feedback.as_deref(), &change_request);
+        let prompt = contract.prompt(feedback.as_deref(), &change_request, &checklists);
         let (spec, named) = agent_spec(base, project_root, &work_dir, left);
         eprintln!("{}: attempt {n} (up to ${left:.2})", run.id);
         run.append(&RunEvent::AttemptStarted {

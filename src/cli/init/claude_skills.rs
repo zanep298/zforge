@@ -228,6 +228,16 @@ pub(crate) fn catalog(language: &str) -> Vec<NativeSkill> {
     out
 }
 
+/// Store files (relative to the skills store) the `<phase>-agent` preloads.
+/// The same checklists, named by path, reach clients that cannot preload.
+pub(crate) fn sources_for(phase: &str, language: &str) -> Vec<String> {
+    catalog(language)
+        .into_iter()
+        .filter(|s| s.phases.contains(&phase))
+        .map(|s| s.source)
+        .collect()
+}
+
 /// Skills the `<phase>-agent` preloads.
 pub(crate) fn required_for(phase: &str, language: &str) -> Vec<String> {
     catalog(language)

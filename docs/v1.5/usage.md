@@ -194,6 +194,15 @@ Kết thúc thế nào:
 | `blocked` | Hết budget, hoặc agent xin sửa hợp đồng (`amendment: CHANGE-RUN-001`) |
 | `cancelled` | Bạn hủy, hoặc Ctrl-C |
 
+**Agent nhận gì ngoài hợp đồng.** Worktree chỉ có những gì đã commit, nên run
+tự bổ sung: prompt liệt kê các checklist viết code và test (`write-tests-first`,
+`implement-minimal-patch`, `<ngôn ngữ>-patterns`/`-testing`) bằng đường dẫn tuyệt
+đối trong store skill; và nếu project **ignore** `.claude/`, run chép
+`.claude/agents` và `.claude/skills` từ checkout chính vào worktree để
+`code-agent` và skill nạp sẵn hoạt động. `.claude/` không commit mà cũng không
+ignore thì run không chép (output sẽ mang theo nó) và cảnh báo: commit nó, hoặc
+thêm vào `.gitignore`.
+
 **Test là của hợp đồng, không phải của agent.** Khi test pass, zforge kiểm
 các file test có sẵn so với lúc task bắt đầu: file nào bị sửa, xóa hay đổi tên
 thì lần pass đó bị tính là fail (`protected test changed: <file>`), và agent

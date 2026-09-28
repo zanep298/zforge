@@ -1510,3 +1510,82 @@ fn a_contract_can_let_a_task_change_a_test() {
     assert!(out.status.success(), "{}", err(&out));
     assert_eq!(p.last("RUN-001")["event"], "verified");
 }
+
+// ─── what the agent gets besides the contract (run::agent_env) ──────────────
+
+/// A project that ignores `.claude/`: the run brings the agent definitions
+/// in, so `--agent code-agent` resolves, and names the checklists by path.
+#[test]
+fn a_run_gets_the_ignored_claude_config_and_the_checklists() {
+    let p = Project::new(3.0, 3);
+    std::fs::write(p.root.join(".gitignore"), ".zforge/\n.claude/\n").unwrap();
+    p.git(&["add", ".gitignore"]);
+    p.git(&[
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-qm",
+        "ignore .claude",
+    ]);
+    let agents = p.root.join(".claude/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("code-agent.md"),
+        "---\nname: code-agent\n---\nCode.\n",
+    )
+    .unwrap();
+    let store = p.root.join(".zforge/skills");
+    std::fs::create_dir_all(&store).unwrap();
+    std::fs::write(store.join("write-tests-first.md"), "# Tests first\n").unwrap();
+    // The new baseline carries the ignore rule.
+    p.hand_over_again();
+    p.stub(&fix_and_report());
+
+    let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        err(&out).contains("RUN-001: brought .claude/agents from the main checkout"),
+        "{}",
+        err(&out)
+    );
+    let args = std::fs::read_to_string(p.marks.join("args")).unwrap();
+    assert!(args.contains("--agent code-agent"), "{args}");
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(
+        prompt.contains(&format!(
+            "- `{}`",
+            store.join("write-tests-first.md").display()
+        )),
+        "{prompt}"
+    );
+    // Ignored, so the sealed output does not carry it.
+    let output = status_json(&p, "RUN-001")["state"]["output"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let files = p.git(&["ls-tree", "-r", "--name-only", &output]);
+    assert!(!files.contains(".claude"), "{files}");
+}
+
+/// Config that is neither committed nor ignored is not brought — the output
+/// would carry it — and the run says so.
+#[test]
+fn a_run_warns_about_claude_config_it_cannot_bring() {
+    let p = Project::new(3.0, 3);
+    let agents = p.root.join(".claude/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("code-agent.md"), "---\nname: code-agent\n---\n").unwrap();
+    p.stub(&fix_and_report());
+
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        err(&out).contains(".claude/agents is neither committed nor ignored"),
+        "{}",
+        err(&out)
+    );
+    let args = std::fs::read_to_string(p.marks.join("args")).unwrap();
+    assert!(!args.contains("--agent code-agent"), "{args}");
+}

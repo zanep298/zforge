@@ -217,6 +217,11 @@ impl Config {
         self.resolve_path(&self.paths.agents)
     }
 
+    /// The skills store this project uses (`paths.skills`), absolute.
+    pub fn skills_dir(&self) -> PathBuf {
+        self.resolve_path(&self.paths.skills)
+    }
+
     pub fn memory_dir(&self) -> PathBuf {
         self.resolve_path(&self.paths.memory)
     }
