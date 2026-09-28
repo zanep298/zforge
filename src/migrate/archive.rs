@@ -26,6 +26,12 @@ impl Archive {
         }
     }
 
+    /// Whether `rel` is there — a symlink counts even when its target is
+    /// gone (older zforge linked client agents into the store).
+    pub fn present(root: &Path, rel: &str) -> bool {
+        root.join(rel).symlink_metadata().is_ok()
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }

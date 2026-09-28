@@ -102,7 +102,7 @@ pub fn needs_migration(root: &Path) -> bool {
 pub fn plan(root: &Path) -> Result<Plan> {
     let archive: Vec<String> = RETIRED
         .iter()
-        .filter(|r| root.join(r).exists())
+        .filter(|r| Archive::present(root, r))
         .map(|r| (*r).to_string())
         .collect();
     let config = read_config(root)?;
@@ -403,6 +403,27 @@ mod tests {
         .unwrap();
         let shared = plan(root).unwrap();
         assert!(!shared.backups.iter().any(|b| b.contains("code-agent")));
+    }
+
+    /// Older zforge linked `.codex/agents/*` into the store; once the store
+    /// is migrated those links dangle, and they must still be found.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_to_a_retired_agent_is_archived() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".codex/agents")).unwrap();
+        let link = root.join(".codex/agents/spec-agent.md");
+        std::os::unix::fs::symlink(root.join("gone/spec-agent.md"), &link).unwrap();
+
+        let p = plan(root).unwrap();
+        assert_eq!(p.archive, [".codex/agents/spec-agent.md"]);
+        let dir = apply_files(root, &p).unwrap();
+        assert!(link.symlink_metadata().is_err());
+        assert!(dir
+            .join(".codex/agents/spec-agent.md")
+            .symlink_metadata()
+            .is_ok());
     }
 
     #[test]

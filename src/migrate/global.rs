@@ -58,7 +58,7 @@ impl Report {
 
 /// Whether the store still holds anything of the task pipeline.
 pub fn needs_migration(store: &Path) -> bool {
-    RETIRED.iter().any(|r| store.join(r).exists())
+    RETIRED.iter().any(|r| Archive::present(store, r))
         || registry_is_v1(store)
         || models_text::has_removed_phases(&store.join("models.yaml"))
 }
@@ -81,7 +81,7 @@ pub fn migrate(store: &Path) -> Result<Report> {
     }
     let archive = Archive::new(store, store);
     for rel in RETIRED {
-        if store.join(rel).exists() {
+        if Archive::present(store, rel) {
             archive.take(rel)?;
             report.archived.push((*rel).to_string());
         }
