@@ -302,3 +302,46 @@ fn a_failed_integration_leaves_the_feature_unverified() {
     assert!(req.get("integration").is_none());
     assert_eq!(checkout(&p), before);
 }
+
+/// `zforge status` follows a feature: before the run it says to run the
+/// handover, after it that the handover is verified.
+#[test]
+fn status_follows_the_feature() {
+    let p = Project::with(3.0, 3, &[("TASK-001", "")], "sh test.sh");
+    p.stub(&per_task(&p, ""));
+    let status = || -> serde_json::Value {
+        let out = p.zforge(&["status", "--json"]);
+        assert!(out.status.success(), "{}", err(&out));
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+
+    let s = status();
+    let i = &s["intakes"][0];
+    assert!(
+        i["files"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v == "accepted"),
+        "{i}"
+    );
+    assert_eq!(i["handovers"][0]["tasks"]["TASK-001"], "ready");
+    assert!(i["next"].as_str().unwrap().contains("zforge run"), "{i}");
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    let s = status();
+    let h = &s["intakes"][0]["handovers"][0];
+    assert_eq!(h["tasks"]["TASK-001"], "verified");
+    assert_eq!(h["integration"], "verified");
+    assert!(
+        s["intakes"][0]["next"]
+            .as_str()
+            .unwrap()
+            .contains("is verified"),
+        "{s}"
+    );
+    let text = String::from_utf8_lossy(&p.zforge(&["status"]).stdout).into_owned();
+    assert!(text.contains("TASK-001 verified"), "{text}");
+}

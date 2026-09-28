@@ -67,6 +67,17 @@ enum Commands {
     /// Download and install the latest zforge release from GitHub.
     /// Replaces the current binary in-place. No brew update required.
     Update,
+    /// Where each intake stands — files, handovers, runs — and the next
+    /// step. `--global` covers every project in ~/.zforge/registry.yaml.
+    Status {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        global: bool,
+        /// With --global: how long to wait for all projects together.
+        #[arg(long, default_value_t = 5000)]
+        timeout_ms: u64,
+    },
     /// MCP server: stdio JSON-RPC (no subcommand) or manage Claude Code registration.
     Mcp {
         #[command(subcommand)]
@@ -217,6 +228,17 @@ fn dispatch_unit(command: Commands) -> Result<()> {
             }
         },
         Commands::Project { cmd } => cli::project::run(cmd),
+        Commands::Status {
+            json,
+            global,
+            timeout_ms,
+        } => {
+            if global {
+                cli::status::run_global(timeout_ms, json)
+            } else {
+                cli::status::run(json)
+            }
+        }
         Commands::Intake { cmd } => cli::intake::run(cmd),
         Commands::Run(args) => cli::run::run(args),
         Commands::Models(args) => cli::models::run(args),

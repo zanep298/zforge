@@ -378,3 +378,24 @@ fn an_agent_runs_a_whole_handover() {
     assert_eq!(f["tasks"][0]["state"], "stopped");
     assert_eq!(f["tasks"][0]["status"], "cancelled");
 }
+
+/// `status` gives an agent the same view as `zforge status --json`,
+/// next step included.
+#[test]
+fn status_shows_each_intake_and_its_next_step() {
+    let p = Project::new();
+    let frames = p.mcp(&[
+        call(1, "intake_new", json!({"intake_id": "F"})),
+        call(2, "status", json!({})),
+    ]);
+    let s = json_result(&frames[1]);
+    assert_eq!(s["intakes"][0]["id"], "F");
+    assert_eq!(s["intakes"][0]["files"]["01-outcome.md"], "draft");
+    assert!(
+        s["intakes"][0]["next"]
+            .as_str()
+            .unwrap()
+            .contains("zforge intake review F"),
+        "{s}"
+    );
+}

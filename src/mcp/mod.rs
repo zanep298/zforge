@@ -1,6 +1,8 @@
 //! zforge MCP server — stdio JSON-RPC 2.0.
 //!
 //! Tools exposed:
+//!   status — where each intake stands and the next step (`global` for
+//!     every registered project)
 //!   project_list / project_add / project_remove / switch_project — the
 //!     global project registry
 //!   intake_* / change_new / readiness / knowledge_index / run_* — v1.5
@@ -110,6 +112,7 @@ fn on_tools_call(id: Value, req: &Value) -> Value {
         "project_add" => tool_project_add(&args),
         "project_remove" => tool_project_remove(&args),
         "switch_project" => tool_switch_project(&args),
+        "status" => tool_status(&args),
         // v1.5 intake and runs (preparation and observation only; the
         // user's decisions stay on the CLI — see `v15::FORBIDDEN`).
         other => match v15::dispatch(other, &args) {
@@ -177,6 +180,27 @@ fn tool_switch_project(args: &Value) -> Result<String> {
     Ok(format!("current_project: {name}"))
 }
 
+/// The same data as `zforge status [--global] --json`.
+fn tool_status(args: &Value) -> Result<String> {
+    let global = args
+        .get("global")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if global {
+        let timeout = args
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(DEFAULT_GLOBAL_TIMEOUT_MS);
+        let rows = crate::status::global(std::time::Duration::from_millis(timeout))?;
+        return Ok(serde_json::to_string_pretty(&rows)?);
+    }
+    let config = crate::config::load()?;
+    let s = crate::status::project(&config.project_root())?;
+    Ok(serde_json::to_string_pretty(&s)?)
+}
+
+const DEFAULT_GLOBAL_TIMEOUT_MS: u64 = 5000;
+
 // ─── tool schemas ─────────────────────────────────────────────────────────────
 
 fn tool_definitions() -> Value {
@@ -219,6 +243,17 @@ fn registry_tool_definitions() -> Value {
                     "purge": { "type": "boolean", "description": "Also delete the project's .zforge/ directory (irreversible)" }
                 },
                 "required": ["name"]
+            }
+        },
+        {
+            "name": "status",
+            "description": "Where each intake of the current project stands — files, handovers, runs — and the next step. With global=true, every registered project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "global": { "type": "boolean" },
+                    "timeout_ms": { "type": "integer", "description": "With global: how long to wait for all projects together (default 5000)" }
+                }
             }
         },
         {

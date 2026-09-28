@@ -11,4 +11,5 @@ pub mod process;
 pub mod registry;
 pub mod run;
 pub mod runner;
+pub mod status;
 pub mod trace;
