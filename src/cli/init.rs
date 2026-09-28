@@ -364,15 +364,8 @@ fn scaffold_claude(
 ) -> Result<()> {
     // CLAUDE.md at project root — auto-loaded by Claude Code
     let claude_md = apply_vars_ext(include_str!("../../templates/CLAUDE.md"), vars_with_lang);
-    let created = write_safe(&cwd.join("CLAUDE.md"), &claude_md, force)?;
+    let created = instructions::write_and_report(cwd, "CLAUDE.md", &claude_md, force)?;
     stats.record(created);
-    print_file_status(created, "CLAUDE.md");
-    if !created {
-        eprintln!(
-            "  {} CLAUDE.md already exists — not overwritten. Run with --force to replace.",
-            "⚠".yellow()
-        );
-    }
 
     // .claude/settings.json
     let claude_dir = cwd.join(".claude");
@@ -462,15 +455,8 @@ fn scaffold_codex(
 ) -> Result<()> {
     // AGENTS.md at project root — auto-loaded by Codex CLI
     let agents_md = apply_vars_ext(include_str!("../../templates/AGENTS.md"), vars_with_lang);
-    let created = write_safe(&cwd.join("AGENTS.md"), &agents_md, force)?;
+    let created = instructions::write_and_report(cwd, "AGENTS.md", &agents_md, force)?;
     stats.record(created);
-    print_file_status(created, "AGENTS.md");
-    if !created {
-        eprintln!(
-            "  {} AGENTS.md already exists — not overwritten. Run with --force to replace.",
-            "⚠".yellow()
-        );
-    }
 
     // .codex/agents/ — per-target rendered copies. `model:` comes from
     // models.yaml → frontmatter `codex_model:`; none chosen → no line.
@@ -523,15 +509,8 @@ fn scaffold_opencode(
 ) -> Result<()> {
     // AGENTS.md at project root — OpenCode also reads AGENTS.md
     let agents_md = apply_vars_ext(include_str!("../../templates/AGENTS.md"), vars_with_lang);
-    let created = write_safe(&cwd.join("AGENTS.md"), &agents_md, force)?;
+    let created = instructions::write_and_report(cwd, "AGENTS.md", &agents_md, force)?;
     stats.record(created);
-    print_file_status(created, "AGENTS.md");
-    if !created {
-        eprintln!(
-            "  {} AGENTS.md already exists — not overwritten. Run with --force to replace.",
-            "⚠".yellow()
-        );
-    }
 
     // .opencode/agents/ — per-target rendered copies. `model:` comes from
     // models.yaml → frontmatter `opencode_model:`; none chosen → no line.
@@ -618,6 +597,7 @@ mod claude_settings;
 pub(crate) mod claude_skills;
 pub(crate) mod config_file;
 mod detect;
+pub(crate) mod instructions;
 mod lang_skills;
 mod registry;
 mod runner;

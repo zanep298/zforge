@@ -74,7 +74,8 @@ zforge migrate
 
 Task, memory, agent cũ vào `.zforge/v1-archive/<thời điểm>/`; `config.yaml`
 bỏ key v1 (giữ comment) và thêm khối `execution`; agent, skill, CLAUDE.md,
-settings được sinh lại (bản cũ lưu trong archive). Không xóa gì.
+settings được sinh lại (bản cũ lưu trong archive). CLAUDE.md/AGENTS.md do team
+tự viết (không phải zforge sinh) được giữ nguyên. Không xóa gì.
 
 ## 1. Intake: làm rõ và chốt
 

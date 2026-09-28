@@ -87,7 +87,10 @@ impl Env {
             &p.join(".claude/settings.json"),
             "{\"permissions\":{\"allow\":[\"Bash(make *)\",\"mcp__zforge__ship\"]}}",
         );
-        write(&p.join("CLAUDE.md"), "# old CLAUDE with task import\n");
+        write(
+            &p.join("CLAUDE.md"),
+            "# app\n\n**Workflow manager:** zforge\n\nzforge task import\n",
+        );
     }
 
     fn zforge(&self, args: &[&str]) -> Output {
@@ -233,10 +236,7 @@ fn migrate_moves_a_project_to_v15() {
 
     // Regenerated for Claude; the old instruction file kept in the archive.
     assert!(read(&p.join("CLAUDE.md")).contains("zforge intake new"));
-    assert_eq!(
-        read(&archive.join("CLAUDE.md")),
-        "# old CLAUDE with task import\n"
-    );
+    assert!(read(&archive.join("CLAUDE.md")).contains("zforge task import"));
     assert!(p.join(".claude/agents/code-agent.md").is_file());
     assert!(p.join(".claude/agents/review-agent.md").is_file());
     let settings = read(&p.join(".claude/settings.json"));
@@ -260,4 +260,20 @@ fn status_points_a_v1_project_at_migrate() {
     let status: serde_json::Value = serde_json::from_str(&env.ok(&["status", "--json"])).unwrap();
     assert_eq!(status["needs_migration"], true);
     assert!(env.ok(&["status"]).contains("zforge migrate"));
+}
+
+/// A CLAUDE.md the team wrote for the codebase is theirs: migrate keeps it
+/// as it is (found in backend-auth, where it was overwritten before).
+#[test]
+fn migrate_keeps_a_claude_md_the_project_wrote() {
+    let env = Env::new();
+    env.v1_project();
+    let own = "# CLAUDE.md\n\n## Commands\n\n```bash\ngo run ./cmd/server\n```\n";
+    write(&env.project.join("CLAUDE.md"), own);
+
+    let out = env.ok(&["migrate", "--yes"]);
+    assert!(out.contains("project's own"), "{out}");
+    assert_eq!(read(&env.project.join("CLAUDE.md")), own);
+    let archive = env.archive(&env.project.join(".zforge"));
+    assert!(!archive.join("CLAUDE.md").exists());
 }

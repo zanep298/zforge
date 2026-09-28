@@ -163,8 +163,19 @@ pub fn plan(root: &Path) -> Result<Plan> {
     plan.backups = backups
         .into_iter()
         .filter(|b| root.join(b).is_file())
+        .filter(|b| !is_instruction(b) || zforge_wrote(&root.join(b)))
         .collect();
     Ok(plan)
+}
+
+fn is_instruction(rel: &str) -> bool {
+    rel == "CLAUDE.md" || rel == "AGENTS.md"
+}
+
+/// An instruction file zforge generated; the project's own is never
+/// rewritten (`cli::init::instructions`).
+fn zforge_wrote(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|t| t.contains(crate::cli::init::instructions::MARKER))
 }
 
 /// Local mode keeps agents and skills in the project (`paths.agents` is
@@ -329,7 +340,7 @@ mod tests {
         std::fs::create_dir_all(root.join(".claude/agents")).unwrap();
         std::fs::write(root.join(".claude/agents/spec-agent.md"), "x").unwrap();
         std::fs::write(root.join(".claude/settings.json"), "{}").unwrap();
-        std::fs::write(root.join("CLAUDE.md"), "# old").unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "# my service").unwrap();
         std::fs::write(root.join(CONFIG), V1_CONFIG).unwrap();
         std::fs::write(root.join(MODELS), "claude:\n  plan: opus\n").unwrap();
 
@@ -349,13 +360,15 @@ mod tests {
         assert_eq!(p.clients, ["claude"]);
         assert_eq!(
             p.backups,
-            [CONFIG, MODELS, "CLAUDE.md", ".claude/settings.json"]
+            [CONFIG, MODELS, ".claude/settings.json"],
+            "the project's own CLAUDE.md is not rewritten, so not backed up"
         );
 
         let dir = apply_files(root, &p).unwrap();
         assert!(dir.join(".zforge/tasks/T1").is_dir());
         assert!(!root.join(".zforge/tasks").exists());
-        assert!(dir.join("CLAUDE.md").is_file() && root.join("CLAUDE.md").is_file());
+        assert!(dir.join(".claude/settings.json").is_file());
+        assert!(root.join("CLAUDE.md").is_file());
         assert!(!models_text::has_removed_phases(&root.join(MODELS)));
         assert!(
             plan(root).unwrap().is_empty(),
