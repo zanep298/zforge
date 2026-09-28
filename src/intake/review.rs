@@ -26,7 +26,7 @@ pub fn create(project_root: &Path, id: &str) -> Result<Intake> {
     }
     for stage in STAGES {
         let body = templates::stage(stage, id).expect("template for every stage");
-        crate::state::write_atomic(&dir.join(stage), body.as_bytes())?;
+        crate::fs::write_atomic(&dir.join(stage), body.as_bytes())?;
     }
     Ok(Intake {
         id: id.to_string(),
@@ -42,7 +42,7 @@ pub fn create_task(intake: &Intake, task_id: &str) -> Result<PathBuf> {
         bail!("{} already exists", path.display());
     }
     std::fs::create_dir_all(intake.dir.join(TASKS_DIR))?;
-    crate::state::write_atomic(&path, templates::task(&intake.id, task_id).as_bytes())?;
+    crate::fs::write_atomic(&path, templates::task(&intake.id, task_id).as_bytes())?;
     Ok(path)
 }
 
@@ -95,12 +95,12 @@ pub struct Reviewed {
     pub diff: Option<String>,
 }
 
-pub(crate) fn lock(intake: &Intake) -> Result<crate::state::TaskLockGuard> {
+pub(crate) fn lock(intake: &Intake) -> Result<crate::lock::LockGuard> {
     let parent = intake
         .dir
         .parent()
         .context("intake directory has no parent")?;
-    crate::state::lock_task(parent, &intake.id)
+    crate::lock::lock(parent, &intake.id)
 }
 
 /// Send the file's current content for review as a new revision.

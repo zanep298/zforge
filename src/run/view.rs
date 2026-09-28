@@ -324,7 +324,7 @@ pub fn write(project_root: &Path, run: &Run, state: &RunState) -> Result<()> {
         meta.id,
         timeline(&events)
     );
-    crate::state::write_atomic(&run.dir.join(PROGRESS), progress.as_bytes())?;
+    crate::fs::write_atomic(&run.dir.join(PROGRESS), progress.as_bytes())?;
     let mut result = format!(
         "# {} result\n\n{note}\n\n```text\n{}```\n\n## Contract\n\n",
         meta.id,
@@ -341,5 +341,5 @@ pub fn write(project_root: &Path, run: &Run, state: &RunState) -> Result<()> {
     for (i, v) in runs.iter().enumerate() {
         result.push_str(&format!("{}. {v}\n", i + 1));
     }
-    crate::state::write_atomic(&run.dir.join(RESULT), result.as_bytes())
+    crate::fs::write_atomic(&run.dir.join(RESULT), result.as_bytes())
 }

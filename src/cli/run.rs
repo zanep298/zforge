@@ -345,7 +345,7 @@ fn status(root: &Path, id: &str, json: bool) -> Result<()> {
     if !traces.is_empty() {
         println!("\nagent calls");
         for t in &traces {
-            print!("{}", crate::cli::trace::render_phase_text(t));
+            print!("{}", crate::trace::text::render_phase_text(t));
         }
     }
     Ok(())

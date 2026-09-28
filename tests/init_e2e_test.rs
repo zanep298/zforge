@@ -116,10 +116,6 @@ exit 0
             .collect()
     }
 
-    fn clear_log(&self) {
-        let _ = std::fs::remove_file(&self.log);
-    }
-
     fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.project.join(rel))
             .unwrap_or_else(|e| panic!("read {rel}: {e}"))
@@ -414,63 +410,6 @@ fn default_runner_flag_overrides_and_is_validated() {
     ]);
     assert!(!out.status.success(), "claude was not set up");
     assert!(String::from_utf8_lossy(&out.stderr).contains("--agent claude"));
-}
-
-/// The backlog repro: codex-initialized project, task without `--agent`,
-/// a non-interactive phase ran claude.
-#[test]
-fn agentless_task_runs_on_the_default_runner() {
-    for client in CLIENTS {
-        let env = Env::new(&CLIENTS);
-        env.init(&agent_flag(client));
-        let out = env.zforge(&["task", "import", "TASK-1", "--title", "demo task"]);
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        env.clear_log();
-
-        let out = env.zforge(&["spec", "TASK-1"]);
-        assert!(
-            out.status.success(),
-            "spec on {client}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let invoked: Vec<String> = env
-            .log_lines()
-            .iter()
-            .filter_map(|l| l.split_whitespace().next().map(str::to_string))
-            .filter(|b| CLIENTS.contains(&b.as_str()))
-            .collect();
-        assert!(!invoked.is_empty(), "no client invoked for {client}");
-        assert!(
-            invoked.iter().all(|b| b == client),
-            "project runner {client}, but invoked {invoked:?}"
-        );
-    }
-}
-
-// ─── FIX-014: the phase's named agent is selected ───────────────────────────
-
-#[test]
-fn claude_and_opencode_launch_the_phase_agent_definition() {
-    for client in ["claude", "opencode"] {
-        let env = Env::new(&CLIENTS);
-        env.init(&agent_flag(client));
-        env.zforge(&["task", "import", "TASK-1", "--title", "demo task"]);
-        env.clear_log();
-        env.zforge(&["spec", "TASK-1"]);
-        let launch = env
-            .log_lines()
-            .into_iter()
-            .find(|l| l.starts_with(client))
-            .unwrap_or_else(|| panic!("{client} not launched"));
-        assert!(
-            launch.contains("--agent spec-agent"),
-            "{client} launched without the spec-agent definition: {launch}"
-        );
-    }
 }
 
 // ─── FIX-016: rtk for the right client ───────────────────────────────────────

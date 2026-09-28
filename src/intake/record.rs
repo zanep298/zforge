@@ -102,7 +102,7 @@ pub fn write_snapshot(intake: &Intake, file: &str, revision: u32, text: &str) ->
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    crate::state::write_atomic(&path, text.as_bytes())
+    crate::fs::write_atomic(&path, text.as_bytes())
 }
 
 pub fn read_snapshot(intake: &Intake, file: &str, revision: u32) -> Result<String> {

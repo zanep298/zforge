@@ -17,12 +17,11 @@
 use super::contract::{self, Contract};
 use super::record::{self, Run, RunEvent, RunKind, RunMeta, RunState, RunStatus};
 use super::worktree;
-use crate::cli::verify::VerifyOutcome;
 use crate::config::Config;
 use crate::orchestrator::agent_args::{named_agent_for, NamedAgent};
+use crate::orchestrator::verifier_loop::VerifyOutcome;
 use crate::orchestrator::{headless_args, model_args, spawn, trace_record};
 use crate::registry::schema::AgentSpec;
-use crate::state::{Flow, State, TaskState};
 use anyhow::{anyhow, bail, Result};
 use chrono::Utc;
 use std::cell::RefCell;
@@ -201,9 +200,6 @@ fn work(
     timeout_secs: u64,
 ) -> Result<crate::orchestrator::LoopOutcome> {
     let work_dir = meta.worktree.clone();
-    let tasks_dir = run.dir.join("task");
-    let _task_lock = crate::state::lock_task(&tasks_dir, &run.id)?;
-    TaskState::new_with_flow(&run.id, Flow::Contract).save(&tasks_dir)?;
     // Absolute and in the main checkout: the worktree's `.zforge/intakes/`
     // is a committed copy the runtime never reads.
     let change_request = project_root
@@ -280,7 +276,6 @@ fn work(
         if out.exit_code != 0 {
             return Err(Halt::Failed(format!("agent exited with {}", out.exit_code)).into());
         }
-        advance(&tasks_dir, &run.id, State::Coded);
         Ok(())
     };
 
@@ -391,7 +386,6 @@ fn work(
                     candidate,
                     commit: Some(commit),
                 })?;
-                advance(&tasks_dir, &run.id, State::Verified);
             }
             (true, None) => {
                 return Err(Halt::Failed(
@@ -617,17 +611,6 @@ fn feedback_text(prev: &VerifyOutcome, output: &str) -> String {
             ""
         }
     )
-}
-
-/// Move the run's v1 task state along its `Contract` flow (best-effort: it
-/// mirrors the run log, which stays the source of truth).
-fn advance(tasks_dir: &Path, run_id: &str, target: State) {
-    let Ok(mut ts) = TaskState::load(tasks_dir, run_id) else {
-        return;
-    };
-    if ts.state < target && ts.advance(target, "zforge run").is_ok() {
-        let _ = ts.save(tasks_dir);
-    }
 }
 
 /// Create and execute in one go (foreground `zforge run`).

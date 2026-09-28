@@ -297,59 +297,6 @@ fn caveman_hook_with_a_missing_script_is_broken() {
     assert_eq!(level(&c, "caveman hook"), "broken");
 }
 
-/// A task at Verified whose code changed since is flagged (IMP-002).
-#[test]
-fn stale_evidence_is_reported() {
-    let env = Env::new();
-    let git = |args: &[&str]| {
-        assert!(Command::new("git")
-            .args(args)
-            .current_dir(&env.project)
-            .output()
-            .unwrap()
-            .status
-            .success());
-    };
-    std::fs::write(env.project.join("lib.rs"), "fn a() {}\n").unwrap();
-    git(&["init", "-q", "."]);
-    git(&["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"]);
-    git(&[
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-qm",
-        "init",
-    ]);
-
-    let tasks = env.project.join(".zforge/tasks/TASK-1");
-    std::fs::create_dir_all(&tasks).unwrap();
-    std::fs::write(
-        tasks.join(".state.yaml"),
-        "task_id: TASK-1\nflow: Full\nstate: Verified\nupdated_at: \"2026-01-01T00:00:00+00:00\"\nhistory: []\n",
-    )
-    .unwrap();
-    let cmd = test_command(&env.project);
-    std::fs::write(
-        tasks.join("verify.md"),
-        format!("---\npassed: true\ncommand: \"{cmd}\"\ncandidate: 0000000000000000000000000000000000000000\n---\n"),
-    )
-    .unwrap();
-
-    let (_, c) = env.doctor();
-    assert_eq!(level(&c, "evidence"), "broken");
-    assert!(c["evidence"]["detail"].as_str().unwrap().contains("TASK-1"));
-}
-
-fn test_command(project: &Path) -> String {
-    let cfg: serde_yaml::Value = serde_yaml::from_str(
-        &std::fs::read_to_string(project.join(".zforge/config.yaml")).unwrap(),
-    )
-    .unwrap();
-    cfg["project"]["test_command"].as_str().unwrap().to_string()
-}
-
 #[test]
 fn text_report_names_fixes() {
     let env = Env::new();

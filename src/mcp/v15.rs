@@ -169,7 +169,7 @@ fn change_new(args: &Value) -> Result<String> {
         return Err(anyhow!("{} already exists", path.display()));
     }
     std::fs::create_dir_all(i.dir.join(intake::CHANGES_DIR))?;
-    crate::state::write_atomic(&path, intake::templates::change(&i.id, &id).as_bytes())?;
+    crate::fs::write_atomic(&path, intake::templates::change(&i.id, &id).as_bytes())?;
     Ok(format!(
         "created {}; fill every section, then the user decides whether to change the contract",
         path.display()

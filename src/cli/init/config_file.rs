@@ -81,7 +81,7 @@ pub(crate) fn write_config(
             std::fs::create_dir_all(parent)?;
         }
         let content = render_fresh(language, test_command, managed);
-        crate::state::write_atomic(path, content.as_bytes())?;
+        crate::fs::write_atomic(path, content.as_bytes())?;
         return Ok(ConfigWrite::Created);
     }
 
@@ -103,7 +103,7 @@ pub(crate) fn write_config(
     }
     let out =
         edit_in_place(&raw, &updates, &doc).map_or_else(|| serde_yaml::to_string(&doc), Ok)?;
-    crate::state::write_atomic(path, out.as_bytes())?;
+    crate::fs::write_atomic(path, out.as_bytes())?;
     Ok(ConfigWrite::Updated)
 }
 

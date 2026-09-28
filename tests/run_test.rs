@@ -72,12 +72,6 @@ fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
     )
     .unwrap();
     assert!(trace["command"].to_string().contains("--max-budget-usd"));
-    let state =
-        std::fs::read_to_string(p.run_dir("RUN-001").join("task/RUN-001/.state.yaml")).unwrap();
-    assert!(
-        state.contains("flow: Contract") && state.contains("state: Verified"),
-        "{state}"
-    );
 }
 
 /// MOC-C TASK-001 AC-01 and AC-03: the tested tree is sealed as the run's

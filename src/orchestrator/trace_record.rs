@@ -1,10 +1,8 @@
-//! Append a phase trace for every agent spawn (IMP-006).
-//!
-//! Best-effort like cost telemetry: a trace that cannot be written must not
-//! fail the phase, but it is reported on stderr.
+//! What zforge set up for an agent spawn, recorded next to what the client
+//! reports it did (IMP-006).
 
 use super::agent_args::NamedAgent;
-use crate::trace::{self, Expected, Invocation};
+use crate::trace::Expected;
 use std::path::Path;
 
 /// MCP server every phase prompt points agents at, when the project has an
@@ -42,13 +40,6 @@ pub(crate) fn expected_for(
         model: model.map(str::to_string),
         skills,
         mcp_servers,
-    }
-}
-
-pub(crate) fn record(tasks_dir: &Path, invocation: Invocation<'_>) {
-    let entry = trace::from_invocation(invocation);
-    if let Err(e) = trace::log::append(tasks_dir, &entry) {
-        eprintln!("warning: trace append failed: {e:#}");
     }
 }
 

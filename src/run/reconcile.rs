@@ -5,7 +5,7 @@
 //! recorded as `failed` with reason `interrupted`, so nobody waits on it;
 //! continuing is a new run. The process groups the worker recorded (agent,
 //! tests) are stopped at the same time, so nothing it started outlives it. Checked whenever a run's state is read for
-//! display, like `job::lifecycle::reconcile_dead_worker` for jobs.
+//! display, like the old background jobs did.
 
 use super::record::{Run, RunEvent, RunState, RunStatus};
 use anyhow::Result;
@@ -17,8 +17,8 @@ pub const INTERRUPTED: &str = "interrupted";
 pub fn reconcile(run: &Run) -> Result<RunState> {
     reconcile_with(
         run,
-        crate::job::lifecycle::pid_alive,
-        crate::job::lifecycle::terminate_process_groups,
+        crate::process::pid_alive,
+        crate::process::terminate_process_groups,
     )
 }
 
@@ -123,7 +123,7 @@ mod tests {
     fn real_liveness_probe() {
         let (_t, run) = started(std::process::id());
         assert_eq!(
-            reconcile_with(&run, crate::job::lifecycle::pid_alive, |_, _| {})
+            reconcile_with(&run, crate::process::pid_alive, |_, _| {})
                 .unwrap()
                 .status,
             RunStatus::Running
@@ -134,7 +134,7 @@ mod tests {
         child.wait().unwrap();
         let (_t2, gone) = started(pid);
         assert_eq!(
-            reconcile_with(&gone, crate::job::lifecycle::pid_alive, |_, _| {})
+            reconcile_with(&gone, crate::process::pid_alive, |_, _| {})
                 .unwrap()
                 .status,
             RunStatus::Failed

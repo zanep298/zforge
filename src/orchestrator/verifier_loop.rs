@@ -5,7 +5,6 @@
 //! are run. Callers inject both via closures so this module is unit-testable
 //! without spawning real agents.
 
-use crate::cli::verify::VerifyOutcome;
 use anyhow::{anyhow, Result};
 
 /// Result of a completed verifier loop. `iterations` is 1-based: 1 means
@@ -29,35 +28,8 @@ pub struct LoopOutcome {
 /// when `max_iterations` is exhausted without a pass — the final failure
 /// outcome is included in the error message so the caller (or operator)
 /// can see which tests held out.
-pub fn iterate<C, V>(max_iterations: u32, code_runner: C, verify_runner: V) -> Result<LoopOutcome>
-where
-    C: FnMut(u32, Option<&VerifyOutcome>) -> Result<()>,
-    V: FnMut() -> Result<VerifyOutcome>,
-{
-    iterate_from(max_iterations, Start::Code, code_runner, verify_runner)
-}
-
-/// Where the first iteration begins.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Start {
-    /// No code yet: every iteration is code → verify.
-    Code,
-    /// Code already written (resuming a task at `Coded` or later): the first
-    /// iteration only verifies it; later ones are code-with-feedback →
-    /// verify.
-    Verify,
-}
-
-/// [`iterate`] with an explicit starting point.
-///
-/// The budget counts *verifier runs*: `max_iterations` verifications at
-/// most, and never more code dispatches than that. Resuming therefore spends
-/// its first iteration on the existing code and gets `max_iterations - 1`
-/// fix attempts (FIX-008). Before this, `ship --max-iterations 3` on a task
-/// already at `Coded` verified once and stopped, never using the loop.
-pub fn iterate_from<C, V>(
+pub fn iterate<C, V>(
     max_iterations: u32,
-    start: Start,
     mut code_runner: C,
     mut verify_runner: V,
 ) -> Result<LoopOutcome>
@@ -71,9 +43,7 @@ where
 
     let mut prev_failure: Option<VerifyOutcome> = None;
     for attempt in 1..=max_iterations {
-        if attempt > 1 || start == Start::Code {
-            code_runner(attempt, prev_failure.as_ref())?;
-        }
+        code_runner(attempt, prev_failure.as_ref())?;
         let outcome = verify_runner()?;
         if outcome.passed {
             return Ok(LoopOutcome {
@@ -92,6 +62,19 @@ where
         prev_failure = Some(outcome);
     }
     unreachable!("loop returned without exit; range was 1..={max_iterations}")
+}
+
+/// What one verification found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyOutcome {
+    pub passed: bool,
+    pub total_tests: usize,
+    pub passed_tests: usize,
+    pub failed_tests: usize,
+    pub failed_names: Vec<String>,
+    /// The test command was killed at its time budget: no verdict about
+    /// the code was reached.
+    pub timed_out: bool,
 }
 
 #[cfg(test)]
@@ -211,39 +194,6 @@ mod tests {
     }
 
     #[test]
-    fn code_template_renders_feedback_section_when_failed_tests_set() {
-        use crate::prompt::{render_template, PromptContext};
-
-        let tmpl = include_str!("../../templates/code.tmpl");
-
-        // No failure → feedback block hidden.
-        let ctx_clean = PromptContext {
-            task_id: "T1".into(),
-            language: "rust".into(),
-            test_command: "cargo test".into(),
-            ..Default::default()
-        };
-        let clean = render_template(tmpl, &ctx_clean);
-        assert!(!clean.contains("Verifier Feedback"));
-        assert!(!clean.contains("Failing tests:"));
-
-        // With failure → feedback block fires.
-        let ctx_retry = PromptContext {
-            task_id: "T1".into(),
-            language: "rust".into(),
-            test_command: "cargo test".into(),
-            failed_tests: "auth::test_login\nauth::test_logout".into(),
-            verify_ref: "/file .zforge/tasks/T1/verify.md".into(),
-            ..Default::default()
-        };
-        let retry = render_template(tmpl, &ctx_retry);
-        assert!(retry.contains("Verifier Feedback"));
-        assert!(retry.contains("auth::test_login"));
-        assert!(retry.contains("auth::test_logout"));
-        assert!(retry.contains("/file .zforge/tasks/T1/verify.md"));
-    }
-
-    #[test]
     fn feedback_chains_across_attempts() {
         let code_calls = RefCell::new(Vec::new());
 
@@ -263,76 +213,5 @@ mod tests {
         assert!(calls[0].1.is_none(), "attempt 1: no prior");
         assert!(calls[1].1.is_some(), "attempt 2: has feedback");
         assert!(calls[2].1.is_some(), "attempt 3: has feedback");
-    }
-    // FIX-008: resuming verifies the existing code first and only then
-    // spends the remaining budget on fixes.
-    #[test]
-    fn resume_that_already_passes_dispatches_no_code() {
-        let code_calls = RefCell::new(0);
-        let r = iterate_from(
-            3,
-            Start::Verify,
-            |_, _| {
-                *code_calls.borrow_mut() += 1;
-                Ok(())
-            },
-            || Ok(outcome(true, &[])),
-        )
-        .unwrap();
-        assert_eq!(r.iterations, 1);
-        assert_eq!(*code_calls.borrow(), 0);
-    }
-
-    #[test]
-    fn resume_that_fails_gets_fixed_with_feedback() {
-        let code_calls: RefCell<Vec<(u32, Option<usize>)>> = RefCell::new(Vec::new());
-        let verifies = RefCell::new(0);
-        let r = iterate_from(
-            3,
-            Start::Verify,
-            |attempt, prev| {
-                code_calls
-                    .borrow_mut()
-                    .push((attempt, prev.map(|p| p.failed_tests)));
-                Ok(())
-            },
-            || {
-                *verifies.borrow_mut() += 1;
-                Ok(outcome(*verifies.borrow() >= 2, &["t::a"]))
-            },
-        )
-        .unwrap();
-        assert_eq!(r.iterations, 2);
-        assert_eq!(
-            *code_calls.borrow(),
-            vec![(2, Some(1))],
-            "one fix attempt, carrying the first verify's failure"
-        );
-    }
-
-    #[test]
-    fn resume_budget_counts_verifier_runs() {
-        let code_calls = RefCell::new(0);
-        let verifies = RefCell::new(0);
-        let err = iterate_from(
-            3,
-            Start::Verify,
-            |_, _| {
-                *code_calls.borrow_mut() += 1;
-                Ok(())
-            },
-            || {
-                *verifies.borrow_mut() += 1;
-                Ok(outcome(false, &["t::a"]))
-            },
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("budget exhausted"));
-        assert_eq!(
-            *verifies.borrow(),
-            3,
-            "never more verifications than the budget"
-        );
-        assert_eq!(*code_calls.borrow(), 2, "the first iteration only verifies");
     }
 }

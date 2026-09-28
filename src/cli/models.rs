@@ -195,7 +195,7 @@ fn change(
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    crate::state::write_atomic(&path, text.as_bytes())?;
+    crate::fs::write_atomic(&path, text.as_bytes())?;
     let what = match model {
         Some(m) => format!("`{m}`"),
         None if phases.len() == 1 => match config::default_tier(client, phases[0]) {

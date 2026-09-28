@@ -40,7 +40,6 @@ pub fn run(json: bool) -> Result<OperationOutcome> {
             checks::rtk_hook(&ctx),
             checks::caveman_hook(&ctx),
             checks::workspace_trust(&ctx),
-            checks::evidence(&ctx),
             checks::runs(&ctx),
         ],
     };

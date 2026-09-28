@@ -29,7 +29,7 @@
 use super::feature::{self, FeatureState, Progress};
 use super::record::{self, RunKind, RunStatus};
 use super::{contract, execute, integrate, ops, reconcile, view};
-use crate::state::task_lock::{self, TaskLockError, TaskLockGuard};
+use crate::lock::{self, LockError, LockGuard};
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -71,14 +71,16 @@ pub fn claim(
     handover: &str,
     task: &str,
     kind: RunKind,
-) -> Result<TaskLockGuard> {
-    let guard = task_lock::try_acquire(&locks_dir(project_root, intake).join(handover), task)
-        .map_err(|e| match e {
-            TaskLockError::Busy { owner_pid, .. } => anyhow!(
-                "another zforge process{} is starting a run of {task} in {handover}",
-                owner_pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
-            ),
-            TaskLockError::Io(e) => e,
+) -> Result<LockGuard> {
+    let guard =
+        lock::try_acquire(&locks_dir(project_root, intake).join(handover), task).map_err(|e| {
+            match e {
+                LockError::Busy { owner_pid, .. } => anyhow!(
+                    "another zforge process{} is starting a run of {task} in {handover}",
+                    owner_pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
+                ),
+                LockError::Io(e) => e,
+            }
         })?;
     for run in record::list(project_root)? {
         let meta = run.meta()?;
@@ -180,19 +182,19 @@ fn resumable(status: RunStatus, reason: Option<&str>) -> bool {
 pub fn run_feature(project_root: &Path, handover_id: &str) -> Result<FeatureState> {
     let h = contract::load_handover(project_root, handover_id)?;
     let (intake, id) = (h.intake.clone(), h.manifest.id.clone());
-    let _lock = task_lock::try_acquire(&locks_dir(project_root, &intake), &format!("{id}.loop"))
+    let _lock = lock::try_acquire(&locks_dir(project_root, &intake), &format!("{id}.loop"))
         .map_err(|e| match e {
-            TaskLockError::Busy { owner_pid, .. } => anyhow!(
+            LockError::Busy { owner_pid, .. } => anyhow!(
                 "{id} is already being run{}",
                 owner_pid
                     .map(|p| format!(" by pid {p}"))
                     .unwrap_or_default()
             ),
-            TaskLockError::Io(e) => e,
+            LockError::Io(e) => e,
         })?;
     let dir = dir(project_root, &intake, &id);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    crate::state::write_atomic(
+    crate::fs::write_atomic(
         &dir.join(PID),
         format!("{}\n", std::process::id()).as_bytes(),
     )?;
@@ -310,7 +312,7 @@ pub fn loop_pid(dir: &Path) -> Option<u32> {
             .trim()
             .parse()
             .ok()?;
-        crate::job::lifecycle::pid_alive(pid).then_some(pid)
+        crate::process::pid_alive(pid).then_some(pid)
     })
 }
 
@@ -351,7 +353,7 @@ pub fn spawn_async(project_root: &Path, handover_id: &str) -> Result<(String, u3
         .spawn()
         .with_context(|| format!("start the worker for {id}"))?;
     let pid = child.id();
-    crate::state::write_atomic(&dir.join(LAUNCH_PID), format!("{pid}\n").as_bytes())?;
+    crate::fs::write_atomic(&dir.join(LAUNCH_PID), format!("{pid}\n").as_bytes())?;
     Ok((qualified, pid))
 }
 
@@ -395,8 +397,8 @@ fn stop_loop(pid: u32) {
             libc::kill(pid as i32, libc::SIGTERM);
         }
         let start = std::time::Instant::now();
-        while start.elapsed() < crate::job::lifecycle::CANCEL_GRACE {
-            if !crate::job::lifecycle::pid_alive(pid) {
+        while start.elapsed() < crate::process::CANCEL_GRACE {
+            if !crate::process::pid_alive(pid) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));

@@ -538,9 +538,9 @@ impl Run {
         Ok(next)
     }
 
-    fn lock(&self) -> Result<crate::state::TaskLockGuard> {
+    fn lock(&self) -> Result<crate::lock::LockGuard> {
         let parent = self.dir.parent().context("run directory has no parent")?;
-        crate::state::lock_task(parent, &self.id)
+        crate::lock::lock(parent, &self.id)
     }
 }
 

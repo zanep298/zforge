@@ -130,7 +130,7 @@ pub fn create(
     }
     let mut text = serde_json::to_string_pretty(&manifest)?;
     text.push('\n');
-    crate::state::write_atomic(&path, text.as_bytes())?;
+    crate::fs::write_atomic(&path, text.as_bytes())?;
     Ok(manifest)
 }
 

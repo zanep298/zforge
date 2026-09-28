@@ -409,8 +409,8 @@ pub fn write(project_root: &Path) -> Result<Vec<Entry>> {
     std::fs::create_dir_all(&dir)?;
     let mut json = serde_json::to_string_pretty(&entries)?;
     json.push('\n');
-    crate::state::write_atomic(&dir.join("index.json"), json.as_bytes())?;
-    crate::state::write_atomic(&dir.join("index.md"), render(&entries).as_bytes())?;
+    crate::fs::write_atomic(&dir.join("index.json"), json.as_bytes())?;
+    crate::fs::write_atomic(&dir.join("index.md"), render(&entries).as_bytes())?;
     Ok(entries)
 }
 

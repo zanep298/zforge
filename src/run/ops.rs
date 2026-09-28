@@ -40,7 +40,7 @@ pub fn refresh(run: &Run) -> Result<RunState> {
     }
     let meta = run.meta()?;
     let never_started = match launch_pid(run) {
-        Some(pid) => !crate::job::lifecycle::pid_alive(pid),
+        Some(pid) => !crate::process::pid_alive(pid),
         None => Utc::now() - meta.created_at > START_GRACE,
     };
     if !never_started {
@@ -103,7 +103,7 @@ pub fn spawn_async(project_root: &Path, run: &Run) -> Result<u32> {
         .spawn()
         .with_context(|| format!("start the worker for {}", run.id))?;
     let pid = child.id();
-    crate::state::write_atomic(&run.dir.join(LAUNCH_PID), format!("{pid}\n").as_bytes())?;
+    crate::fs::write_atomic(&run.dir.join(LAUNCH_PID), format!("{pid}\n").as_bytes())?;
     Ok(pid)
 }
 
@@ -131,10 +131,7 @@ pub fn cancel(project_root: &Path, run: &Run) -> Result<RunState> {
     if let Some(pid) = state.pid.or_else(|| launch_pid(run)) {
         stop_worker(run, pid);
         // Whatever the worker left: its group and its children's groups.
-        crate::job::lifecycle::terminate_process_groups(
-            pid,
-            &crate::process::child_pgids_file(&run.dir),
-        );
+        crate::process::terminate_process_groups(pid, &crate::process::child_pgids_file(&run.dir));
     }
     let state = match run.state()? {
         s if s.status.is_final() => s,
@@ -214,7 +211,7 @@ fn commit_leftovers(meta: &RunMeta) -> Result<Option<String>> {
 fn stop_worker(run: &Run, pid: u32) {
     #[cfg(unix)]
     {
-        if !crate::job::lifecycle::pid_alive(pid) {
+        if !crate::process::pid_alive(pid) {
             return;
         }
         // SAFETY: plain kill(2) on a pid we recorded; ESRCH is harmless.
@@ -222,9 +219,9 @@ fn stop_worker(run: &Run, pid: u32) {
             libc::kill(pid as i32, libc::SIGTERM);
         }
         let start = std::time::Instant::now();
-        while start.elapsed() < crate::job::lifecycle::CANCEL_GRACE {
+        while start.elapsed() < crate::process::CANCEL_GRACE {
             let done = run.state().map(|s| s.status.is_final()).unwrap_or(false);
-            if done || !crate::job::lifecycle::pid_alive(pid) {
+            if done || !crate::process::pid_alive(pid) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));

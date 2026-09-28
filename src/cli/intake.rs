@@ -225,7 +225,7 @@ pub fn readiness(id: &str, tasks: &[String], json: bool) -> Result<()> {
     let r = crate::intake::readiness::check(&i, &root, tasks, &config)?
         .with(crate::intake::readiness::runtime(&root));
     let view = crate::intake::readiness::render(&r);
-    crate::state::write_atomic(&i.dir.join("readiness.md"), view.as_bytes())?;
+    crate::fs::write_atomic(&i.dir.join("readiness.md"), view.as_bytes())?;
     if json {
         println!("{}", serde_json::to_string_pretty(&r)?);
     } else {

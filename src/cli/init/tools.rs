@@ -381,7 +381,7 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
-    crate::state::write_atomic(path, content.as_bytes()).map_err(|e| format!("{e:#}"))
+    crate::fs::write_atomic(path, content.as_bytes()).map_err(|e| format!("{e:#}"))
 }
 
 // ─── caveman ─────────────────────────────────────────────────────────────────

@@ -68,27 +68,9 @@ fn parse_markdown(raw: &str) -> Result<MarkdownFile> {
     })
 }
 
-pub fn agent_model(agents_dir: &Path, phase: &str) -> String {
-    let models = crate::config::load_models();
-    agent_model_for_phase_with_models(agents_dir, "claude", phase, models.as_ref())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
 pub fn agent_codex_model(agents_dir: &Path, phase: &str) -> Option<String> {
     let models = crate::config::load_models();
     agent_model_for_phase_with_models(agents_dir, "codex", phase, models.as_ref())
-}
-
-pub fn agent_opencode_model(agents_dir: &Path, phase: &str) -> Option<String> {
-    let models = crate::config::load_models();
-    agent_model_for_phase_with_models(agents_dir, "opencode", phase, models.as_ref())
-}
-
-/// Resolve the model to pass as `--model` when dispatching to an assistant.
-/// Routes through the per-assistant reader so all callers share one path.
-pub fn agent_model_for_dispatch(agents_dir: &Path, assistant: &str, phase: &str) -> Option<String> {
-    let models = crate::config::load_models();
-    agent_model_for_phase_with_models(agents_dir, assistant, phase, models.as_ref())
 }
 
 /// Resolve an assistant-specific model for one workflow phase.
@@ -103,8 +85,7 @@ pub fn agent_model_for_dispatch(agents_dir: &Path, assistant: &str, phase: &str)
 ///
 /// Codex/OpenCode rendered agent directories contain a single `model:` key,
 /// while the canonical `.zforge/agents` templates contain `codex_model:` and
-/// `opencode_model:`. Accept both so CLI dispatch, artifact metadata, and
-/// orchestrator telemetry can share one resolver.
+/// `opencode_model:`. Accept both so every caller shares one resolver.
 pub fn agent_model_for_phase_with_models(
     agents_dir: &Path,
     assistant: &str,
@@ -143,16 +124,6 @@ fn chosen_model(
     model.map(String::from)
 }
 
-pub fn artifact_exists(tasks_dir: &Path, task_id: &str, artifact: &str) -> bool {
-    let path = tasks_dir.join(task_id).join(artifact);
-    if !path.exists() {
-        return false;
-    }
-    std::fs::metadata(&path)
-        .map(|m| m.len() > 10)
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,15 +146,6 @@ mod tests {
         let md = MarkdownFile::read(f.path()).unwrap();
         assert!(md.frontmatter.is_empty());
         assert_eq!(md.body, "just body content");
-    }
-
-    #[test]
-    fn test_artifact_exists_empty_file() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let task_dir = tmp.path().join("TASK-1");
-        std::fs::create_dir_all(&task_dir).unwrap();
-        std::fs::write(task_dir.join("spec.md"), "").unwrap();
-        assert!(!artifact_exists(tmp.path(), "TASK-1", "spec.md"));
     }
 
     #[test]

@@ -73,7 +73,7 @@ pub(crate) enum SettingsWrite {
 
 pub(crate) fn write_settings(path: &Path, force: bool) -> Result<SettingsWrite> {
     if !path.exists() {
-        crate::state::write_atomic(path, CLAUDE_SETTINGS_JSON.as_bytes())?;
+        crate::fs::write_atomic(path, CLAUDE_SETTINGS_JSON.as_bytes())?;
         return Ok(SettingsWrite::Created);
     }
     if !force {
@@ -89,7 +89,7 @@ pub(crate) fn write_settings(path: &Path, force: bool) -> Result<SettingsWrite> 
     }
     let mut out = serde_json::to_string_pretty(&merged)?;
     out.push('\n');
-    crate::state::write_atomic(path, out.as_bytes())?;
+    crate::fs::write_atomic(path, out.as_bytes())?;
     Ok(SettingsWrite::Merged)
 }
 

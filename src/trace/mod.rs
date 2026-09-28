@@ -12,6 +12,7 @@
 pub mod claude;
 pub mod log;
 pub mod schema;
+pub mod text;
 
 pub use schema::{Expected, Finding, FindingKind, McpServer, Observed, PhaseTrace, RunResult};
 

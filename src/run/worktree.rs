@@ -197,7 +197,7 @@ pub fn ensure_ignored(project_root: &Path) -> Result<()> {
     }
     updated.push_str(IGNORE_LINE);
     updated.push('\n');
-    crate::state::write_atomic(&path, updated.as_bytes())
+    crate::fs::write_atomic(&path, updated.as_bytes())
 }
 
 #[cfg(test)]

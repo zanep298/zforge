@@ -551,7 +551,7 @@ pub fn runs(ctx: &Ctx<'_>) -> Check {
             crate::run::record::RunStatus::Running | crate::run::record::RunStatus::Verifying
         );
         match (active, state.pid) {
-            (true, Some(pid)) if !crate::job::lifecycle::pid_alive(pid) => {
+            (true, Some(pid)) if !crate::process::pid_alive(pid) => {
                 dead.push(format!("{} (worker {pid} is gone)", run.id))
             }
             (true, _) => live += 1,
@@ -589,53 +589,4 @@ pub fn runs(ctx: &Ctx<'_>) -> Check {
         "record it with `zforge run status {}`",
         dead[0].split_whitespace().next().unwrap_or("<RUN>")
     ))
-}
-
-pub fn evidence(ctx: &Ctx<'_>) -> Check {
-    let tasks_dir = ctx.config.tasks_dir();
-    let Ok(entries) = std::fs::read_dir(&tasks_dir) else {
-        return Check::new("evidence", false, Level::Configured, "no tasks yet");
-    };
-    let mut verified = 0;
-    let mut stale = Vec::new();
-    // One fingerprint for all tasks: the tree is the same for each, and
-    // taking it is several git runs. Taken only if a task needs it.
-    let current = std::cell::OnceCell::new();
-    for e in entries.flatten() {
-        let id = e.file_name().to_string_lossy().into_owned();
-        let Ok(ts) = crate::state::TaskState::load(&tasks_dir, &id) else {
-            continue;
-        };
-        if ts.state != crate::state::State::Verified {
-            continue;
-        }
-        verified += 1;
-        let status = crate::evidence::status_against(
-            &tasks_dir.join(&id).join("verify.md"),
-            current.get_or_init(|| crate::evidence::fingerprint(&ctx.root)),
-            &ctx.config.project.test_command,
-        );
-        if let crate::evidence::EvidenceStatus::Invalid { reason } = status {
-            stale.push(format!("{id}: {reason}"));
-        }
-    }
-    if verified == 0 {
-        return Check::new(
-            "evidence",
-            false,
-            Level::Configured,
-            "no tasks awaiting review",
-        );
-    }
-    if stale.is_empty() {
-        Check::new(
-            "evidence",
-            false,
-            Level::Working,
-            format!("{verified} verified task(s); evidence matches the current code"),
-        )
-    } else {
-        Check::new("evidence", false, Level::Broken, stale.join("; "))
-            .fix("re-run `zf verify <ID>` for the tasks listed")
-    }
 }

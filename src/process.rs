@@ -329,7 +329,7 @@ mod group {
         let _guard = FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let body: String = active_pgids().iter().map(|p| format!("{p}\n")).collect();
         let path = std::path::PathBuf::from(path);
-        if let Err(e) = crate::state::write_atomic(&path, body.as_bytes()) {
+        if let Err(e) = crate::fs::write_atomic(&path, body.as_bytes()) {
             eprintln!("zforge: could not record child process groups in {path:?}: {e:#}");
         }
     }
@@ -490,6 +490,75 @@ pub fn child_pgids_file(job_dir: &std::path::Path) -> PathBuf {
     job_dir.join("child-pgids")
 }
 
+/// `kill(pid, 0)` returns Ok if signal could be delivered (process exists +
+/// we have permission). ESRCH = dead; EPERM = alive but ours-or-theirs.
+/// Anything other than ESRCH is treated as alive — conservative.
+pub fn pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let pid_i = pid as i32;
+        // SAFETY: `kill(pid, 0)` is a query, not a signal send. No state
+        // mutation; thread-safe per POSIX.
+        let rc = unsafe { libc::kill(pid_i, 0) };
+        if rc == 0 {
+            return true;
+        }
+        let err = std::io::Error::last_os_error();
+        // ESRCH (3) → not alive. Other errors (EPERM etc.) → alive.
+        !matches!(err.raw_os_error(), Some(3))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true // unsupported platform; assume alive to avoid false negatives
+    }
+}
+
+/// How long a cancelled worker and its children get between SIGTERM and
+/// SIGKILL.
+pub const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// SIGTERM the worker's process group and every child group recorded in
+/// `pgids_file`, wait up to [`CANCEL_GRACE`], SIGKILL what is left. Shared
+/// by `zforge run cancel` and a feature loop's cancel.
+#[cfg(unix)]
+pub fn terminate_process_groups(worker_pid: u32, pgids_file: &std::path::Path) {
+    let mut groups: Vec<i32> = vec![worker_pid as i32];
+    groups.extend(read_child_pgids(pgids_file));
+    groups.sort_unstable();
+    groups.dedup();
+
+    let signal_all = |sig: libc::c_int| {
+        for g in &groups {
+            // SAFETY: negative pid addresses the process group, per kill(2).
+            // ESRCH (group already gone) is harmless.
+            unsafe {
+                libc::kill(-g, sig);
+            }
+        }
+    };
+    let any_alive = || {
+        groups
+            .iter()
+            // SAFETY: signal 0 only probes for existence.
+            .any(|g| unsafe { libc::kill(-g, 0) } == 0)
+    };
+
+    signal_all(libc::SIGTERM);
+    let start = std::time::Instant::now();
+    while any_alive() && start.elapsed() < CANCEL_GRACE {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if any_alive() {
+        signal_all(libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn terminate_process_groups(_worker_pid: u32, _pgids_file: &std::path::Path) {
+    eprintln!("warning: cancel on Windows does not yet terminate the worker — mark-only.");
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -637,5 +706,15 @@ mod tests {
         let out = run_bounded(sh("cat; echo ok"), None, Duration::from_secs(5)).unwrap();
         assert!(!out.timed_out);
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    #[test]
+    fn pid_alive_for_self_process() {
+        assert!(crate::process::pid_alive(std::process::id()));
+    }
+
+    #[test]
+    fn pid_alive_false_for_unallocated_pid() {
+        assert!(!crate::process::pid_alive(999_999_999));
     }
 }

@@ -21,13 +21,10 @@ anyhow = "1"
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
 colored = "2"
-arboard = "3"
-walkdir = "2"
 dirs = "5"
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 ureq = { version = "2", features = ["json"] }
-base64 = "0.22"
 shlex = "1"
 wait-timeout = "0.2"
 indexmap = { version = "2", features = ["serde"] }
