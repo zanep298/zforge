@@ -17,6 +17,9 @@ current directory (this run's own git worktree) and nowhere else.
 - Verification runs `{{test_command}}` in this directory. Run it yourself
   before you finish: the task is done when it passes.
 - Diagnose and fix failures yourself; do not ask the user how to debug.
+- CodeGraph tools, when you have them, index the main checkout, not this
+  worktree: use them to find your way around, but read the files here for
+  what they are now — your changes and your dependencies' work are only here.
 - Do not push, merge or change other branches. Commit your work to the
   current branch when it is done.
 - Never edit the intake files — `.zforge/intakes/` in this worktree is a
