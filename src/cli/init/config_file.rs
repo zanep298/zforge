@@ -20,6 +20,18 @@ use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
 use std::path::Path;
 
+/// The run policy block of a fresh config; `zforge migrate` appends it to a
+/// task-pipeline config that has none.
+pub(crate) const EXECUTION_BLOCK: &str = "execution:
+  # Code → verify attempts per run.
+  max_iterations: 3
+  # What each task may spend, in USD, across all its runs in a handover.
+  # `zforge readiness` refuses a handover until this is set.
+  # budget_usd: 5.0
+  # Have an agent review passing work against its contract before it counts.
+  # review: true
+";
+
 /// Template for a fresh config. Placeholders are filled by [`render_fresh`].
 const CONFIG_TEMPLATE: &str = r#"project:
   name: ""
@@ -30,15 +42,7 @@ runner:
 paths:
   agents: "{{paths_agents}}"
   skills: "{{paths_skills}}"
-execution:
-  # Code → verify attempts per run.
-  max_iterations: 3
-  # What each task may spend, in USD, across all its runs in a handover.
-  # `zforge readiness` refuses a handover until this is set.
-  # budget_usd: 5.0
-  # Have an agent review passing work against its contract before it counts.
-  # review: true
-knowledge:
+{{execution}}knowledge:
   # The branch "integrated" is judged against.
   baseline: main
 "#;
@@ -59,6 +63,7 @@ pub(crate) enum ConfigWrite {
 
 pub(crate) fn render_fresh(language: &str, test_command: &str, managed: &Managed<'_>) -> String {
     CONFIG_TEMPLATE
+        .replace("{{execution}}", EXECUTION_BLOCK)
         .replace("{{language}}", &yaml_escape(language))
         .replace("{{test_command}}", &yaml_escape(test_command))
         .replace("{{default_runner}}", &yaml_escape(managed.default_runner))

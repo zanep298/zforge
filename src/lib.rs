@@ -6,6 +6,7 @@ pub mod fs;
 pub mod intake;
 pub mod lock;
 pub mod mcp;
+pub mod migrate;
 pub mod orchestrator;
 pub mod process;
 pub mod registry;

@@ -78,6 +78,18 @@ enum Commands {
         #[arg(long, default_value_t = 5000)]
         timeout_ms: u64,
     },
+    /// Move this project from the removed task pipeline to v1.5: its tasks,
+    /// memory and old agents go to `.zforge/v1-archive/`, config and models
+    /// lose the v1 keys, agents and instruction files are regenerated. Shows
+    /// the plan and asks first.
+    Migrate {
+        /// Show what would change and stop.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
     /// MCP server: stdio JSON-RPC (no subcommand) or manage Claude Code registration.
     Mcp {
         #[command(subcommand)]
@@ -230,6 +242,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
             }
         },
         Commands::Project { cmd } => cli::project::run(cmd),
+        Commands::Migrate { dry_run, yes } => cli::migrate::run(dry_run, yes),
         Commands::Status {
             json,
             global,

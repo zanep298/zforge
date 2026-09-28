@@ -84,6 +84,22 @@ source of truth; `zforge run status` and `zforge status` derive from it. A run
 stops `blocked` when the budget runs out or the agent asks to amend the
 contract; you amend the intake and hand over again.
 
+## Upgrading from the task pipeline
+
+`zforge install` (and the first `init` after an upgrade) migrates the global
+store `~/.zforge`: files only the old pipeline used go to
+`~/.zforge/v1-archive/<time>/`, agents and skills are brought up to date (old
+copies archived), and `registry.yaml` / `models.yaml` drop the removed
+settings. Then, in each project:
+
+```bash
+zforge migrate --dry-run   # see what would change
+zforge migrate             # archive .zforge/tasks, memory, old agents; clean config; regenerate
+```
+
+Nothing is deleted: everything moved or rewritten is kept under
+`.zforge/v1-archive/<time>/`. `zforge status` says when a project still needs it.
+
 ## Init
 
 `zforge init` scaffolds per client (default: `claude`).
@@ -125,6 +141,7 @@ Agents that are not installed are skipped, not failed.
 |---------|-------------|
 | `zforge init` / `zforge install` | Scaffold a project; populate the global store `~/.zforge/` |
 | `zforge status [--global]` | Every intake, its handovers and runs, and the next step |
+| `zforge migrate [--dry-run] [--yes]` | Move a project from the old task pipeline to v1.5 (records archived, not deleted) |
 | `zforge intake new\|task\|status\|review <ID> …` | Prepare an intake and send files for review |
 | `zforge intake accept\|revise <ID> <file>` | Record your decision (interactive terminal only) |
 | `zforge readiness <ID>` | Can the accepted files be handed over, and why not |

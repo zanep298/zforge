@@ -3,6 +3,7 @@ pub mod init;
 pub mod install;
 pub mod intake;
 pub mod mcp_register;
+pub mod migrate;
 pub mod models;
 pub mod outcome;
 pub mod output;

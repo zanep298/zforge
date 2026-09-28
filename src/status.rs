@@ -15,6 +15,10 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectStatus {
     pub root: PathBuf,
+    /// The project still has files of the removed task pipeline:
+    /// `zforge migrate` moves them.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub needs_migration: bool,
     pub intakes: Vec<IntakeStatus>,
 }
 
@@ -49,6 +53,7 @@ pub fn project(project_root: &Path) -> Result<ProjectStatus> {
     }
     Ok(ProjectStatus {
         root: project_root.to_path_buf(),
+        needs_migration: crate::migrate::project::needs_migration(project_root),
         intakes,
     })
 }
@@ -199,8 +204,14 @@ pub struct GlobalRow {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum GlobalResult {
-    Ok { intakes: Vec<IntakeStatus> },
-    Skipped { reason: String },
+    Ok {
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        needs_migration: bool,
+        intakes: Vec<IntakeStatus>,
+    },
+    Skipped {
+        reason: String,
+    },
 }
 
 /// Every registered project's status. Projects are read in parallel; one
@@ -226,7 +237,10 @@ pub fn global(timeout: Duration) -> Result<Vec<GlobalRow>> {
         .map(|(entry, rx)| {
             let left = deadline.saturating_duration_since(Instant::now());
             let result = match rx.recv_timeout(left) {
-                Ok(Ok(s)) => GlobalResult::Ok { intakes: s.intakes },
+                Ok(Ok(s)) => GlobalResult::Ok {
+                    needs_migration: s.needs_migration,
+                    intakes: s.intakes,
+                },
                 Ok(Err(e)) => GlobalResult::Skipped {
                     reason: format!("{e:#}"),
                 },

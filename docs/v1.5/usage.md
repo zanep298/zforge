@@ -62,6 +62,20 @@ cần xác nhận lại, các handover và task của chúng, và *lệnh nên c
 `zforge status --global` làm vậy cho mọi project đã đăng ký; MCP có tool
 `status` trả cùng JSON.
 
+**Nâng cấp từ pipeline v1.** `zforge install` (hoặc lần `init` đầu sau khi
+nâng cấp) tự migrate store `~/.zforge`: file chỉ v1 dùng chuyển vào
+`~/.zforge/v1-archive/<thời điểm>/`, agent và skill được cập nhật (bản cũ lưu
+lại), `registry.yaml`/`models.yaml` bỏ phần đã gỡ. Mỗi project chạy:
+
+```bash
+zforge migrate --dry-run
+zforge migrate
+```
+
+Task, memory, agent cũ vào `.zforge/v1-archive/<thời điểm>/`; `config.yaml`
+bỏ key v1 (giữ comment) và thêm khối `execution`; agent, skill, CLAUDE.md,
+settings được sinh lại (bản cũ lưu trong archive). Không xóa gì.
+
 ## 1. Intake: làm rõ và chốt
 
 Agent chuẩn bị nội dung (skill `zforge-intake`), bạn quyết định.

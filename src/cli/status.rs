@@ -7,12 +7,18 @@ use anyhow::Result;
 use colored::Colorize;
 use std::time::Duration;
 
+const MIGRATE_HINT: &str =
+    "task-pipeline files left — run `zforge migrate` in the project to move to v1.5";
+
 pub fn run(json: bool) -> Result<()> {
     let config = crate::config::load()?;
     let s = status::project(&config.project_root())?;
     if json {
         println!("{}", serde_json::to_string_pretty(&s)?);
         return Ok(());
+    }
+    if s.needs_migration {
+        println!("{}", MIGRATE_HINT.yellow());
     }
     if s.intakes.is_empty() {
         println!("No intake yet. Start one: `zforge intake new <ID>`");
@@ -38,8 +44,16 @@ pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
         println!("{}  ({})", r.project.bold(), r.path.display());
         match &r.result {
             GlobalResult::Skipped { reason } => println!("  {} {reason}", "skipped:".yellow()),
-            GlobalResult::Ok { intakes } if intakes.is_empty() => println!("  no intake"),
-            GlobalResult::Ok { intakes } => {
+            GlobalResult::Ok {
+                needs_migration,
+                intakes,
+            } => {
+                if *needs_migration {
+                    println!("  {}", MIGRATE_HINT.yellow());
+                }
+                if intakes.is_empty() {
+                    println!("  no intake");
+                }
                 for i in intakes {
                     println!("  {:<16} {}", i.id, one_line(i));
                 }

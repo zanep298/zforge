@@ -16,7 +16,35 @@ use crate::embedded;
 pub fn run(force: bool) -> Result<()> {
     let root = embedded::global_store_dir()
         .ok_or_else(|| anyhow!("cannot determine home directory for ~/.zforge/"))?;
+    migrate_store(&root, false)?;
     install_into(&root, force, /* quiet */ false)?;
+    Ok(())
+}
+
+/// Bring a store left by the task pipeline to this version
+/// (`crate::migrate::global`); silent when there is nothing to do.
+fn migrate_store(root: &Path, to_stderr: bool) -> Result<()> {
+    let report = crate::migrate::global::migrate(root)?;
+    if report.is_empty() {
+        return Ok(());
+    }
+    let mut lines = vec![format!(
+        "{} migrated {} from the task pipeline to v1.5:",
+        "↻".cyan(),
+        display_path(root)
+    )];
+    lines.extend(
+        crate::migrate::global::describe(&report)
+            .into_iter()
+            .map(|l| format!("  {l}")),
+    );
+    for l in lines {
+        if to_stderr {
+            eprintln!("{l}");
+        } else {
+            println!("{l}");
+        }
+    }
     Ok(())
 }
 
@@ -106,9 +134,11 @@ fn display_path(path: &Path) -> String {
     path.display().to_string()
 }
 
-/// Ensure `~/.zforge/agents/` is populated. If it's already there, do
-/// nothing. Otherwise run a quiet install. Used by `init --shared` so users
-/// don't need to remember a separate `zforge install` step on first run.
+/// Ensure the global store is usable by this version: a quiet install when
+/// it is empty; otherwise migrate what the task pipeline left
+/// (`crate::migrate::global`) and add files it lacks, never overwriting the
+/// user's. Used by `init` (shared mode) so no separate `zforge install` step
+/// is needed on first run or after an upgrade.
 pub fn ensure_global_store() -> Result<PathBuf> {
     let root = embedded::global_store_dir()
         .ok_or_else(|| anyhow!("cannot determine home directory for ~/.zforge/"))?;
@@ -118,6 +148,11 @@ pub fn ensure_global_store() -> Result<PathBuf> {
             "{} ~/.zforge/ not initialized — running first-time install…",
             "ℹ".cyan()
         );
+        install_into(&root, /* force */ false, /* quiet */ true)?;
+    } else {
+        migrate_store(&root, true)?;
+        // Files this version ships that the store lacks (a new skill, or
+        // an agent an older store never had).
         install_into(&root, /* force */ false, /* quiet */ true)?;
     }
     Ok(root)

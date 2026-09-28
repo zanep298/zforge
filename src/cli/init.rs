@@ -67,17 +67,24 @@ pub struct InitOptions {
 }
 
 pub fn run(opts: InitOptions) -> Result<()> {
-    let cwd = env::current_dir()?;
-    let detected = detect_project(&cwd);
-    let force = opts.force;
-    let local = opts.local;
-
-    let targets: Vec<&str> = match opts.agent {
+    let targets: Vec<&'static str> = match opts.agent {
         Agent::All => vec!["claude", "codex", "opencode"],
         Agent::Claude => vec!["claude"],
         Agent::Codex => vec!["codex"],
         Agent::OpenCode => vec!["opencode"],
     };
+    run_for(&targets, opts)
+}
+
+/// [`run`] for exactly `targets` (`opts.agent` is ignored) — `zforge
+/// migrate` refreshes the clients a project already has, which may be any
+/// subset.
+pub fn run_for(targets: &[&'static str], opts: InitOptions) -> Result<()> {
+    let cwd = env::current_dir()?;
+    let detected = detect_project(&cwd);
+    let force = opts.force;
+    let local = opts.local;
+    let targets = targets.to_vec();
     let want = |t: &str| targets.contains(&t);
 
     // Resolve before writing anything, so a bad --default-runner fails
@@ -274,7 +281,14 @@ pub fn run(opts: InitOptions) -> Result<()> {
         "  {} created, {} skipped (already existed)",
         stats.created, stats.skipped
     );
-    retired::report(&cwd);
+    if crate::migrate::project::needs_migration(&cwd) {
+        println!();
+        println!(
+            "{} This project still has files of the removed task pipeline — run {}",
+            "ℹ".cyan(),
+            "zforge migrate".cyan()
+        );
+    }
 
     println!();
     println!("Next steps:");
@@ -602,11 +616,10 @@ use lang_skills::{build_lang_skills_section, lang_skill_templates};
 mod agent_render;
 mod claude_settings;
 pub(crate) mod claude_skills;
-mod config_file;
+pub(crate) mod config_file;
 mod detect;
 mod lang_skills;
 mod registry;
-mod retired;
 mod runner;
 mod store_paths;
 mod tools;
