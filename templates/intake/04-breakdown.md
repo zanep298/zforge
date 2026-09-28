@@ -12,4 +12,13 @@
 
 ## Kiểm chứng tích hợp
 
+<!-- Kiểm chứng cả feature trên tree chứa output của mọi task. Lệnh đặt trong
+     khối code đầu tiên của mục này, mỗi dòng một lệnh, zforge chạy lần lượt:
+
+     ```bash
+     cargo test
+     ```
+
+     Không có khối code thì zforge chạy `project.test_command`. -->
+
 ## Câu hỏi còn mở

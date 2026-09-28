@@ -33,11 +33,21 @@ Work in order; each stage builds on the accepted one before it.
    **Quyết định bắt buộc** (binding) from **Gợi ý triển khai** (suggestions).
    Record alternatives considered, assumptions and the evidence they hold.
 4. `04-breakdown.md` — phases and tasks, order, dependencies, shared
-   interfaces, and **Kiểm chứng tích hợp**: how the whole is verified.
+   interfaces, and **Kiểm chứng tích hợp**: how the whole is verified. Put
+   the exact commands in the section's first fenced code block, one per
+   line (`#` lines are comments) — zforge runs them, in order, on a tree
+   holding every task's output. Without a block it runs the project's test
+   command, which may not check what the tasks do together.
 5. `tasks/TASK-xxx.md` (`zforge intake task <ID> TASK-xxx`) — the contract:
    frontmatter `requirements` / `depends_on`, and the sections Mục tiêu,
    Input, Output, Ràng buộc, Tự chủ, Acceptance và kiểm chứng (`- AC-01: …`),
    Bàn giao, Cần amendment khi.
+   - `depends_on`: a task starts from its dependencies' verified code, so
+     list what it builds on, not only what must come first.
+   - `tests_may_change: [path, …]` (optional frontmatter): existing test
+     files the task may modify. A run that passes only after changing any
+     other existing test is not counted. Add it only when the contract
+     means it, with exact paths, and say why in Ràng buộc.
 
 Every file answers, in plain language: what is being decided and how it
 serves the level above; the proposal with a concrete example; why, with
@@ -60,13 +70,30 @@ the version they saw.
    by revising files (each goes through review again).
 7. Tell the user the intake is ready; they run `zforge handover <ID>`.
 
+Revising a file after the ones below it were accepted leaves them resting
+on the old version, and readiness refuses them. Send each of them for
+review again — `zforge intake review` accepts an unchanged file in that
+case — and tell the user what to confirm. Work top-down: confirming the
+breakdown again makes the tasks stale in turn.
+
+## Change requests
+
+During a run, an agent that finds the contract must change writes
+`changes/CHANGE-RUN-nnn.md` and the run stops `blocked`. Read it, explain it
+to the user, and — if they agree — revise the contract files it concerns and
+send them for review. Once accepted, the user hands over again; tasks whose
+contract did not change are reused, not run again. To propose a change
+yourself, `change_new` (MCP) creates the file with the required sections.
+
 ## Checklist
 
 - [ ] Every mandatory requirement has an ID and at least one task
 - [ ] Every task links to the requirements it serves and to nothing it invents
 - [ ] Binding decisions and suggestions are marked apart in 03-solution
 - [ ] Every acceptance criterion says how it is verified
-- [ ] Integration verification is a task or section of its own, not assumed
+- [ ] Integration verification is a section of its own, with its commands in a
+      fenced code block
+- [ ] `tests_may_change` appears only where the contract means it, with exact paths
 - [ ] No open question left unchecked in a file offered for acceptance
 - [ ] Conflicts with accepted knowledge are listed for the user, not resolved silently
 
@@ -78,3 +105,4 @@ the version they saw.
   from the runtime's records
 - Edit a file while the user is reviewing it — it can then no longer be accepted
 - Treat silence, or the user opening a file, as agreement
+- Change a contract to make a run pass, or mark a change request accepted

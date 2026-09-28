@@ -237,7 +237,10 @@ impl Handover {
 }
 
 /// Commands of the first fenced code block in the integration section.
+/// HTML comments are dropped first: a block in one — the template's
+/// example — is not a command.
 fn integration_block(breakdown: &str) -> Vec<String> {
+    let breakdown = lint::strip_comments(breakdown);
     let heading = format!("## {}", lint::INTEGRATION);
     let fence = |l: &str| l.trim_start().starts_with("```");
     let mut lines = breakdown
@@ -507,6 +510,15 @@ pub(crate) mod tests {
             "# K\n\n## Kiểm chứng tích hợp\nprose only\n\n## Câu hỏi còn mở\n```\nx\n```\n"
         )
         .is_empty());
+    }
+
+    /// The breakdown template shows an example block inside a comment: an
+    /// untouched template yields no command.
+    #[test]
+    fn a_block_inside_a_comment_is_not_a_command() {
+        let template = crate::intake::templates::stage("04-breakdown.md", "F").unwrap();
+        assert!(template.contains("```bash"), "the example is still there");
+        assert!(integration_block(&template).is_empty());
     }
 
     /// MOC-C TASK-002: a dependent task loads, with its dependencies.

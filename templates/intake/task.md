@@ -8,7 +8,10 @@ depends_on: []
 # {{task_id}} — 
 
 <!-- Hợp đồng của task nhỏ nhất (workflow §5.6, ví dụ §11). Giữ đủ các mục
-     dưới đây; acceptance dạng "- AC-01: …". -->
+     dưới đây; acceptance dạng "- AC-01: …".
+     depends_on: task mà task này xây trên output của nó.
+     Nếu hợp đồng cho phép sửa file test có sẵn, thêm vào frontmatter
+     `tests_may_change: [đường/dẫn]` và nêu lý do ở mục Ràng buộc. -->
 
 ## Mục tiêu
 
