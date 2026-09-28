@@ -89,7 +89,7 @@ struct Row {
     client: &'static str,
     phase: &'static str,
     model: Option<String>,
-    /// `project`, `global`, or `client default`.
+    /// `project`, `global`, `agent definition`, or `client default`.
     from: &'static str,
 }
 
@@ -105,7 +105,14 @@ fn show(project: Option<&config::Config>, json: bool) -> Result<()> {
             ) {
                 (Some(m), _) => (Some(m.to_string()), "project"),
                 (None, Some(m)) => (Some(m.to_string()), "global"),
-                (None, None) => (None, "client default"),
+                (None, None) => {
+                    match project
+                        .and_then(|p| crate::cli::init::model_in_definition(p, client, phase))
+                    {
+                        Some(m) => (Some(m), "agent definition"),
+                        None => (None, "client default"),
+                    }
+                }
             };
             rows.push(Row {
                 client,

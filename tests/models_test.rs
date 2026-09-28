@@ -135,3 +135,23 @@ fn bad_input_changes_nothing() {
     assert!(!out.status.success());
     assert!(!p.root.join(".zforge/models.yaml").exists());
 }
+
+/// A `model:` written into the agent definition by hand is a choice too,
+/// and `zforge models` says where it comes from.
+#[test]
+fn a_model_in_the_agent_definition_is_shown_as_such() {
+    let p = Project::new();
+    let def = p.root.join(".zforge/agents/review-agent.md");
+    let text = std::fs::read_to_string(&def).unwrap();
+    std::fs::write(&def, text.replacen("---\n", "---\nmodel: my-model\n", 1)).unwrap();
+    assert_eq!(
+        row(&p.rows(), "claude", "review"),
+        ("my-model".into(), "agent definition".into())
+    );
+    // models.yaml wins over it.
+    p.ok(&["models", "set", "review", "opus"]);
+    assert_eq!(
+        row(&p.rows(), "claude", "review"),
+        ("opus".into(), "project".into())
+    );
+}

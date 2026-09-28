@@ -711,6 +711,18 @@ fn apply_vars_ext(template: &str, v: &VarsExt<'_>) -> String {
 /// Replaces the older symlink-based approach (`symlink_agents_into`) for
 /// agent-CLI directories so each tool reads its own model rather than seeing
 /// all three `model:` / `codex_model:` / `opencode_model:` keys at once.
+/// A `model:` the user wrote into the store's definition of `phase`'s agent
+/// (read the way rendering reads it), when `models.yaml` chooses none.
+pub(crate) fn model_in_definition(
+    config: &crate::config::Config,
+    client: &str,
+    phase: &str,
+) -> Option<String> {
+    let text =
+        std::fs::read_to_string(config.agents_dir().join(format!("{phase}-agent.md"))).ok()?;
+    agent_render::frontmatter_target_model(&text, client)
+}
+
 /// Render the phase agents again for every client this project was set up
 /// for (its `.<client>/agents/` exists), after a model choice changed.
 /// Returns the directories rewritten, relative to the project.
