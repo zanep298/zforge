@@ -10,9 +10,11 @@
 //! reviewable, acceptable and revisable.
 
 pub mod docs;
+pub mod items;
+pub mod lint;
 
 use crate::config::Config;
-use crate::intake::lint::{self, Issue, Severity};
+use crate::intake::lint::{self as intake_lint, Issue, Severity};
 use crate::intake::review as intake_review;
 use crate::intake::status::{DocStatus, Rev};
 use anyhow::{bail, Context, Result};
@@ -62,11 +64,13 @@ impl DocSet for Knowledge {
     }
 
     fn lint(&self, rel: &str, text: &str) -> Vec<Issue> {
-        lint_issues(rel, text)
+        let mut issues = lint_issues(rel, text);
+        issues.extend(lint::lint(self, rel, text));
+        issues
     }
 
     fn check_acceptable(&self, rel: &str, revision: u32, text: &str) -> Result<()> {
-        if let Some(q) = lint::open_questions(text).into_iter().next() {
+        if let Some(q) = intake_lint::open_questions(text).into_iter().next() {
             bail!("{rel} revision {revision} still has an open question: {q}");
         }
         Ok(())
@@ -91,8 +95,8 @@ pub fn validate_file(rel: &str) -> Result<()> {
 /// IDs and evidence are checked from ONBOARD TASK-002 on.
 pub fn lint_issues(rel: &str, text: &str) -> Vec<Issue> {
     let mut issues = Vec::new();
-    let (_, body) = lint::split_frontmatter(text);
-    let clean = lint::strip_comments(body);
+    let (_, body) = intake_lint::split_frontmatter(text);
+    let clean = intake_lint::strip_comments(body);
     if clean
         .lines()
         .all(|l| l.trim().is_empty() || l.starts_with('#'))
@@ -103,12 +107,12 @@ pub fn lint_issues(rel: &str, text: &str) -> Vec<Issue> {
             message: "has no content yet (only headings)".into(),
         });
     }
-    let secs = lint::sections(&clean);
-    if lint::section(&secs, lint::OPEN_QUESTIONS).is_none() {
+    let secs = intake_lint::sections(&clean);
+    if intake_lint::section(&secs, intake_lint::OPEN_QUESTIONS).is_none() {
         issues.push(Issue {
             file: rel.to_string(),
             severity: Severity::Warning,
-            message: format!("has no \"{}\" section", lint::OPEN_QUESTIONS),
+            message: format!("has no \"{}\" section", intake_lint::OPEN_QUESTIONS),
         });
     }
     issues
