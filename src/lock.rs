@@ -76,10 +76,23 @@ pub fn lock(dir: &Path, id: &str) -> anyhow::Result<LockGuard> {
 }
 
 /// Non-blocking acquire. Returns `Busy` immediately when another process
-/// holds the lock — caller decides whether to retry or exit.
+/// holds the lock — caller decides whether to retry or exit. Lock file at
+/// `<dir>/<id>/.task.lock`.
 pub fn try_acquire(dir: &Path, id: &str) -> Result<LockGuard, LockError> {
-    let dir = dir.join(id);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    try_acquire_at(&dir.join(id), id)
+}
+
+/// [`lock_at`] with the error converted for `anyhow` callers.
+pub fn lock_at(dir: &Path, id: &str) -> anyhow::Result<LockGuard> {
+    try_acquire_at(dir, id).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Like [`try_acquire`], but `dir` is already the exact directory to lock
+/// — no further `<id>` join. `id` still names the holder in messages. For
+/// a caller that picked its own lock location (the knowledge document set
+/// locks under its own `.records/`, not `<parent>/<id>`).
+pub fn try_acquire_at(dir: &Path, id: &str) -> Result<LockGuard, LockError> {
+    if let Err(e) = std::fs::create_dir_all(dir) {
         return Err(LockError::Io(
             anyhow::Error::from(e).context(format!("create lock dir {dir:?}")),
         ));

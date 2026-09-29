@@ -97,11 +97,7 @@ pub struct Reviewed {
 }
 
 pub(crate) fn lock<D: DocSet>(doc: &D) -> Result<crate::lock::LockGuard> {
-    let parent = doc
-        .dir()
-        .parent()
-        .context("document set directory has no parent")?;
-    crate::lock::lock(parent, doc.id())
+    crate::lock::lock_at(&doc.lock_dir(), doc.id())
 }
 
 /// Send the file's current content for review as a new revision.
@@ -245,6 +241,14 @@ fn decide<D: DocSet>(
 ) -> Result<Rev> {
     let _lock = lock(doc)?;
     let pending = pending_review(doc, rel)?;
+    if kind == DecisionKind::Accepted {
+        // Checked here, under the lock, on the exact revision this call is
+        // about to accept — not on whatever was pending when the caller
+        // first looked, which a concurrent review could have moved past
+        // (Output, AC-06).
+        let text = record::read_snapshot(doc, rel, pending.revision)?;
+        doc.check_acceptable(rel, pending.revision, &text)?;
+    }
     record::append(
         doc,
         &Decision {

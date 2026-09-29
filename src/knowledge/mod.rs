@@ -13,7 +13,6 @@ pub mod docs;
 
 use crate::config::Config;
 use crate::intake::lint::{self, Issue, Severity};
-use crate::intake::record;
 use crate::intake::review as intake_review;
 use crate::intake::status::{DocStatus, Rev};
 use anyhow::{bail, Context, Result};
@@ -46,6 +45,13 @@ impl DocSet for Knowledge {
         &self.dir
     }
 
+    fn lock_dir(&self) -> PathBuf {
+        // Under `.records/`, not loose in `knowledge.dir` (Output, AC-03):
+        // nothing but the three reviewed files and `.records/` itself may
+        // appear directly under the knowledge directory.
+        self.records_dir()
+    }
+
     fn file(&self, rel: &str) -> Result<PathBuf> {
         validate_file(rel)?;
         Ok(self.dir.join(rel))
@@ -57,6 +63,13 @@ impl DocSet for Knowledge {
 
     fn lint(&self, rel: &str, text: &str) -> Vec<Issue> {
         lint_issues(rel, text)
+    }
+
+    fn check_acceptable(&self, rel: &str, revision: u32, text: &str) -> Result<()> {
+        if let Some(q) = lint::open_questions(text).into_iter().next() {
+            bail!("{rel} revision {revision} still has an open question: {q}");
+        }
+        Ok(())
     }
 }
 
@@ -113,25 +126,21 @@ pub fn pending_review(k: &Knowledge, rel: &str) -> Result<Rev> {
     intake_review::pending_review(k, rel)
 }
 
-/// Send `rel`'s current content for review (REQ-005). On the first
-/// knowledge review, `.gitattributes` gains the union-merge line for the
-/// decision log (Output).
+/// Send `rel`'s current content for review (REQ-005). Only once the
+/// review itself succeeds does `.gitattributes` gain the union-merge line
+/// for the decision log — a refused review (lint errors, an unknown file)
+/// leaves it byte-identical (Output, AC-04).
 pub fn review(project_root: &Path, k: &Knowledge, rel: &str) -> Result<intake_review::Reviewed> {
+    let reviewed = intake_review::review(k, rel)?;
     ensure_gitattributes(project_root, &k.dir)?;
-    intake_review::review(k, rel)
+    Ok(reviewed)
 }
 
 /// Accept the revision under review. Refused while it still has an
-/// unchecked open question (Output, AC-03).
+/// unchecked open question — checked under the decision's lock, on the
+/// exact revision being accepted (Output, AC-06; see
+/// [`docs::DocSet::check_acceptable`]).
 pub fn accept(k: &Knowledge, rel: &str, by: Option<String>) -> Result<Rev> {
-    let pending = intake_review::pending_review(k, rel)?;
-    let text = record::read_snapshot(k, rel, pending.revision)?;
-    if let Some(q) = lint::open_questions(&text).into_iter().next() {
-        bail!(
-            "{rel} revision {} still has an open question: {q}",
-            pending.revision
-        );
-    }
     intake_review::accept(k, rel, by)
 }
 
@@ -142,13 +151,30 @@ pub fn revise(k: &Knowledge, rel: &str, by: Option<String>, note: &str) -> Resul
 /// Add the union-merge line for `<dir>/.records/decisions.jsonl` to
 /// `.gitattributes` at the repository root, once, leaving the rest of the
 /// file as it was (Output).
+///
+/// Both sides are canonicalized before the line is computed: `git
+/// rev-parse --show-toplevel` already resolves symlinks, and a
+/// `project_root` reached through one (a temp directory under `/var` on
+/// macOS, say) would otherwise not share a prefix with it at all, so the
+/// path could not be made relative and — before this fix — was written
+/// out absolute instead. Now that failure is an error (Output).
 fn ensure_gitattributes(project_root: &Path, knowledge_dir: &Path) -> Result<()> {
     let repo_root = crate::run::git::ok(project_root, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
         .unwrap_or_else(|_| project_root.to_path_buf());
-    let rel = knowledge_dir
+    let repo_root = std::fs::canonicalize(&repo_root)
+        .with_context(|| format!("resolve repository root {}", repo_root.display()))?;
+    let knowledge_canon = std::fs::canonicalize(knowledge_dir)
+        .with_context(|| format!("resolve {}", knowledge_dir.display()))?;
+    let rel = knowledge_canon
         .strip_prefix(&repo_root)
-        .unwrap_or(knowledge_dir)
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "{} is not inside the repository at {}; cannot write a relative .gitattributes line",
+                knowledge_canon.display(),
+                repo_root.display()
+            )
+        })?
         .to_string_lossy()
         .replace('\\', "/");
     let line = format!("{rel}/.records/decisions.jsonl merge=union");
@@ -219,6 +245,32 @@ mod tests {
         );
     }
 
+    /// AC-03: only the reviewed file and `.records/` appear directly under
+    /// `knowledge.dir` — the review lock (`.task.lock`) lives under
+    /// `.records/`, not loose beside `domain.md`.
+    #[test]
+    fn review_leaves_only_the_file_and_records_directly_under_knowledge_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        let k = knowledge(tmp.path());
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(k.dir.join("domain.md"), DOMAIN_TEXT).unwrap();
+
+        review(tmp.path(), &k, "domain.md").unwrap();
+
+        let entries: Vec<String> = std::fs::read_dir(&k.dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        for name in &entries {
+            assert!(
+                name == "domain.md" || name == ".records",
+                "unexpected entry directly under knowledge.dir: {name}"
+            );
+        }
+        assert!(k.records_dir().join(".task.lock").is_file());
+    }
+
     #[test]
     fn a_file_other_than_the_three_is_refused() {
         assert!(validate_file("glossary.md").is_err());
@@ -227,8 +279,13 @@ mod tests {
         }
     }
 
+    /// The actual terminal check lives upstream in `cli::onboard::decide`
+    /// (and now the shared `cli::confirm`), not here: `accept` is a plain
+    /// library call. What this proves is the open-question gate — refused
+    /// on the pending revision that has one, allowed once a revision
+    /// without one is reviewed and that one is accepted instead.
     #[test]
-    fn accept_needs_a_terminal_confirmation_upstream_and_refuses_open_questions() {
+    fn accept_refuses_a_pending_revision_with_an_open_question() {
         let tmp = tempfile::tempdir().unwrap();
         init_repo(tmp.path());
         let k = knowledge(tmp.path());
@@ -266,6 +323,54 @@ mod tests {
         review(tmp.path(), &k, "domain.md").unwrap();
         let text_again = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
         assert_eq!(text_again.matches("merge=union").count(), occurrences);
+    }
+
+    /// AC-04: a review the linter refuses must not touch `.gitattributes`
+    /// at all — not even to create it.
+    #[test]
+    fn a_review_refused_by_lint_leaves_gitattributes_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        std::fs::write(tmp.path().join(".gitattributes"), "*.png binary\n").unwrap();
+        let k = knowledge(tmp.path());
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(k.dir.join("domain.md"), "# Domain\n").unwrap(); // no content, no evidence
+
+        let err = review(tmp.path(), &k, "domain.md").unwrap_err().to_string();
+        assert!(err.contains("no content yet"), "{err}");
+        let text = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
+        assert_eq!(text, "*.png binary\n");
+    }
+
+    /// AC-05: a project root reached through a symlink (as macOS temp
+    /// directories are, under `/var` → `/private/var`) still yields a
+    /// clean relative line, because both sides are canonicalized first.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_project_root_still_yields_a_relative_gitattributes_line() {
+        let real = tempfile::tempdir().unwrap();
+        init_repo(real.path());
+        let link_parent = std::env::temp_dir();
+        let link = link_parent.join(format!(
+            "zforge-onboard-symlink-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(real.path(), &link).expect("create symlink");
+
+        let k = knowledge(&link);
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(k.dir.join("domain.md"), DOMAIN_TEXT).unwrap();
+        review(&link, &k, "domain.md").unwrap();
+
+        let text = std::fs::read_to_string(real.path().join(".gitattributes")).unwrap();
+        let line = text
+            .lines()
+            .find(|l| l.contains("merge=union"))
+            .unwrap_or_default();
+        assert_eq!(line, "docs/knowledge/.records/decisions.jsonl merge=union");
+
+        std::fs::remove_file(&link).ok();
     }
 
     #[test]

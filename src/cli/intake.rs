@@ -7,6 +7,7 @@
 //! it can prepare and review files but never accept them. The project's
 //! `.claude/settings.json` also denies these commands to Claude.
 
+use crate::cli::confirm;
 use crate::config;
 use crate::intake::{hash, lint, review, status::DocState, Intake};
 use anyhow::{anyhow, bail, Result};
@@ -112,12 +113,7 @@ fn decide(i: &Intake, rel: &str, note: Option<&str>) -> Result<()> {
         None => ("accept", "accept"),
         Some(_) => ("request changes to", "revise"),
     };
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-        bail!(
-            "`zforge intake {word}` records the user's decision and needs an interactive terminal; \
-             it cannot be run by an agent or from a script"
-        );
-    }
+    confirm::require_terminal(&format!("zforge intake {word}"))?;
     let pending = review::pending_review(i, rel)?;
     println!(
         "{} {}/{rel} revision {} ({})",
@@ -129,13 +125,7 @@ fn decide(i: &Intake, rel: &str, note: Option<&str>) -> Result<()> {
     if let Some(n) = note {
         println!("note: {n}");
     }
-    print!("Type `{word}` to confirm: ");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    if answer.trim() != word {
-        bail!("not confirmed; nothing recorded");
-    }
+    confirm::type_to_confirm(word)?;
     let by = std::env::var("USER").ok().filter(|u| !u.is_empty());
     let rev = match note {
         None => review::accept(i, rel, by)?,

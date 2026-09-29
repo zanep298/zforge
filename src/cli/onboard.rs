@@ -3,15 +3,15 @@
 //! terminal and a typed confirmation, exactly like `zforge intake accept`
 //! / `revise` (D1): an agent can prepare and review, never decide.
 
+use crate::cli::confirm;
 use crate::config;
 use crate::intake::hash;
 use crate::intake::lint;
 use crate::intake::status::DocState;
 use crate::knowledge::{self, Knowledge};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use clap::Subcommand;
 use colored::Colorize;
-use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Debug, Subcommand)]
 pub enum OnboardCmd {
@@ -83,12 +83,7 @@ fn decide(k: &Knowledge, rel: &str, note: Option<&str>) -> Result<()> {
         None => ("accept", "accept"),
         Some(_) => ("request changes to", "revise"),
     };
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-        bail!(
-            "`zforge onboard {word}` records the user's decision and needs an interactive terminal; \
-             it cannot be run by an agent or from a script"
-        );
-    }
+    confirm::require_terminal(&format!("zforge onboard {word}"))?;
     let pending = knowledge::pending_review(k, rel)?;
     println!(
         "{} knowledge/{rel} revision {} ({})",
@@ -99,13 +94,7 @@ fn decide(k: &Knowledge, rel: &str, note: Option<&str>) -> Result<()> {
     if let Some(n) = note {
         println!("note: {n}");
     }
-    print!("Type `{word}` to confirm: ");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    if answer.trim() != word {
-        bail!("not confirmed; nothing recorded");
-    }
+    confirm::type_to_confirm(word)?;
     let by = std::env::var("USER").ok().filter(|u| !u.is_empty());
     let rev = match note {
         None => knowledge::accept(k, rel, by)?,
