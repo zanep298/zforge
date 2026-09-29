@@ -1,0 +1,63 @@
+---
+id: TASK-005
+parent: ONBOARD
+requirements: [REQ-011]
+depends_on: [TASK-001]
+tests_may_change: [tests/intake_test.rs, tests/run_test.rs]
+---
+
+# TASK-005 — Commitments next to the knowledge
+
+## Goal
+
+The record of what intakes committed to is generated next to the knowledge, apart from the files the user approves.
+
+## Input
+
+- The accepted 01-outcome, 02-behavior, 03-solution and 04-breakdown (as pinned by the handover).
+- Output of TASK-001 (`knowledge.dir`).
+- `src/intake/knowledge.rs`, `src/cli/intake.rs` (`knowledge_index`, `refresh_knowledge`), `src/main.rs`.
+
+## Output
+
+- The commitments code moves to `src/knowledge/commitments.rs`; `zforge knowledge index` writes `<knowledge.dir>/commitments.md` (generated, not reviewed) and `.zforge/knowledge/commitments.json`; `--json` prints the same entries as today.
+- The refresh after an intake accept writes the new locations.
+- A `.zforge/knowledge/index.md` or `index.json` carrying zforge's generated header is removed when the new files are written; any other file there is left alone.
+
+## Constraints
+
+- The whole existing suite passes, and no existing test file changes except those in `tests_may_change`.
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` are clean.
+- No new crate dependency without saying why in the report.
+- Intakes behave exactly as before: CLI output, record format, MCP tools.
+- Deciding on knowledge — accept, revise, recording known failures — needs
+  stdin and stdout terminals and a typed confirmation; never add a flag, env
+  var or MCP tool that bypasses it (D1).
+- Knowledge informs agents; it never changes a run's verdict (except known
+  failures, TASK-007), the protected-test guard or a task's reuse key.
+- In the test files listed in `tests_may_change`, only what reads the old output location may change.
+
+## Autonomy
+
+- Module layout, names, types and how the tests are written, within the
+  shared interfaces of 04-breakdown.
+- Diagnosing and fixing test and clippy failures within the task.
+
+## Acceptance and verification
+
+- AC-01: `knowledge index` writes `docs/knowledge/commitments.md` and `.zforge/knowledge/commitments.json` with the same entries `index.md` and `index.json` had.
+- AC-02: accepting an intake file refreshes `commitments.md`.
+- AC-03: an old generated `.zforge/knowledge/index.md` is removed; a hand-written file in that directory stays.
+- AC-04: `domain.md`, `conventions.md` and `rules.md` are never written by `knowledge index`.
+
+## Delivery
+
+Local changes on the task's branch and a verification report; no push or merge.
+
+## Amend the contract when
+
+- Commitments must be reviewed like knowledge.
+
+## Open questions
+
+None.

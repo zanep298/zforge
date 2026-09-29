@@ -1,0 +1,68 @@
+---
+id: TASK-003
+parent: ONBOARD
+requirements: [REQ-001, REQ-002, REQ-010]
+depends_on: [TASK-001]
+---
+
+# TASK-003 — Probe, baseline and onboarding state
+
+## Goal
+
+`zforge onboard` probes the project without a model, records its baseline test run, lets the user record known failures, and the project knows whether it is onboarded.
+
+## Input
+
+- The accepted 01-outcome, 02-behavior, 03-solution and 04-breakdown (as pinned by the handover).
+- Output of TASK-001.
+- `src/cli/init.rs`, `src/cli/init/detect.rs`, `src/runner/mod.rs` (`run_with_language`), `src/status.rs`, `src/cli/status.rs`.
+
+## Output
+
+- `zforge onboard`: refuses a working tree with uncommitted changes; records at HEAD the language and toolchain, tracked file and line counts, documentation found (README, CLAUDE.md, AGENTS.md, ADR and docs directories), the CodeGraph index state, the modules (top-level source directories with line counts) and one run of `project.test_command` (result, failing test names, duration; a command that is missing, fails to start or times out counts as red with its reason) into the generated `<knowledge.dir>/baseline.md`; creates the three knowledge files from templates when absent; prints the state and the next step.
+- `onboard baseline --known <tests>` and `--clear`: terminal and typed confirmation; recorded in the knowledge set's decision log; the known list is derived from it.
+- `OnboardState` as in 04-breakdown; onboarded = the three files accepted and the baseline green or every failing test known.
+- `zforge status` (text and JSON) shows the project's onboarding state above the intakes; while not onboarded its next step is `zforge onboard`.
+- `zforge init` with stdin and stdout terminals and without `--force` ends with `Onboard now? [Y/n]` and runs the probe on yes; `init --force`, `migrate` and a non-interactive `init` never ask.
+
+## Constraints
+
+- The whole existing suite passes, and no existing test file changes.
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` are clean.
+- No new crate dependency without saying why in the report.
+- Intakes behave exactly as before: CLI output, record format, MCP tools.
+- Deciding on knowledge — accept, revise, recording known failures — needs
+  stdin and stdout terminals and a typed confirmation; never add a flag, env
+  var or MCP tool that bypasses it (D1).
+- Knowledge informs agents; it never changes a run's verdict (except known
+  failures, TASK-007), the protected-test guard or a task's reuse key.
+- The probe calls no model.
+
+## Autonomy
+
+- Module layout, names, types and how the tests are written, within the
+  shared interfaces of 04-breakdown.
+- Diagnosing and fixing test and clippy failures within the task.
+- The probe's timeout for the test run, stated in the report.
+
+## Acceptance and verification
+
+- AC-01: on a clean Rust project with a passing suite, `baseline.md` records the commit, `rust`, the modules and a green result.
+- AC-02: a failing suite lists its failing tests in `baseline.md`.
+- AC-03: uncommitted changes make `zforge onboard` refuse; nothing is written.
+- AC-04: a test command that does not exist is recorded as red with the reason, and `zforge onboard` exits 0.
+- AC-05: `onboard baseline --known` without a terminal is refused; with a typed confirmation the known list holds the tests.
+- AC-06: `zforge status` names `zforge onboard` as next while not onboarded, and not once the files are accepted and the baseline settled.
+- AC-07: `init --force` and non-interactive `init` never prompt (the init end-to-end tests pass unchanged).
+
+## Delivery
+
+Local changes on the task's branch and a verification report; no push or merge.
+
+## Amend the contract when
+
+- Running the test suite needs an environment zforge does not provide (containers, services, devices).
+
+## Open questions
+
+None.

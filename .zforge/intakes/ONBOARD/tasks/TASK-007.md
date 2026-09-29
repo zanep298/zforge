@@ -1,0 +1,68 @@
+---
+id: TASK-007
+parent: ONBOARD
+requirements: [REQ-008, REQ-010]
+depends_on: [TASK-006]
+---
+
+# TASK-007 — Knowledge and known failures in runs
+
+## Goal
+
+A run's agents get the pinned knowledge that applies to their task, and a run on a known-red baseline passes when only known tests fail.
+
+## Input
+
+- The accepted 01-outcome, 02-behavior, 03-solution and 04-breakdown (as pinned by the handover).
+- Output of TASK-006 (pinned knowledge and known failures).
+- `src/run/contract.rs`, `templates/contract.tmpl`, `templates/review_contract.tmpl`, `src/run/execute.rs` (verification), `src/run/record.rs` (`RunEvent::Verified`), `src/trace/`, `src/runner/mod.rs`.
+
+## Output
+
+- `select::for_task(handover, task, limit)` as in 03-solution: every rules and conventions item, then domain items the contract or stages cite by ID, then domain sections whose module appears in a path they name, up to `knowledge.prompt_limit` (config, default 24000 bytes); what did not fit is named by ID with the absolute path of the pinned snapshot.
+- `{{project_knowledge}}` in both run prompts; empty, and the section absent, when the handover pins no knowledge.
+- The trace of each agent call records the knowledge revisions and item IDs given.
+- Verification: a non-zero exit passes only when the runner read at least one failing test name and every failing test is on the pinned known list; `Verified` gains `tolerated` and `known_passing` (known tests not among the failures), both omitted when empty; the agent's feedback names only failures that are not known.
+- `zforge status` suggests removing a known test that a run recorded in `known_passing`.
+
+## Constraints
+
+- The whole existing suite passes, and no existing test file changes.
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` are clean.
+- No new crate dependency without saying why in the report.
+- Intakes behave exactly as before: CLI output, record format, MCP tools.
+- Deciding on knowledge — accept, revise, recording known failures — needs
+  stdin and stdout terminals and a typed confirmation; never add a flag, env
+  var or MCP tool that bypasses it (D1).
+- Knowledge informs agents; it never changes a run's verdict (except known
+  failures, TASK-007), the protected-test guard or a task's reuse key.
+- A handover without pinned knowledge produces the same prompts as today.
+
+## Autonomy
+
+- Module layout, names, types and how the tests are written, within the
+  shared interfaces of 04-breakdown.
+- Diagnosing and fixing test and clippy failures within the task.
+
+## Acceptance and verification
+
+- AC-01: the prompt holds every rules and conventions item and the domain items the contract cites.
+- AC-02: a domain section whose module appears in a path the contract names is included; others are not.
+- AC-03: over the limit, the omitted IDs and the snapshot path are listed.
+- AC-04: a run failing only known tests is `verified` with `tolerated`.
+- AC-05: a run also failing another test fails, naming it.
+- AC-06: output with no readable test names fails as today, known list or not.
+- AC-07: a known test absent from the failures is recorded in `known_passing`, and `zforge status` suggests removing it.
+- AC-08: the trace names the knowledge revisions and item IDs given; the review prompt carries the same knowledge.
+
+## Delivery
+
+Local changes on the task's branch and a verification report; no push or merge.
+
+## Amend the contract when
+
+- Choosing knowledge needs the files the agent will touch, known only during the run.
+
+## Open questions
+
+None.

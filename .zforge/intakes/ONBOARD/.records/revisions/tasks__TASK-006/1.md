@@ -1,0 +1,63 @@
+---
+id: TASK-006
+parent: ONBOARD
+requirements: [REQ-010]
+depends_on: [TASK-002, TASK-003, TASK-004]
+---
+
+# TASK-006 — Handover pins and readiness
+
+## Goal
+
+A handover pins the accepted knowledge and the known failures, and readiness checks the project as well as the intake.
+
+## Input
+
+- The accepted 01-outcome, 02-behavior, 03-solution and 04-breakdown (as pinned by the handover).
+- Outputs of TASK-002, TASK-003 (`OnboardState`) and TASK-004 (`stale::check`).
+- `src/intake/handover.rs` (`Manifest`, `create`), `src/intake/readiness.rs` (`Readiness::with`, `render`), `src/cli/intake.rs` (`readiness`, `handover`), `src/mcp/v15.rs` (`readiness`).
+
+## Output
+
+- `Manifest` gains optional `knowledge: [{file, revision, sha256}]` (accepted revisions at handover) and `known_failures: [test]`; manifests written before load unchanged.
+- A reader of pinned knowledge for a handover that verifies each snapshot's hash and refuses a mismatch.
+- Readiness project checks, added where `runtime` is: onboarded, no stale item, baseline green or its failures known — warnings by default, errors with `onboarding.required: true` (config), so readiness fails and `handover` refuses.
+
+## Constraints
+
+- The whole existing suite passes, and no existing test file changes.
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` are clean.
+- No new crate dependency without saying why in the report.
+- Intakes behave exactly as before: CLI output, record format, MCP tools.
+- Deciding on knowledge — accept, revise, recording known failures — needs
+  stdin and stdout terminals and a typed confirmation; never add a flag, env
+  var or MCP tool that bypasses it (D1).
+- Knowledge informs agents; it never changes a run's verdict (except known
+  failures, TASK-007), the protected-test guard or a task's reuse key.
+
+## Autonomy
+
+- Module layout, names, types and how the tests are written, within the
+  shared interfaces of 04-breakdown.
+- Diagnosing and fixing test and clippy failures within the task.
+
+## Acceptance and verification
+
+- AC-01: a handover on an onboarded project pins the three accepted revisions with their hashes and the known list.
+- AC-02: a pinned knowledge snapshot altered afterwards is refused by the reader, naming the file.
+- AC-03: a project that is not onboarded gets warnings and can still hand over.
+- AC-04: with `onboarding.required: true` the same project fails readiness and `handover` refuses.
+- AC-05: a stale item appears in readiness with its ID.
+- AC-06: a manifest without the new fields loads and runs as before.
+
+## Delivery
+
+Local changes on the task's branch and a verification report; no push or merge.
+
+## Amend the contract when
+
+- Runs need knowledge that was not accepted at handover.
+
+## Open questions
+
+None.

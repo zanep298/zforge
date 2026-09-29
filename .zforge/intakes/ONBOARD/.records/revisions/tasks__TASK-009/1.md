@@ -1,0 +1,63 @@
+---
+id: TASK-009
+parent: ONBOARD
+requirements: [REQ-007, REQ-005]
+depends_on: [TASK-002, TASK-003]
+---
+
+# TASK-009 — Intake side and MCP
+
+## Goal
+
+Intakes are brainstormed on the accepted knowledge and cite it, and agents reach onboarding through MCP without being able to decide on it.
+
+## Input
+
+- The accepted 01-outcome, 02-behavior, 03-solution and 04-breakdown (as pinned by the handover).
+- Outputs of TASK-002 (items) and TASK-003 (`OnboardState`, probe).
+- `templates/skills/intake.md`, `templates/intake/task.md`, `templates/CLAUDE.md`, `templates/AGENTS.md`, `src/intake/lint.rs`, `src/mcp/mod.rs`, `src/mcp/v15.rs` (`FORBIDDEN`), `src/cli/init/claude_settings.rs`.
+
+## Output
+
+- The intake skill reads the accepted knowledge before any stage, cites item IDs, and states any departure with the ID and why; the task template's Constraints hint mentions `Knowledge: <IDs>`.
+- Intake lint warns on a `DOM-`, `CONV-` or `RULE-` ID that is not in the accepted knowledge.
+- CLAUDE.md and AGENTS.md templates describe onboarding and the knowledge.
+- MCP `onboard_status`, `onboard_probe`, `onboard_review`; `onboard_accept`, `onboard_revise` and `onboard_baseline` join `v15::FORBIDDEN`.
+- `.claude/settings.json` allows the three MCP tools and denies `Bash(zforge onboard accept*)`, `Bash(zforge onboard revise*)` and `Bash(zforge onboard baseline*)`.
+
+## Constraints
+
+- The whole existing suite passes, and no existing test file changes.
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` are clean.
+- No new crate dependency without saying why in the report.
+- Intakes behave exactly as before: CLI output, record format, MCP tools.
+- Deciding on knowledge — accept, revise, recording known failures — needs
+  stdin and stdout terminals and a typed confirmation; never add a flag, env
+  var or MCP tool that bypasses it (D1).
+- Knowledge informs agents; it never changes a run's verdict (except known
+  failures, TASK-007), the protected-test guard or a task's reuse key.
+
+## Autonomy
+
+- Module layout, names, types and how the tests are written, within the
+  shared interfaces of 04-breakdown.
+- Diagnosing and fixing test and clippy failures within the task.
+
+## Acceptance and verification
+
+- AC-01: a stage citing `RULE-009` when only RULE-001..003 are accepted gets a warning naming it.
+- AC-02: the MCP tool list has the three onboard tools and none of the forbidden ones (the existing transport test covers the new names).
+- AC-03: a generated `.claude/settings.json` denies the three onboard decision commands.
+- AC-04: the intake skill text requires reading the knowledge and citing IDs.
+
+## Delivery
+
+Local changes on the task's branch and a verification report; no push or merge.
+
+## Amend the contract when
+
+- An agent needs to record a knowledge decision.
+
+## Open questions
+
+None.
