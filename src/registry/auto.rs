@@ -95,6 +95,23 @@ fn apply_defaults(
     (inserted, migrated)
 }
 
+/// Whether the `claude` entry is one of zforge's earlier defaults.
+pub fn has_stale_claude(registry: &Registry) -> bool {
+    registry.agents.get("claude").is_some_and(|s| {
+        s.command == "claude" && STALE_CLAUDE_ARGS.iter().any(|stale| s.args == *stale)
+    })
+}
+
+/// Replace a stale `claude` default with the current one; any other entry,
+/// or none, is left alone. Returns whether it changed.
+pub fn migrate_stale_claude(registry: &mut Registry) -> bool {
+    if !has_stale_claude(registry) {
+        return false;
+    }
+    let (_, migrated) = apply_defaults(registry, &["claude"], &default_specs_map());
+    migrated
+}
+
 /// Insert default AgentSpec rows for the listed agent names when absent, and
 /// migrate the stale claude default. Existing user customization survives.
 /// Returns the names actually inserted.

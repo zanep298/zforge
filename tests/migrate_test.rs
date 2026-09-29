@@ -169,6 +169,10 @@ fn install_migrates_a_v1_store_once() {
         "{reg}"
     );
     assert!(reg.contains("spawn_timeout_secs: 900"), "{reg}");
+    assert!(
+        reg.contains("- stream-json\n") && reg.contains("- --verbose\n"),
+        "the earlier claude default is upgraded: {reg}"
+    );
     assert!(read(&archive.join("registry.yaml")).contains("max_retries"));
     assert_eq!(read(&s.join("models.yaml")), "claude:\n  code: sonnet\n");
 

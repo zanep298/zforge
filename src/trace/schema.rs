@@ -109,6 +109,10 @@ pub struct RunResult {
     pub terminal_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
+    /// What the client said went wrong, when the result is an error (for
+    /// example an expired login) — shortened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Who a finding points at, so a reviewer can tell a broken setup from a

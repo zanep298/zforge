@@ -153,13 +153,24 @@ fn read_tool_uses(event: &Value, observed: &mut Observed) {
     }
 }
 
+/// Longest error message kept from a result.
+const MESSAGE_LIMIT: usize = 500;
+
 fn read_result(event: &Value) -> RunResult {
+    let is_error = event
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    // Only an error's text is kept: a successful result is the agent's
+    // whole answer, which the trace has no use for.
+    let message = is_error
+        .then(|| str_at(event, "result"))
+        .flatten()
+        .map(|m| m.chars().take(MESSAGE_LIMIT).collect());
     RunResult {
         subtype: str_at(event, "subtype").unwrap_or("unknown").to_string(),
-        is_error: event
-            .get("is_error")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        is_error,
+        message,
         num_turns: event.get("num_turns").and_then(Value::as_u64),
         duration_ms: event.get("duration_ms").and_then(Value::as_u64),
         terminal_reason: str_at(event, "terminal_reason").map(str::to_string),

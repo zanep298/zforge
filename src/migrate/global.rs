@@ -46,13 +46,20 @@ pub struct Report {
     pub archived: Vec<String>,
     pub refreshed: Vec<String>,
     pub registry: bool,
+    /// The `claude` runner's args were an earlier default and now print a
+    /// stream the trace can read.
+    pub claude_args: bool,
     pub models: bool,
     pub archive_dir: Option<std::path::PathBuf>,
 }
 
 impl Report {
     pub fn is_empty(&self) -> bool {
-        self.archived.is_empty() && self.refreshed.is_empty() && !self.registry && !self.models
+        self.archived.is_empty()
+            && self.refreshed.is_empty()
+            && !self.registry
+            && !self.claude_args
+            && !self.models
     }
 }
 
@@ -60,7 +67,18 @@ impl Report {
 pub fn needs_migration(store: &Path) -> bool {
     RETIRED.iter().any(|r| Archive::present(store, r))
         || registry_is_v1(store)
+        || claude_args_stale(store)
         || models_text::has_removed_phases(&store.join("models.yaml"))
+}
+
+/// The registry's `claude` entry still has one of zforge's earlier default
+/// args (`-p`, `-p --output-format json`): runs would then print no stream
+/// the trace can read.
+fn claude_args_stale(store: &Path) -> bool {
+    std::fs::read_to_string(store.join("registry.yaml"))
+        .ok()
+        .and_then(|t| serde_yaml::from_str::<crate::registry::schema::Registry>(&t).ok())
+        .is_some_and(|r| crate::registry::auto::has_stale_claude(&r))
 }
 
 fn registry_is_v1(store: &Path) -> bool {
@@ -97,13 +115,17 @@ pub fn migrate(store: &Path) -> Result<Report> {
             report.refreshed.push(rel);
         }
     }
-    if registry_is_v1(store) {
+    let fallback_keys = registry_is_v1(store);
+    let claude_args = claude_args_stale(store);
+    if fallback_keys || claude_args {
         archive.keep_copy("registry.yaml")?;
         crate::registry::lock::with_lock(|| {
-            let r = crate::registry::io::load()?;
+            let mut r = crate::registry::io::load()?;
+            crate::registry::auto::migrate_stale_claude(&mut r);
             crate::registry::io::save_atomic(&r)
         })?;
-        report.registry = true;
+        report.registry = fallback_keys;
+        report.claude_args = claude_args;
     }
     let models = store.join("models.yaml");
     if models_text::has_removed_phases(&models) {
@@ -152,6 +174,13 @@ pub fn describe(report: &Report) -> Vec<String> {
     }
     if report.registry {
         out.push("registry.yaml: dropped the fallback retry settings".into());
+    }
+    if report.claude_args {
+        out.push(
+            "registry.yaml: claude now runs with `--output-format stream-json --verbose`, \
+             so runs are traced and costed"
+                .into(),
+        );
     }
     if report.models {
         out.push("models.yaml: dropped the spec/testspec/plan phases".into());

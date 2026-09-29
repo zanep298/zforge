@@ -44,11 +44,12 @@ pub(super) fn review(call: &Call, candidate: &str) -> Result<Verdict> {
         "{}: reviewing the passing work (up to ${:.2})",
         call.run.id, call.left_usd
     );
-    let (out, cost) = call_agent(call)?;
+    let called = call_agent(call)?;
+    let (out, cost) = (&called.out, called.cost_usd);
     let mut verdict = if out.timed_out {
         Verdict::refused(format!("the review timed out after {}s", call.timeout_secs))
     } else if out.exit_code != 0 {
-        Verdict::refused(format!("the review agent exited with {}", out.exit_code))
+        Verdict::refused(called.exit_reason("the review agent"))
     } else {
         parse(&answer(&out.stdout))
     };

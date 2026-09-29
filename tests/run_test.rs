@@ -571,6 +571,26 @@ fn a_change_request_blocks_the_run_and_leaves_the_contract_alone() {
     assert!(status.contains("changes/CHANGE-RUN-001.md"), "{status}");
 }
 
+/// An agent that fails before working — here an expired login — ends the
+/// run with the client's own message, not a bare exit code (found on the
+/// first real run).
+#[test]
+fn a_failed_agent_call_says_why() {
+    let p = Project::new(3.0, 3);
+    p.stub(
+        "printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"Failed to authenticate: OAuth session expired\",\"total_cost_usd\":0}'\nexit 1",
+    );
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    let reason = p.last("RUN-001")["reason"].as_str().unwrap().to_string();
+    assert_eq!(
+        reason,
+        "agent exited with 1: Failed to authenticate: OAuth session expired"
+    );
+}
+
 /// An incomplete request still stops the run, and says what is missing.
 #[test]
 fn an_incomplete_change_request_says_what_it_lacks() {

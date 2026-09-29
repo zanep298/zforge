@@ -245,7 +245,7 @@ fn work(
             n,
             allotted_usd: left,
         })?;
-        let (out, cost) = call_agent(&Call {
+        let called = call_agent(&Call {
             run,
             project_root,
             config,
@@ -260,9 +260,9 @@ fn work(
         run.append(&RunEvent::Attempt {
             at: Utc::now(),
             n,
-            exit_code: out.exit_code,
+            exit_code: called.out.exit_code,
             allotted_usd: left,
-            cost_usd: cost,
+            cost_usd: called.cost_usd,
         })?;
         interrupted()?;
         // §8: the agent may only ask for the contract to change, never
@@ -270,11 +270,11 @@ fn work(
         if let Some(reason) = amendment_requested(&change_request, &meta.intake) {
             return Err(Halt::Blocked(reason).into());
         }
-        if out.timed_out {
+        if called.out.timed_out {
             return Err(Halt::Failed(format!("agent timed out after {timeout_secs}s")).into());
         }
-        if out.exit_code != 0 {
-            return Err(Halt::Failed(format!("agent exited with {}", out.exit_code)).into());
+        if called.out.exit_code != 0 {
+            return Err(Halt::Failed(called.exit_reason("agent")).into());
         }
         Ok(())
     };
@@ -524,7 +524,26 @@ pub(super) struct Call<'a> {
 
 /// Run the agent in the worktree, record its trace, and return what it
 /// did with the cost it reported (if any). The caller records the events.
-pub(super) fn call_agent(c: &Call) -> Result<(spawn::SpawnOutcome, Option<f64>)> {
+/// One agent call, as the run sees it.
+pub(super) struct Called {
+    pub out: spawn::SpawnOutcome,
+    pub cost_usd: Option<f64>,
+    /// The client's own account of an error result, if it gave one.
+    pub error: Option<String>,
+}
+
+impl Called {
+    /// Why a call that exited non-zero failed, in the client's words when
+    /// it said (an expired login reads as such, not as a bare exit code).
+    pub(super) fn exit_reason(&self, who: &str) -> String {
+        match &self.error {
+            Some(e) => format!("{who} exited with {}: {e}", self.out.exit_code),
+            None => format!("{who} exited with {}", self.out.exit_code),
+        }
+    }
+}
+
+pub(super) fn call_agent(c: &Call) -> Result<Called> {
     let model = model_for(c.config, c.project_root, c.phase);
     let (spec, named) = agent_spec(c.base, c.work_dir, c.left_usd, c.phase, model.as_deref());
     let out = spawn::spawn_agent_in(&spec, c.prompt, c.timeout_secs, c.work_dir)?;
@@ -550,15 +569,17 @@ pub(super) fn call_agent(c: &Call) -> Result<(spawn::SpawnOutcome, Option<f64>)>
         timed_out: out.timed_out,
         duration_ms: out.duration_ms,
     });
-    let cost = trace
-        .observed
-        .as_ref()
-        .and_then(|o| o.result.as_ref())
-        .and_then(|r| r.cost_usd);
+    let result = trace.observed.as_ref().and_then(|o| o.result.as_ref());
+    let cost_usd = result.and_then(|r| r.cost_usd);
+    let error = result.and_then(|r| r.message.clone());
     if let Err(e) = crate::trace::log::append(&super::runs_dir(c.project_root), &trace) {
         eprintln!("warning: trace not recorded: {e:#}");
     }
-    Ok((out, cost))
+    Ok(Called {
+        out,
+        cost_usd,
+        error,
+    })
 }
 
 /// Registered Claude spec, run headless in the worktree: permission bypass,
