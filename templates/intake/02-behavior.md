@@ -1,12 +1,13 @@
 # {{intake_id}} — Behavior
 
-<!-- Hành vi qua tình huống bình thường, biên, lỗi và hồi phục (workflow §5.3).
-     Mỗi tình huống nêu input, output quan sát được và REQ liên quan. -->
+<!-- Behavior through normal, edge, error and recovery situations
+     (workflow §5.3). Each situation gives the input, the observable output
+     and the REQ it serves. -->
 
-## Tình huống
+## Situations
 
-## Quy tắc nghiệp vụ
+## Business rules
 
-## Hành vi cũ cần bảo toàn
+## Existing behavior to preserve
 
-## Câu hỏi còn mở
+## Open questions

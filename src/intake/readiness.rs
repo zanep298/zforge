@@ -193,10 +193,8 @@ pub fn check(
     let secs = lint::sections(&lint::strip_comments(
         texts.get(lint::BREAKDOWN).map(String::as_str).unwrap_or(""),
     ));
-    let integration = secs
-        .iter()
-        .find(|(t, _)| t == lint::INTEGRATION)
-        .is_some_and(|(_, lines)| lines.iter().any(|l| !l.trim().is_empty()));
+    let integration = lint::section(&secs, lint::INTEGRATION)
+        .is_some_and(|lines| lines.iter().any(|l| !l.trim().is_empty()));
     b.check(
         "integration verification",
         if integration {

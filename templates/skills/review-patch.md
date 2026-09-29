@@ -14,10 +14,10 @@ suite is green, not that the contract is met; check both.
 
 ## Required Inputs
 
-- The task contract: Output, Ràng buộc (constraints), Tự chủ (what the
+- The task contract: Output, Constraints, Autonomy (what the
   implementer could decide), the acceptance criteria `AC-nn`, and
   `tests_may_change` if the user allowed a test to change
-- The binding decisions ("Quyết định bắt buộc") of the accepted solution
+- The Binding decisions of the accepted solution
 - The diff from the commit the task started from (`git diff <start>`) and
   `git status`
 - The test command and its result
@@ -42,7 +42,7 @@ VERDICT: CHANGES
 - [ ] Every `AC-nn` is met by the code — trace each one to where it happens
 - [ ] Every `AC-nn` is proven by a test that would fail without the change
 - [ ] Nothing changed outside the contract's Output and constraints
-- [ ] Every binding decision is kept; choices under Tự chủ are the implementer's
+- [ ] Every binding decision is kept; choices under Autonomy are the implementer's
 - [ ] No test was weakened, skipped or deleted (outside `tests_may_change`)
 - [ ] No placeholder, dead code, debug output or silenced error in production paths
 - [ ] Regression risk named with the specific behavior or file that could break

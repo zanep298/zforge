@@ -13,7 +13,7 @@ current directory (this run's own git worktree) and nowhere else.
   tests is fine.
 - Inside the contract you decide how: structure, names, algorithms, tests.
   Suggestions in the solution may be replaced by an equivalent; binding
-  decisions ("Quyết định bắt buộc") may not.
+  decisions ("Binding decisions") may not.
 - Verification runs `{{test_command}}` in this directory. Run it yourself
   before you finish: the task is done when it passes.
 - Diagnose and fix failures yourself; do not ask the user how to debug.
@@ -33,11 +33,11 @@ an output, an interface, a binding decision, an acceptance criterion, the
 scope or the permissions — stop working on the code. Write a change request
 to `{{change_request_path}}` with these sections, then end your turn:
 
-1. `## Hợp đồng đang áp dụng` — file, revision and the part that must change
-2. `## Bằng chứng` — what you found and what you tried within the contract
-3. `## Đề xuất` — the change, alternatives, and what happens if nothing changes
-4. `## Tác động` — tasks, interfaces and work affected
-5. `## Cần quyết định` — the exact wording the user should accept or reject
+1. `## Contract in force` — file, revision and the part that must change
+2. `## Evidence` — what you found and what you tried within the contract
+3. `## Proposal` — the change, alternatives, and what happens if nothing changes
+4. `## Impact` — tasks, interfaces and work affected
+5. `## Decision needed` — the exact wording the user should accept or reject
 
 {{verifier_feedback}}
 ## The task contract

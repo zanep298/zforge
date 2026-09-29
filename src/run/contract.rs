@@ -242,11 +242,13 @@ impl Handover {
 /// example — is not a command.
 fn integration_block(breakdown: &str) -> Vec<String> {
     let breakdown = lint::strip_comments(breakdown);
-    let heading = format!("## {}", lint::INTEGRATION);
     let fence = |l: &str| l.trim_start().starts_with("```");
     let mut lines = breakdown
         .lines()
-        .skip_while(|l| l.trim() != heading)
+        .skip_while(|l| {
+            !l.strip_prefix("## ")
+                .is_some_and(|t| lint::INTEGRATION.matches(t))
+        })
         .skip(1);
     // Outside a block, the next heading ends the section; inside one, a
     // line starting with `#` is a shell comment.
@@ -529,6 +531,13 @@ pub(crate) mod tests {
             "# K\n\n## Kiểm chứng tích hợp\nprose only\n\n## Câu hỏi còn mở\n```\nx\n```\n"
         )
         .is_empty());
+        // The English title the templates now write.
+        assert_eq!(
+            integration_block(
+                "# K\n\n## Integration verification\n\n```bash\nmake check\n```\n\n## Open questions\n"
+            ),
+            ["make check"]
+        );
     }
 
     /// The breakdown template shows an example block inside a comment: an

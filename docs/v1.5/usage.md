@@ -77,6 +77,12 @@ bỏ key v1 (giữ comment) và thêm khối `execution`; agent, skill, CLAUDE.m
 settings được sinh lại (bản cũ lưu trong archive). CLAUDE.md/AGENTS.md do team
 tự viết (không phải zforge sinh) được giữ nguyên. Không xóa gì.
 
+**Template bằng tiếng Anh.** Tiêu đề mục trong file intake là tiếng Anh
+(`Open questions`, `Integration verification`, `Binding decisions`, và 8 mục
+của task: Goal, Input, Output, Constraints, Autonomy, Acceptance and
+verification, Delivery, Amend the contract when). Intake viết trước đó bằng
+tiêu đề tiếng Việt vẫn được đọc; mỗi intake nên dùng một ngôn ngữ.
+
 ## 1. Intake: làm rõ và chốt
 
 Agent chuẩn bị nội dung (skill `zforge-intake`), bạn quyết định.
@@ -116,7 +122,7 @@ Quy tắc đáng nhớ:
 
 - Sửa file sau khi gửi review thì không chốt được nữa; phải review lại. Đây là
   cách chặn việc nội dung bạn đọc khác nội dung được chốt.
-- Câu hỏi mở viết dạng `- [ ] …` dưới mục "Câu hỏi còn mở". Còn dấu `[ ]` thì
+- Câu hỏi mở viết dạng `- [ ] …` dưới mục "Open questions". Còn dấu `[ ]` thì
   readiness không cho bàn giao.
 - Trạng thái không nằm trong file. Nó suy ra từ `.records/decisions.jsonl`.
 
@@ -211,7 +217,7 @@ Xem cả handover đang ở đâu — từng task và bước tích hợp:
 zforge run status HANDOVER-001
 ```
 
-Lệnh tích hợp lấy từ khối code đầu tiên dưới mục "Kiểm chứng tích hợp" của
+Lệnh tích hợp lấy từ khối code đầu tiên dưới mục "Integration verification" của
 `04-breakdown.md` đã chốt, mỗi dòng một lệnh; không có khối code thì dùng
 `project.test_command`. Không gọi agent: tích hợp fail là chuyện hợp đồng giữa
 các task, sửa qua amendment.

@@ -22,7 +22,10 @@ You prepare, explain and send files for review. **The user decides.**
 
 ## Stages and files
 
-Work in order; each stage builds on the accepted one before it.
+Work in order; each stage builds on the accepted one before it. Section
+titles are English; intakes written with the earlier Vietnamese titles
+(Câu hỏi còn mở, Kiểm chứng tích hợp, …) are still read — keep one language
+per intake.
 
 1. `01-outcome.md` — problem, users, desired result, scope, what must not
    change, out of scope, signs of success. Each mandatory requirement is a
@@ -30,24 +33,24 @@ Work in order; each stage builds on the accepted one before it.
 2. `02-behavior.md` — normal, edge, error and recovery situations with
    observable input and output, citing the REQ they serve.
 3. `03-solution.md` — flow, components, data, interfaces. Separate
-   **Quyết định bắt buộc** (binding) from **Gợi ý triển khai** (suggestions).
+   **Binding decisions** from **Implementation suggestions**.
    Record alternatives considered, assumptions and the evidence they hold.
 4. `04-breakdown.md` — phases and tasks, order, dependencies, shared
-   interfaces, and **Kiểm chứng tích hợp**: how the whole is verified. Put
+   interfaces, and **Integration verification**: how the whole is verified. Put
    the exact commands in the section's first fenced code block, one per
    line (`#` lines are comments) — zforge runs them, in order, on a tree
    holding every task's output. Without a block it runs the project's test
    command, which may not check what the tasks do together.
 5. `tasks/TASK-xxx.md` (`zforge intake task <ID> TASK-xxx`) — the contract:
-   frontmatter `requirements` / `depends_on`, and the sections Mục tiêu,
-   Input, Output, Ràng buộc, Tự chủ, Acceptance và kiểm chứng (`- AC-01: …`),
-   Bàn giao, Cần amendment khi.
+   frontmatter `requirements` / `depends_on`, and the sections Goal, Input,
+   Output, Constraints, Autonomy, Acceptance and verification (`- AC-01: …`),
+   Delivery, Amend the contract when.
    - `depends_on`: a task starts from its dependencies' verified code, so
      list what it builds on, not only what must come first.
    - `tests_may_change: [path, …]` (optional frontmatter): existing test
      files the task may modify. A run that passes only after changing any
      other existing test is not counted. Add it only when the contract
-     means it, with exact paths, and say why in Ràng buộc.
+     means it, with exact paths, and say why under Constraints.
 
 Every file answers, in plain language: what is being decided and how it
 serves the level above; the proposal with a concrete example; why, with
@@ -59,7 +62,7 @@ the version they saw.
 1. Read the knowledge index and the code before asking anything you could
    find out yourself.
 2. Write or revise the file; keep conclusions in the file, not only in chat.
-3. Put every question that needs the user under **Câu hỏi còn mở** as
+3. Put every question that needs the user under **Open questions** as
    `- [ ] question — stage where it will be settled`. Tick it `[x]` only
    when the answer is written into the file.
 4. `zforge intake review <ID> <file>` — fix every structural error it

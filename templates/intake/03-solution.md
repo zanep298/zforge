@@ -1,19 +1,20 @@
 # {{intake_id}} — Solution
 
-<!-- Luồng xử lý, component, dữ liệu, interface và quyết định thiết kế
-     (workflow §5.4). Tách quyết định bắt buộc khỏi gợi ý triển khai. Ghi
-     phương án đã cân nhắc, lý do chọn, giả định và bằng chứng khả thi. -->
+<!-- Flow, components, data, interfaces and design decisions (workflow §5.4).
+     Keep binding decisions apart from implementation suggestions. Record the
+     alternatives considered, why this one, the assumptions and the evidence
+     that it is feasible. -->
 
-## Luồng xử lý
+## Flow
 
-## Component và interface
+## Components and interfaces
 
-## Quyết định bắt buộc
+## Binding decisions
 
-## Gợi ý triển khai
+## Implementation suggestions
 
-## Phương án đã cân nhắc
+## Alternatives considered
 
-## Giả định và bằng chứng
+## Assumptions and evidence
 
-## Câu hỏi còn mở
+## Open questions

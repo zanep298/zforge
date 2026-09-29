@@ -590,7 +590,11 @@ fn an_incomplete_change_request_says_what_it_lacks() {
         reason.starts_with("amendment: CHANGE-RUN-001 (incomplete"),
         "{reason}"
     );
-    assert!(reason.contains("Bằng chứng"), "{reason}");
+    assert!(reason.contains("Evidence"), "{reason}");
+    assert!(
+        !reason.contains("Proposal"),
+        "the Vietnamese \"Đề xuất\" the agent wrote counts: {reason}"
+    );
 }
 
 // ─── TASK-007: knowledge and the run's result ───────────────────────────────

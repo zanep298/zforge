@@ -14,9 +14,9 @@ directly required by the current task.
 
 ## Required Inputs
 
-The boundary of acceptable change: the task contract — Output, Ràng buộc
-(constraints), Tự chủ (what you may decide) and the acceptance criteria — plus
-the binding decisions ("Quyết định bắt buộc") in the accepted solution.
+The boundary of acceptable change: the task contract — Output, Constraints,
+Autonomy (what you may decide) and the acceptance criteria — plus the Binding
+decisions in the accepted solution.
 
 ## Expected Outputs
 

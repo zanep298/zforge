@@ -1,28 +1,28 @@
 # {{intake_id}} — Outcome
 
-<!-- Làm rõ vấn đề, người dùng, kết quả mong muốn và phạm vi (workflow §5.2).
-     Viết cho người đọc không có lịch sử chat. Mỗi yêu cầu bắt buộc có ID
-     ổn định dạng REQ-001 ở đầu một mục danh sách. -->
+<!-- Make the problem, the users, the desired result and the scope clear
+     (workflow §5.2). Write for a reader with no chat history. Every mandatory
+     requirement has a stable ID like REQ-001 at the start of a list item. -->
 
-## Vấn đề
+## Problem
 
-## Người sử dụng
+## Users
 
-## Kết quả mong muốn
+## Desired result
 
-## Yêu cầu
+## Requirements
 
 <!-- - REQ-001: … -->
 
-## Phải giữ nguyên
+## Must not change
 
-## Ngoài phạm vi
+## Out of scope
 
-## Dấu hiệu thành công
+## Signs of success
 
-## Nguồn và knowledge liên quan
+## Sources and related knowledge
 
-## Câu hỏi còn mở
+## Open questions
 
-<!-- - [ ] câu hỏi — sẽ giải quyết ở stage nào. Đánh [x] khi đã có câu trả lời
-     và ghi câu trả lời vào đúng mục ở trên. -->
+<!-- - [ ] question — the stage where it will be settled. Tick [x] once it is
+     answered, and write the answer into the right section above. -->

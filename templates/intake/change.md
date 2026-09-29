@@ -1,24 +1,25 @@
 # {{change_id}} — {{intake_id}}
 
-<!-- Yêu cầu thay đổi hợp đồng (workflow §8). Chỉ người dùng quyết định:
-     sửa file hợp đồng qua review và accept, rồi handover mới. -->
+<!-- A request to change the contract (workflow §8). Only the user decides:
+     the contract files are revised through review and accept, then handed
+     over again. -->
 
-## Hợp đồng đang áp dụng
+## Contract in force
 
-<!-- File, revision và đúng phần phải thay đổi. -->
+<!-- The file, its revision and exactly the part that must change. -->
 
-## Bằng chứng
+## Evidence
 
-<!-- Đã thử gì trong hợp đồng, và vì sao không đủ. -->
+<!-- What was tried within the contract, and why it is not enough. -->
 
-## Đề xuất
+## Proposal
 
-<!-- Thay đổi cụ thể, phương án khác, và hệ quả nếu giữ nguyên. -->
+<!-- The concrete change, the alternatives, and what happens if nothing changes. -->
 
-## Tác động
+## Impact
 
-<!-- Task, interface, knowledge và kết quả đã có bị ảnh hưởng. -->
+<!-- Tasks, interfaces, knowledge and existing results affected. -->
 
-## Cần quyết định
+## Decision needed
 
-<!-- Câu chữ chính xác để người dùng chấp nhận hoặc từ chối. -->
+<!-- The exact wording the user should accept or reject. -->

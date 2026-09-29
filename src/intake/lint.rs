@@ -5,9 +5,11 @@
 //! Conventions:
 //! - a requirement is defined in `01-outcome.md` as a list item or heading
 //!   starting with its ID: `- REQ-001: …`;
-//! - an acceptance criterion is defined in a task's "Acceptance và kiểm
-//!   chứng" section: `- AC-01: …`;
-//! - an open question is an unchecked item `- [ ]` under "Câu hỏi còn mở";
+//! - an acceptance criterion is defined in a task's "Acceptance and
+//!   verification" section: `- AC-01: …`;
+//! - an open question is an unchecked item `- [ ]` under "Open questions";
+//! - section titles are English; the Vietnamese ones earlier intakes used
+//!   are still recognised ([`Heading`]);
 //! - HTML comments are guidance and are ignored.
 
 use regex::Regex;
@@ -17,30 +19,60 @@ use std::sync::OnceLock;
 
 pub const OUTCOME: &str = "01-outcome.md";
 pub const BREAKDOWN: &str = "04-breakdown.md";
-pub const OPEN_QUESTIONS: &str = "Câu hỏi còn mở";
-pub const INTEGRATION: &str = "Kiểm chứng tích hợp";
-pub const ACCEPTANCE: &str = "Acceptance và kiểm chứng";
 pub const CHANGES_PREFIX: &str = "changes/";
 
+/// A `## ` section zforge looks for. Templates write `name`; `legacy` is
+/// the Vietnamese title intakes used before, still read so that existing
+/// intakes — and the snapshots handovers pinned — keep working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Heading {
+    pub name: &'static str,
+    pub legacy: &'static str,
+}
+
+impl Heading {
+    const fn new(name: &'static str, legacy: &'static str) -> Self {
+        Self { name, legacy }
+    }
+
+    /// Whether a section title is this heading (case-insensitive).
+    pub fn matches(&self, title: &str) -> bool {
+        let t = title.trim().to_lowercase();
+        t == self.name.to_lowercase() || t == self.legacy.to_lowercase()
+    }
+}
+
+impl std::fmt::Display for Heading {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
+pub const OPEN_QUESTIONS: Heading = Heading::new("Open questions", "Câu hỏi còn mở");
+pub const INTEGRATION: Heading = Heading::new("Integration verification", "Kiểm chứng tích hợp");
+pub const ACCEPTANCE: Heading =
+    Heading::new("Acceptance and verification", "Acceptance và kiểm chứng");
+pub const BINDING_DECISIONS: Heading = Heading::new("Binding decisions", "Quyết định bắt buộc");
+
 /// Sections a change request carries (workflow §8).
-pub const CHANGE_SECTIONS: [&str; 5] = [
-    "Hợp đồng đang áp dụng",
-    "Bằng chứng",
-    "Đề xuất",
-    "Tác động",
-    "Cần quyết định",
+pub const CHANGE_SECTIONS: [Heading; 5] = [
+    Heading::new("Contract in force", "Hợp đồng đang áp dụng"),
+    Heading::new("Evidence", "Bằng chứng"),
+    Heading::new("Proposal", "Đề xuất"),
+    Heading::new("Impact", "Tác động"),
+    Heading::new("Decision needed", "Cần quyết định"),
 ];
 
 /// Sections every leaf task contract has (workflow §5.6, example §11).
-pub const TASK_SECTIONS: [&str; 8] = [
-    "Mục tiêu",
-    "Input",
-    "Output",
-    "Ràng buộc",
-    "Tự chủ",
+pub const TASK_SECTIONS: [Heading; 8] = [
+    Heading::new("Goal", "Mục tiêu"),
+    Heading::new("Input", "Input"),
+    Heading::new("Output", "Output"),
+    Heading::new("Constraints", "Ràng buộc"),
+    Heading::new("Autonomy", "Tự chủ"),
     ACCEPTANCE,
-    "Bàn giao",
-    "Cần amendment khi",
+    Heading::new("Delivery", "Bàn giao"),
+    Heading::new("Amend the contract when", "Cần amendment khi"),
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -162,9 +194,10 @@ pub fn sections(body: &str) -> Vec<(String, Vec<String>)> {
     out
 }
 
-fn section<'a>(secs: &'a [(String, Vec<String>)], title: &str) -> Option<&'a [String]> {
+/// Body lines of the section `heading`, under either of its titles.
+pub fn section(secs: &[(String, Vec<String>)], heading: Heading) -> Option<&[String]> {
     secs.iter()
-        .find(|(t, _)| t == title)
+        .find(|(t, _)| heading.matches(t))
         .map(|(_, l)| l.as_slice())
 }
 
@@ -318,7 +351,7 @@ pub fn lint(rel: &str, text: &str, intake_id: &str, known: &Known) -> Vec<Issue>
         lint_task(rel, stem, text, &clean, intake_id, known, &mut issues);
     }
 
-    if !sections(&clean).iter().any(|(t, _)| t == OPEN_QUESTIONS) {
+    if section(&sections(&clean), OPEN_QUESTIONS).is_none() {
         issues.push(Issue::warning(
             rel,
             format!("has no \"{OPEN_QUESTIONS}\" section"),
@@ -483,10 +516,25 @@ mod tests {
             "frontmatter parent \"G\" is not F",
             "requirement REQ-777 is not defined in 01-outcome.md",
             "depends on TASK-002, which has no file in tasks/",
-            "missing section \"Tự chủ\"",
+            "missing section \"Autonomy\"",
             "AC-01 is defined more than once",
         ] {
             assert!(m.contains(&want), "missing {want:?} in {m:?}");
+        }
+    }
+
+    /// Templates write English titles; the Vietnamese ones of earlier
+    /// intakes still count, in any case.
+    #[test]
+    fn headings_match_their_english_and_legacy_titles() {
+        assert!(OPEN_QUESTIONS.matches("Open questions"));
+        assert!(OPEN_QUESTIONS.matches(" open Questions "));
+        assert!(OPEN_QUESTIONS.matches("Câu hỏi còn mở"));
+        assert!(!OPEN_QUESTIONS.matches("Questions"));
+        let task = crate::intake::templates::task("F", "TASK-001");
+        let secs = sections(&strip_comments(&task));
+        for h in TASK_SECTIONS.iter().chain([&OPEN_QUESTIONS]) {
+            assert!(section(&secs, *h).is_some(), "template lacks {h}");
         }
     }
 
@@ -496,7 +544,7 @@ mod tests {
         let template = crate::intake::templates::change("F", "CHANGE-RUN-001");
         let e = lint("changes/CHANGE-RUN-001.md", &template, "F", &known());
         let m = errors(&e);
-        assert!(m.contains(&"section \"Bằng chứng\" is empty"), "{m:?}");
+        assert!(m.contains(&"section \"Evidence\" is empty"), "{m:?}");
         assert_eq!(
             m.len(),
             CHANGE_SECTIONS.len() + 1,
@@ -505,13 +553,13 @@ mod tests {
 
         let filled = CHANGE_SECTIONS
             .iter()
-            .map(|t| format!("## {t}\nnội dung\n"))
+            .map(|t| format!("## {t}\ncontent\n"))
             .collect::<String>();
         assert!(errors(&lint("changes/CHANGE-RUN-001.md", &filled, "F", &known())).is_empty());
 
-        let missing = filled.replace("## Tác động\nnội dung\n", "");
+        let missing = filled.replace("## Impact\ncontent\n", "");
         let issues = lint("changes/CHANGE-RUN-001.md", &missing, "F", &known());
-        assert_eq!(errors(&issues), ["missing section \"Tác động\""]);
+        assert_eq!(errors(&issues), ["missing section \"Impact\""]);
     }
 
     #[test]
@@ -533,7 +581,7 @@ mod tests {
         let warnings: Vec<&str> = e.iter().map(|i| i.message.as_str()).collect();
         assert!(warnings
             .iter()
-            .any(|m| m.starts_with("section \"Kiểm chứng tích hợp\" is empty")));
+            .any(|m| m.starts_with("section \"Integration verification\" is empty")));
         assert!(warnings.contains(&"mentions TASK-002, which has no file in tasks/"));
     }
 }

@@ -27,8 +27,6 @@ use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-pub const MANDATORY_DECISIONS: &str = "Quyết định bắt buộc";
-
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionStatus {
@@ -285,10 +283,8 @@ fn intake_entries(intake: &Intake, verified: &VerifiedTasks) -> Result<Vec<Entry
     )?;
     let decision_lines = |text: &str| -> Vec<(String, String)> {
         let clean = lint::strip_comments(text);
-        lint::sections(&clean)
-            .into_iter()
-            .find(|(t, _)| t == MANDATORY_DECISIONS)
-            .map(|(_, lines)| lines)
+        let secs = lint::sections(&clean);
+        lint::section(&secs, lint::BINDING_DECISIONS)
             .unwrap_or_default()
             .iter()
             .filter(|l| l.trim_start().starts_with("- ") || l.trim_start().starts_with("* "))

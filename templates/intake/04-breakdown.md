@@ -1,24 +1,25 @@
 # {{intake_id}} — Breakdown
 
-<!-- Phase và task, thứ tự, dependency, input/output giữa task và interface
-     dùng chung (workflow §5.5). Mỗi REQ phải có task chịu trách nhiệm; mỗi
-     leaf task là một file tasks/TASK-xxx.md. -->
+<!-- Phases and tasks, order, dependencies, inputs/outputs between tasks and
+     shared interfaces (workflow §5.5). Every REQ needs a task that owns it;
+     every leaf task is a file tasks/TASK-xxx.md. -->
 
-## Phase
+## Phases
 
-## Task và dependency
+## Tasks and dependencies
 
-## Interface dùng chung
+## Shared interfaces
 
-## Kiểm chứng tích hợp
+## Integration verification
 
-<!-- Kiểm chứng cả feature trên tree chứa output của mọi task. Lệnh đặt trong
-     khối code đầu tiên của mục này, mỗi dòng một lệnh, zforge chạy lần lượt:
+<!-- How the whole feature is verified on a tree holding every task's output.
+     Put the commands in this section's first code block, one per line;
+     zforge runs them in order:
 
      ```bash
      cargo test
      ```
 
-     Không có khối code thì zforge chạy `project.test_command`. -->
+     Without a code block, zforge runs `project.test_command`. -->
 
-## Câu hỏi còn mở
+## Open questions

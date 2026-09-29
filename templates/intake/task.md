@@ -7,28 +7,29 @@ depends_on: []
 
 # {{task_id}} — 
 
-<!-- Hợp đồng của task nhỏ nhất (workflow §5.6, ví dụ §11). Giữ đủ các mục
-     dưới đây; acceptance dạng "- AC-01: …".
-     depends_on: task mà task này xây trên output của nó.
-     Nếu hợp đồng cho phép sửa file test có sẵn, thêm vào frontmatter
-     `tests_may_change: [đường/dẫn]` và nêu lý do ở mục Ràng buộc. -->
+<!-- The contract of one leaf task (workflow §5.6, example §11). Keep every
+     section below; acceptance criteria as "- AC-01: …".
+     depends_on: the tasks whose output this task builds on.
+     If the contract lets the task change an existing test file, add
+     `tests_may_change: [path/to/test]` to the frontmatter and say why under
+     Constraints. -->
 
-## Mục tiêu
+## Goal
 
 ## Input
 
 ## Output
 
-## Ràng buộc
+## Constraints
 
-## Tự chủ
+## Autonomy
 
-## Acceptance và kiểm chứng
+## Acceptance and verification
 
-## Bàn giao
+## Delivery
 
-Thay đổi local và báo cáo kiểm chứng; không tự push hoặc merge.
+Local changes and a verification report; no push or merge.
 
-## Cần amendment khi
+## Amend the contract when
 
-## Câu hỏi còn mở
+## Open questions

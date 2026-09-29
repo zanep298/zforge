@@ -192,7 +192,7 @@ fn tasks_are_linted_against_the_outcome() {
     assert!(!out.status.success());
     let err = stderr(&out);
     assert!(err.contains("links to no requirement"), "{err}");
-    assert!(err.contains("section \"Mục tiêu\" is empty"), "{err}");
+    assert!(err.contains("section \"Goal\" is empty"), "{err}");
 
     let out = p.zforge(&["intake", "review", "F-1", "../../config.yaml"]);
     assert!(!out.status.success());
