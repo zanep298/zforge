@@ -7,3 +7,4 @@
 !.zforge/config.yaml
 !.zforge/intakes/
 .zforge/intakes/**/.task.lock
+.codegraph/
