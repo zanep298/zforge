@@ -11,6 +11,13 @@ use std::path::Path;
 /// A line every generated instruction file has, in every version.
 pub(crate) const MARKER: &str = "**Workflow manager:** zforge";
 
+/// Whether zforge generated `text`: [`MARKER`] as a line of its own. A file
+/// that merely mentions it — documentation about zforge — is not one
+/// (zforge's own CLAUDE.md was overwritten that way).
+pub(crate) fn generated(text: &str) -> bool {
+    text.lines().any(|l| l.trim() == MARKER)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Written {
     Created,
@@ -30,7 +37,7 @@ pub(crate) fn write(path: &Path, content: &str, force: bool) -> Result<Written> 
         }
         Err(e) => return Err(e.into()),
     };
-    if !existing.contains(MARKER) {
+    if !generated(&existing) {
         return Ok(Written::Theirs);
     }
     if !force {
@@ -94,12 +101,24 @@ mod tests {
     }
 
     #[test]
+    fn a_file_that_only_mentions_the_marker_is_theirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("CLAUDE.md");
+        let doc = format!(
+            "# CLAUDE.md\n\n| `instructions.rs` | refreshes a file carrying `{MARKER}` |\n"
+        );
+        std::fs::write(&path, &doc).unwrap();
+        assert_eq!(write(&path, "new", true).unwrap(), Written::Theirs);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), doc);
+    }
+
+    #[test]
     fn every_template_carries_the_marker() {
         for t in [
             include_str!("../../../templates/CLAUDE.md"),
             include_str!("../../../templates/AGENTS.md"),
         ] {
-            assert!(t.contains(MARKER));
+            assert!(generated(t));
         }
     }
 }

@@ -175,7 +175,7 @@ fn is_instruction(rel: &str) -> bool {
 /// An instruction file zforge generated; the project's own is never
 /// rewritten (`cli::init::instructions`).
 fn zforge_wrote(path: &Path) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|t| t.contains(crate::cli::init::instructions::MARKER))
+    std::fs::read_to_string(path).is_ok_and(|t| crate::cli::init::instructions::generated(&t))
 }
 
 /// Local mode keeps agents and skills in the project (`paths.agents` is
