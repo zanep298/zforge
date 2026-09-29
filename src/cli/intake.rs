@@ -96,7 +96,7 @@ fn send_for_review(i: &Intake, rel: &str) -> Result<()> {
                 println!("\nChanges since the accepted revision:\n{d}")
             }
             Some(_) => {}
-            None => println!("First revision of this file."),
+            None => println!("No accepted revision yet to compare with."),
         }
     }
     println!(

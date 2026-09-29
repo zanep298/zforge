@@ -181,11 +181,16 @@ pub fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
     }
 }
 
-/// Body lines of each `## ` section, by title.
+/// Body lines of each `## ` section, by title. A `## ` line inside a fenced
+/// code block is an example, not a heading.
 pub fn sections(body: &str) -> Vec<(String, Vec<String>)> {
     let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut in_fence = false;
     for line in body.lines() {
-        if let Some(title) = line.strip_prefix("## ") {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        }
+        if let (false, Some(title)) = (in_fence, line.strip_prefix("## ")) {
             out.push((title.trim().to_string(), Vec::new()));
         } else if let Some((_, lines)) = out.last_mut() {
             lines.push(line.to_string());
@@ -521,6 +526,17 @@ mod tests {
         ] {
             assert!(m.contains(&want), "missing {want:?} in {m:?}");
         }
+    }
+
+    /// A heading shown in a code block is an example: the real section
+    /// after it still counts (found writing ONBOARD's 03-solution).
+    #[test]
+    fn a_heading_inside_a_code_block_is_not_a_section() {
+        let text = "## Components\n```\n## Open questions\n- [ ] example\n```\n\
+                    ## Open questions\n- [ ] real one\n";
+        let secs = sections(text);
+        assert_eq!(secs.len(), 2, "{secs:?}");
+        assert_eq!(open_questions(text), ["real one"]);
     }
 
     /// Templates write English titles; the Vietnamese ones of earlier
