@@ -54,9 +54,13 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "Bash(zforge intake accept*)",
       "Bash(zforge intake revise*)",
       "Bash(zforge handover*)",
+      "Bash(zforge onboard accept*)",
+      "Bash(zforge onboard revise*)",
       "Bash(zf intake accept*)",
       "Bash(zf intake revise*)",
-      "Bash(zf handover*)"
+      "Bash(zf handover*)",
+      "Bash(zf onboard accept*)",
+      "Bash(zf onboard revise*)"
     ]
   }
 }

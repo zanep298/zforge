@@ -94,6 +94,40 @@ impl Intake {
     }
 }
 
+impl crate::knowledge::docs::DocSet for Intake {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    fn file(&self, rel: &str) -> Result<PathBuf> {
+        Intake::file(self, rel)
+    }
+
+    fn files(&self) -> Vec<String> {
+        Intake::files(self)
+    }
+
+    fn lint(&self, rel: &str, text: &str) -> Vec<lint::Issue> {
+        lint::lint(rel, text, &self.id, &review::known(self))
+    }
+
+    fn reconfirm_needed(&self, rel: &str) -> Result<bool> {
+        Ok(readiness::stale(self)?.contains(rel))
+    }
+
+    fn snapshot_key(&self, rel: &str) -> String {
+        rel.trim_end_matches(".md").replace('/', "__")
+    }
+
+    fn review_hint(&self, rel: &str) -> String {
+        format!("zforge intake review {} {rel}", self.id)
+    }
+}
+
 /// Intake IDs become directory names: letters, digits, `.`, `_`, `-`,
 /// starting with a letter or digit.
 pub fn validate_id(id: &str) -> Result<()> {

@@ -4,6 +4,7 @@ pub mod embedded;
 pub mod evidence;
 pub mod fs;
 pub mod intake;
+pub mod knowledge;
 pub mod lock;
 pub mod mcp;
 pub mod migrate;

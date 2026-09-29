@@ -5,6 +5,7 @@ pub mod intake;
 pub mod mcp_register;
 pub mod migrate;
 pub mod models;
+pub mod onboard;
 pub mod outcome;
 pub mod output;
 pub mod project;

@@ -10,6 +10,7 @@ use super::lint::{self, Issue, Known, Severity};
 use super::record::{self, Decision, DecisionKind, CHANNEL_CLI, CHANNEL_TTY};
 use super::status::{self, DocStatus, Rev};
 use super::{hash, templates, validate_id, Intake, CHANGES_DIR, STAGES, TASKS_DIR};
+use crate::knowledge::docs::DocSet;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use std::path::{Path, PathBuf};
@@ -63,22 +64,22 @@ pub fn known(intake: &Intake) -> Known {
     }
 }
 
-/// Status of every file in the intake.
-pub fn statuses(intake: &Intake) -> Result<Vec<DocStatus>> {
-    let log = record::read(intake)?;
-    Ok(intake
+/// Status of every file in a document set (an intake, or the knowledge).
+pub fn statuses<D: DocSet>(doc: &D) -> Result<Vec<DocStatus>> {
+    let log = record::read(doc)?;
+    Ok(doc
         .files()
         .iter()
         .map(|f| {
-            let text = std::fs::read_to_string(intake.dir.join(f)).ok();
+            let text = std::fs::read_to_string(doc.dir().join(f)).ok();
             status::derive(f, &log, text.as_deref())
         })
         .collect())
 }
 
-pub fn file_status(intake: &Intake, rel: &str) -> Result<DocStatus> {
-    let path = intake.file(rel)?;
-    let log = record::read(intake)?;
+pub fn file_status<D: DocSet>(doc: &D, rel: &str) -> Result<DocStatus> {
+    let path = doc.file(rel)?;
+    let log = record::read(doc)?;
     let text = std::fs::read_to_string(&path).ok();
     Ok(status::derive(rel, &log, text.as_deref()))
 }
@@ -95,22 +96,22 @@ pub struct Reviewed {
     pub diff: Option<String>,
 }
 
-pub(crate) fn lock(intake: &Intake) -> Result<crate::lock::LockGuard> {
-    let parent = intake
-        .dir
+pub(crate) fn lock<D: DocSet>(doc: &D) -> Result<crate::lock::LockGuard> {
+    let parent = doc
+        .dir()
         .parent()
-        .context("intake directory has no parent")?;
-    crate::lock::lock(parent, &intake.id)
+        .context("document set directory has no parent")?;
+    crate::lock::lock(parent, doc.id())
 }
 
 /// Send the file's current content for review as a new revision.
-pub fn review(intake: &Intake, rel: &str) -> Result<Reviewed> {
-    let path = intake.file(rel)?;
-    let _lock = lock(intake)?;
+pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
+    let path = doc.file(rel)?;
+    let _lock = lock(doc)?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
 
-    let issues = lint::lint(rel, &text, &intake.id, &known(intake));
+    let issues = doc.lint(rel, &text);
     let (errors, warnings): (Vec<Issue>, Vec<Issue>) = issues
         .into_iter()
         .partition(|i| i.severity == Severity::Error);
@@ -122,14 +123,14 @@ pub fn review(intake: &Intake, rel: &str) -> Result<Reviewed> {
         bail!("{rel} is not ready for review:\n{}", list.join("\n"));
     }
 
-    let log = record::read(intake)?;
+    let log = record::read(doc)?;
     let st = status::derive(rel, &log, Some(&text));
     let current = hash::sha256(&text);
     // Unchanged since it was accepted: nothing to review — unless something
     // it builds on was accepted since (D6), when the user confirms it again
     // as a new revision with the same text.
     if let Some(a) = st.accepted.as_ref().filter(|a| a.sha256 == current) {
-        if !super::readiness::stale(intake)?.contains(rel) {
+        if !doc.reconfirm_needed(rel)? {
             bail!(
                 "{rel} is already accepted as revision {}; edit it first",
                 a.revision
@@ -147,9 +148,9 @@ pub fn review(intake: &Intake, rel: &str) -> Result<Reviewed> {
     }
 
     let revision = st.last_revision + 1;
-    record::write_snapshot(intake, rel, revision, &hash::normalize(&text))?;
+    record::write_snapshot(doc, rel, revision, &hash::normalize(&text))?;
     record::append(
-        intake,
+        doc,
         &Decision {
             at: Utc::now(),
             file: rel.to_string(),
@@ -164,7 +165,7 @@ pub fn review(intake: &Intake, rel: &str) -> Result<Reviewed> {
     let diff = st
         .accepted
         .as_ref()
-        .map(|a| diff_against(intake, rel, a.revision, revision));
+        .map(|a| diff_against(doc, rel, a.revision, revision));
     Ok(Reviewed {
         revision,
         sha256: current,
@@ -175,9 +176,9 @@ pub fn review(intake: &Intake, rel: &str) -> Result<Reviewed> {
 }
 
 /// `git diff --no-index` between two recorded revisions of `rel`.
-pub fn diff_against(intake: &Intake, rel: &str, from: u32, to: u32) -> String {
-    let a = record::snapshot_path(intake, rel, from);
-    let b = record::snapshot_path(intake, rel, to);
+pub fn diff_against<D: DocSet>(doc: &D, rel: &str, from: u32, to: u32) -> String {
+    let a = record::snapshot_path(doc, rel, from);
+    let b = record::snapshot_path(doc, rel, to);
     let out = std::process::Command::new("git")
         .args(["diff", "--no-index", "--no-color", "--"])
         .arg(&a)
@@ -198,12 +199,12 @@ pub fn diff_against(intake: &Intake, rel: &str, from: u32, to: u32) -> String {
 
 /// The revision under review, checked against the file on disk: it must
 /// still be exactly what was sent for review.
-pub fn pending_review(intake: &Intake, rel: &str) -> Result<Rev> {
-    let st = file_status(intake, rel)?;
+pub fn pending_review<D: DocSet>(doc: &D, rel: &str) -> Result<Rev> {
+    let st = file_status(doc, rel)?;
     let Some(pending) = st.in_review else {
         bail!(
-            "{rel} is not under review; send it with `zforge intake review {} {rel}`",
-            intake.id
+            "{rel} is not under review; send it with `{}`",
+            doc.review_hint(rel)
         );
     };
     if st.current_sha256.as_deref() != Some(pending.sha256.as_str()) {
@@ -217,17 +218,17 @@ pub fn pending_review(intake: &Intake, rel: &str) -> Result<Rev> {
 
 /// Record the user's acceptance of the revision under review. Callers must
 /// have confirmed a human decided (see module docs).
-pub fn accept(intake: &Intake, rel: &str, by: Option<String>) -> Result<Rev> {
-    decide(intake, rel, DecisionKind::Accepted, by, String::new())
+pub fn accept<D: DocSet>(doc: &D, rel: &str, by: Option<String>) -> Result<Rev> {
+    decide(doc, rel, DecisionKind::Accepted, by, String::new())
 }
 
 /// Record the user's request for changes to the revision under review.
-pub fn revise(intake: &Intake, rel: &str, by: Option<String>, note: &str) -> Result<Rev> {
+pub fn revise<D: DocSet>(doc: &D, rel: &str, by: Option<String>, note: &str) -> Result<Rev> {
     if note.trim().is_empty() {
         bail!("say what needs to change (--note)");
     }
     decide(
-        intake,
+        doc,
         rel,
         DecisionKind::NeedsRevision,
         by,
@@ -235,17 +236,17 @@ pub fn revise(intake: &Intake, rel: &str, by: Option<String>, note: &str) -> Res
     )
 }
 
-fn decide(
-    intake: &Intake,
+fn decide<D: DocSet>(
+    doc: &D,
     rel: &str,
     kind: DecisionKind,
     by: Option<String>,
     note: String,
 ) -> Result<Rev> {
-    let _lock = lock(intake)?;
-    let pending = pending_review(intake, rel)?;
+    let _lock = lock(doc)?;
+    let pending = pending_review(doc, rel)?;
     record::append(
-        intake,
+        doc,
         &Decision {
             at: Utc::now(),
             file: rel.to_string(),

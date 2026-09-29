@@ -8,7 +8,9 @@
 //! Nothing here is ever rewritten. The status of a file is derived from the
 //! log ([`super::status`]).
 
+#[cfg(test)]
 use super::Intake;
+use crate::knowledge::docs::DocSet;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -57,18 +59,18 @@ pub const DECISIONS_FILE: &str = "decisions.jsonl";
 pub const CHANNEL_CLI: &str = "cli";
 pub const CHANNEL_TTY: &str = "cli-tty";
 
-fn log_path(intake: &Intake) -> PathBuf {
-    intake.records_dir().join(DECISIONS_FILE)
+fn log_path<D: DocSet>(doc: &D) -> PathBuf {
+    doc.records_dir().join(DECISIONS_FILE)
 }
 
-pub fn append(intake: &Intake, decision: &Decision) -> Result<()> {
-    crate::fs::writer::append_record_line(&log_path(intake), &serde_json::to_string(decision)?)
+pub fn append<D: DocSet>(doc: &D, decision: &Decision) -> Result<()> {
+    crate::fs::writer::append_record_line(&log_path(doc), &serde_json::to_string(decision)?)
 }
 
 /// Every decision, oldest first. A torn last line (crash mid-append) is
 /// skipped: the decision it would have recorded did not happen.
-pub fn read(intake: &Intake) -> Result<Vec<Decision>> {
-    let Ok(text) = std::fs::read_to_string(log_path(intake)) else {
+pub fn read<D: DocSet>(doc: &D) -> Result<Vec<Decision>> {
+    let Ok(text) = std::fs::read_to_string(log_path(doc)) else {
         return Ok(Vec::new());
     };
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -79,7 +81,7 @@ pub fn read(intake: &Intake) -> Result<Vec<Decision>> {
             Err(_) if i + 1 == lines.len() => {}
             Err(e) => anyhow::bail!(
                 "{} line {} is corrupt ({e}); the decision log is append-only — restore it from version control",
-                log_path(intake).display(),
+                log_path(doc).display(),
                 i + 1
             ),
         }
@@ -87,26 +89,24 @@ pub fn read(intake: &Intake) -> Result<Vec<Decision>> {
     Ok(decisions)
 }
 
-/// `revisions/<file without .md, '/' as '__'>/<n>.md`.
-pub fn snapshot_path(intake: &Intake, file: &str, revision: u32) -> PathBuf {
-    let key = file.trim_end_matches(".md").replace('/', "__");
-    intake
-        .records_dir()
+/// `revisions/<doc.snapshot_key(file)>/<n>.md`.
+pub fn snapshot_path<D: DocSet>(doc: &D, file: &str, revision: u32) -> PathBuf {
+    doc.records_dir()
         .join("revisions")
-        .join(key)
+        .join(doc.snapshot_key(file))
         .join(format!("{revision}.md"))
 }
 
-pub fn write_snapshot(intake: &Intake, file: &str, revision: u32, text: &str) -> Result<()> {
-    let path = snapshot_path(intake, file, revision);
+pub fn write_snapshot<D: DocSet>(doc: &D, file: &str, revision: u32, text: &str) -> Result<()> {
+    let path = snapshot_path(doc, file, revision);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     crate::fs::write_atomic(&path, text.as_bytes())
 }
 
-pub fn read_snapshot(intake: &Intake, file: &str, revision: u32) -> Result<String> {
-    let path = snapshot_path(intake, file, revision);
+pub fn read_snapshot<D: DocSet>(doc: &D, file: &str, revision: u32) -> Result<String> {
+    let path = snapshot_path(doc, file, revision);
     std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))
 }
 

@@ -155,6 +155,13 @@ enum Commands {
         #[command(subcommand)]
         cmd: KnowledgeCmd,
     },
+    /// The project's own knowledge (domain, conventions, rules): review,
+    /// accept and revise it the same way an intake file is. `accept` /
+    /// `revise` need an interactive terminal.
+    Onboard {
+        #[command(subcommand)]
+        cmd: crate::cli::onboard::OnboardCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -267,6 +274,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         } => cli::intake::knowledge_index(json),
         Commands::Readiness { id, tasks, json } => cli::intake::readiness(&id, &tasks, json),
         Commands::Handover { id, tasks } => cli::intake::handover(&id, &tasks),
+        Commands::Onboard { cmd } => cli::onboard::run(cmd),
         // Handled by `dispatch` because it carries a verdict.
         Commands::Doctor { .. } => {
             unreachable!("outcome-bearing commands are dispatched before dispatch_unit")

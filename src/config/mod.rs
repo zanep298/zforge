@@ -40,22 +40,33 @@ pub struct RunnerConfig {
 
 /// v1.5 knowledge (decision D6): the branch "integrated" is judged
 /// against. Each handover manifest records it with the commit it was made on.
+///
+/// `dir` is where the project's own knowledge (ONBOARD REQ-006) lives:
+/// `domain.md`, `conventions.md`, `rules.md` and their `.records/`,
+/// committed with the code.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KnowledgeConfig {
     #[serde(default = "default_baseline")]
     pub baseline: String,
+    #[serde(default = "default_knowledge_dir")]
+    pub dir: PathBuf,
 }
 
 impl Default for KnowledgeConfig {
     fn default() -> Self {
         Self {
             baseline: default_baseline(),
+            dir: default_knowledge_dir(),
         }
     }
 }
 
 fn default_baseline() -> String {
     "main".into()
+}
+
+fn default_knowledge_dir() -> PathBuf {
+    PathBuf::from("docs/knowledge")
 }
 
 /// v1.5 execution policy written into each handover manifest (workflow
@@ -183,6 +194,11 @@ impl Config {
     /// The skills store this project uses (`paths.skills`), absolute.
     pub fn skills_dir(&self) -> PathBuf {
         self.resolve_path(&self.paths.skills)
+    }
+
+    /// Where the project's knowledge lives (`knowledge.dir`), absolute.
+    pub fn knowledge_dir(&self) -> PathBuf {
+        self.resolve_path(&self.knowledge.dir)
     }
 
     #[allow(dead_code)]
