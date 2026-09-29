@@ -11,7 +11,8 @@
 //! (FIX-003).
 
 use crate::config;
-use crate::intake::{self, knowledge, readiness, review, Intake};
+use crate::intake::{self, readiness, review, Intake};
+use crate::knowledge::commitments;
 use crate::run::{execute, feature, feature_ops, is_handover, ops, record::Run};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -186,7 +187,9 @@ fn readiness_report(args: &Value) -> Result<String> {
 }
 
 fn knowledge_index(_args: &Value) -> Result<String> {
-    Ok(serde_json::to_string_pretty(&knowledge::build(&root()?)?)?)
+    Ok(serde_json::to_string_pretty(
+        &commitments::build(&root()?)?,
+    )?)
 }
 
 /// Start a run of a handed-over task in the background — or, without a

@@ -11,7 +11,6 @@
 
 pub mod handover;
 pub mod hash;
-pub mod knowledge;
 pub mod lint;
 pub mod readiness;
 

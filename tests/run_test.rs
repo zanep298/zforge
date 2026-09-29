@@ -679,7 +679,7 @@ fn a_verified_run_makes_its_requirement_verified() {
         zforge::evidence::fingerprint(&p.root.join(".zforge/worktrees/RUN-002")).hash(),
         "the candidate is the tree that passed"
     );
-    let md = std::fs::read_to_string(p.root.join(".zforge/knowledge/index.md")).unwrap();
+    let md = std::fs::read_to_string(p.root.join("docs/knowledge/commitments.md")).unwrap();
     assert!(md.contains("verified (RUN-002"), "{md}");
 
     // The run's own result reads back what it used and proved.
@@ -1430,7 +1430,7 @@ fn knowledge_follows_the_integration_into_the_baseline() {
     assert_eq!(req["implementation"], "integrated");
     let out = p.zforge(&["knowledge", "index"]);
     assert!(out.status.success());
-    let md = std::fs::read_to_string(p.root.join(".zforge/knowledge/index.md")).unwrap();
+    let md = std::fs::read_to_string(p.root.join("docs/knowledge/commitments.md")).unwrap();
     assert!(
         md.contains(&format!(
             "integrated (RUN-005 of HANDOVER-001, {} in main)",

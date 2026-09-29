@@ -275,21 +275,55 @@ pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `zforge knowledge index`: regenerate `.zforge/knowledge/index.{md,json}`.
+/// `zforge knowledge index`: regenerate `commitments.md` (in
+/// `knowledge.dir`) and `.zforge/knowledge/commitments.json`.
 pub fn knowledge_index(json: bool) -> Result<()> {
     let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
-    let entries = crate::intake::knowledge::write(&config.project_root())?;
+    let entries = crate::knowledge::commitments::write(&config)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {
-        print!("{}", crate::intake::knowledge::render(&entries));
+        print!("{}", crate::knowledge::commitments::render(&entries));
     }
     Ok(())
 }
 
-/// Keep the index current after a decision; a failure is reported, not fatal.
+/// Keep the commitments current after a decision; a failure is reported,
+/// not fatal.
 fn refresh_knowledge(root: &std::path::Path) {
-    if let Err(e) = crate::intake::knowledge::write(root) {
-        eprintln!("warning: knowledge index not updated: {e:#}");
+    let config = match config::load_from(&root.join(".zforge").join("config.yaml")) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("warning: commitments not updated: {e:#}");
+            return;
+        }
+    };
+    if let Err(e) = crate::knowledge::commitments::write(&config) {
+        eprintln!("warning: commitments not updated: {e:#}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AC-02: refreshing after a decision writes the new locations —
+    /// `commitments.md` in `knowledge.dir`, `commitments.json` under
+    /// `.zforge/knowledge/`.
+    #[test]
+    fn refresh_knowledge_writes_commitments_at_the_new_locations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".zforge")).unwrap();
+        std::fs::write(
+            root.join(".zforge").join("config.yaml"),
+            "project:\n  name: t\n  language: rust\n  test_command: \"true\"\n",
+        )
+        .unwrap();
+
+        refresh_knowledge(root);
+
+        assert!(root.join("docs/knowledge/commitments.md").is_file());
+        assert!(root.join(".zforge/knowledge/commitments.json").is_file());
     }
 }

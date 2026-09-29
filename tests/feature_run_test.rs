@@ -67,7 +67,22 @@ fn a_chain_runs_to_a_verified_feature() {
         entry(&p.knowledge(), "REQ-001")["implementation"],
         "integration_verified"
     );
-    assert_eq!(checkout(&p), before);
+    // `p.knowledge()` above writes `docs/knowledge/commitments.md`
+    // (CHANGE-RUN-009): the checkout otherwise stays as it was.
+    let after = checkout(&p);
+    assert_eq!(after.1, before.1);
+    let untracked: Vec<&str> = after
+        .0
+        .lines()
+        .filter(|l| l.trim_start_matches("?? ").starts_with("docs/"))
+        .collect();
+    assert_eq!(untracked, vec!["?? docs/"], "{}", after.0);
+    let rest: Vec<&str> = after
+        .0
+        .lines()
+        .filter(|l| !l.trim_start_matches("?? ").starts_with("docs/"))
+        .collect();
+    assert_eq!(rest, before.0.lines().collect::<Vec<_>>());
 }
 
 /// A task with two dependencies starts from both outputs, merged.
@@ -300,7 +315,22 @@ fn a_failed_integration_leaves_the_feature_unverified() {
     let req = entry(&p.knowledge(), "REQ-001");
     assert_eq!(req["implementation"], "verified");
     assert!(req.get("integration").is_none());
-    assert_eq!(checkout(&p), before);
+    // `p.knowledge()` above writes `docs/knowledge/commitments.md`
+    // (CHANGE-RUN-009): the checkout otherwise stays as it was.
+    let after = checkout(&p);
+    assert_eq!(after.1, before.1);
+    let untracked: Vec<&str> = after
+        .0
+        .lines()
+        .filter(|l| l.trim_start_matches("?? ").starts_with("docs/"))
+        .collect();
+    assert_eq!(untracked, vec!["?? docs/"], "{}", after.0);
+    let rest: Vec<&str> = after
+        .0
+        .lines()
+        .filter(|l| !l.trim_start_matches("?? ").starts_with("docs/"))
+        .collect();
+    assert_eq!(rest, before.0.lines().collect::<Vec<_>>());
 }
 
 /// `zforge status` follows a feature: before the run it says to run the

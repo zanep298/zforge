@@ -13,8 +13,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum KnowledgeCmd {
-    /// Regenerate `.zforge/knowledge/index.md` and `index.json` from the
-    /// accepted revisions of every intake.
+    /// Regenerate `commitments.md` (in `knowledge.dir`) and
+    /// `.zforge/knowledge/commitments.json` from the accepted revisions of
+    /// every intake.
     Index {
         #[arg(long)]
         json: bool,

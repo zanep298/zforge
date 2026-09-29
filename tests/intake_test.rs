@@ -419,7 +419,8 @@ fn knowledge_index_follows_accepted_revisions_and_handovers() {
     assert_eq!(req["implementation"], "not_implemented");
     assert_eq!(req["tasks"], serde_json::json!(["TASK-001", "TASK-002"]));
     assert_eq!(req["source"], "01-outcome.md");
-    assert!(p.root.join(".zforge/knowledge/index.md").is_file());
+    assert!(p.root.join(".zforge/knowledge/commitments.json").is_file());
+    assert!(p.root.join("docs/knowledge/commitments.md").is_file());
 
     let config = zforge::config::load_from(&p.root.join(".zforge/config.yaml")).unwrap();
     let (_, r) = p.readiness(&[]);

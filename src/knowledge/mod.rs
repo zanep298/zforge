@@ -9,6 +9,7 @@
 //! (TASK-008) — is out of scope here: this task only makes the three files
 //! reviewable, acceptable and revisable.
 
+pub mod commitments;
 pub mod docs;
 pub mod items;
 pub mod known;
