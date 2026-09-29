@@ -91,6 +91,36 @@ pub fn rewrite_frontmatter(content: &str, resolved_model: Option<&str>, extra: &
     out
 }
 
+/// Frontmatter keys only Claude Code reads (tool restrictions); another
+/// client would misread or reject them.
+const CLAUDE_ONLY_KEYS: [&str; 1] = ["disallowedTools"];
+
+/// `content` without the [`CLAUDE_ONLY_KEYS`] (and a YAML list under one).
+pub fn without_claude_keys(content: &str) -> String {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return content.to_string();
+    };
+    let Some(end) = find_frontmatter_end(rest) else {
+        return content.to_string();
+    };
+    let mut out = String::from("---\n");
+    let mut in_key = false;
+    for line in rest[..end].lines() {
+        if in_key && (line.starts_with(' ') || line.starts_with('-')) {
+            continue;
+        }
+        in_key = CLAUDE_ONLY_KEYS
+            .iter()
+            .any(|k| line.strip_prefix(k).is_some_and(|r| r.starts_with(':')));
+        if !in_key {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str(&rest[end..]);
+    out
+}
+
 fn find_frontmatter_end(rest: &str) -> Option<usize> {
     // Look for a line that is exactly `---` (with newline).
     let mut idx = 0;
@@ -176,6 +206,11 @@ pub fn materialize_agents_into(
         };
         let model = model_line_for(target, resolve_model(target, phase, &content, models));
         let rewritten = rewrite_frontmatter(&content, model.as_deref(), &extra_frontmatter(phase));
+        let rewritten = if target == "claude" {
+            rewritten
+        } else {
+            without_claude_keys(&rewritten)
+        };
         let dst = dst_dir.join(&filename);
         if dst.exists() {
             if force {
@@ -194,6 +229,35 @@ pub fn materialize_agents_into(
 mod tests {
     use super::*;
     use crate::config::PhaseModels;
+
+    #[test]
+    fn tool_limits_reach_claude_only() {
+        let tmpl = "---\nname: review-agent\ndisallowedTools: Edit, Write\n\
+                    description: x\n---\nbody\n";
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("review-agent.md"), tmpl).unwrap();
+        for (target, kept) in [("claude", true), ("codex", false), ("opencode", false)] {
+            let dst = tmp.path().join(target);
+            materialize_agents_into(target, &src, &dst, None, true, &|_| String::new()).unwrap();
+            let out = std::fs::read_to_string(dst.join("review-agent.md")).unwrap();
+            assert_eq!(
+                out.contains("disallowedTools: Edit, Write\n"),
+                kept,
+                "{target}: {out}"
+            );
+            assert!(
+                out.contains("description: x\n---\nbody\n"),
+                "{target}: {out}"
+            );
+        }
+        let list = "---\nname: a\ndisallowedTools:\n  - Edit\n  - Write\ndescription: x\n---\nb\n";
+        assert_eq!(
+            without_claude_keys(list),
+            "---\nname: a\ndescription: x\n---\nb\n"
+        );
+    }
 
     fn template_with_three_keys() -> &'static str {
         "---\n\

@@ -238,6 +238,45 @@ mod tests {
         assert_eq!(names, expected);
     }
 
+    fn agent(name: &str) -> &'static str {
+        AGENTS.iter().find(|(n, _)| *n == name).unwrap().1
+    }
+
+    /// The agents repeat the run prompts' standing rules, so they hold when
+    /// an agent is used without a run's prompt. Both sides must say the
+    /// same: the change request's sections, the test rules, the answer.
+    #[test]
+    fn agents_and_run_prompts_state_the_same_rules() {
+        let code = agent("code-agent.md");
+        let contract = include_str!("../templates/contract.tmpl");
+        for h in crate::intake::lint::CHANGE_SECTIONS {
+            assert!(code.contains(h.name), "code-agent lacks {h}");
+            assert!(contract.contains(h.name), "contract.tmpl lacks {h}");
+        }
+        for rule in ["tests_may_change", "push", "Binding decisions"] {
+            assert!(code.contains(rule) && contract.contains(rule), "{rule}");
+        }
+
+        let review = agent("review-agent.md");
+        let prompt = include_str!("../templates/review_contract.tmpl");
+        for rule in ["VERDICT: APPROVE", "VERDICT: CHANGES", "Binding decisions"] {
+            assert!(review.contains(rule) && prompt.contains(rule), "{rule}");
+        }
+    }
+
+    /// The reviewer is read-only by configuration, not only by instruction.
+    #[test]
+    fn the_reviewer_cannot_edit() {
+        let line = agent("review-agent.md")
+            .lines()
+            .find(|l| l.starts_with("disallowedTools:"))
+            .expect("review-agent limits its tools");
+        for tool in ["Edit", "Write", "NotebookEdit"] {
+            assert!(line.contains(tool), "{line}");
+        }
+        assert!(!agent("code-agent.md").contains("disallowedTools"));
+    }
+
     #[test]
     fn all_lang_skills_includes_every_language() {
         let langs: Vec<String> = all_lang_skills().into_iter().map(|(n, _)| n).collect();
