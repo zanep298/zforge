@@ -571,6 +571,32 @@ fn a_change_request_blocks_the_run_and_leaves_the_contract_alone() {
     assert!(status.contains("changes/CHANGE-RUN-001.md"), "{status}");
 }
 
+/// A run's agent call is limited by `execution.agent_timeout_secs`, not the
+/// ten minutes every spawn once had (RUN-002 of ONBOARD was cut at 600s).
+#[test]
+fn the_agent_timeout_comes_from_the_config() {
+    let p = Project::new(3.0, 3);
+    let cfg = p.root.join(".zforge/config.yaml");
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    std::fs::write(
+        &cfg,
+        text.replace(
+            "  max_iterations:",
+            "  agent_timeout_secs: 1\n  max_iterations:",
+        ),
+    )
+    .unwrap();
+    p.stub("sleep 30");
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    assert_eq!(
+        p.last("RUN-001")["reason"].as_str().unwrap(),
+        "agent timed out after 1s"
+    );
+}
+
 /// An agent that fails before working — here an expired login — ends the
 /// run with the client's own message, not a bare exit code (found on the
 /// first real run).

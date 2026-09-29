@@ -8,7 +8,7 @@
 //! - agents and skills zforge still ships are brought to this version, the
 //!   old copy archived first (they described the task pipeline);
 //! - `registry.yaml` drops the fallback policy's retry settings (kept:
-//!   `spawn_timeout_secs`), and `models.yaml` drops the removed phases —
+//!   `spawn_timeout_secs`, now `execution.agent_timeout_secs` per project), and `models.yaml` drops the removed phases —
 //!   both archived first.
 
 use super::archive::Archive;
@@ -34,7 +34,8 @@ pub const RETIRED: &[&str] = &[
 ];
 
 /// Registry keys of the removed fallback loop.
-const RETIRED_REGISTRY_KEYS: [&str; 4] = [
+const RETIRED_REGISTRY_KEYS: [&str; 5] = [
+    "fallback_policy:",
     "max_retries:",
     "cooldown_seconds:",
     "retryable_exit_codes:",
@@ -173,7 +174,7 @@ pub fn describe(report: &Report) -> Vec<String> {
         ));
     }
     if report.registry {
-        out.push("registry.yaml: dropped the fallback retry settings".into());
+        out.push("registry.yaml: dropped the fallback policy (the agent timeout is now `execution.agent_timeout_secs`)".into());
     }
     if report.claude_args {
         out.push(

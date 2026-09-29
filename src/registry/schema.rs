@@ -11,8 +11,6 @@ pub struct Registry {
     pub projects: Vec<ProjectEntry>,
     #[serde(default)]
     pub agents: BTreeMap<String, AgentSpec>,
-    #[serde(default, rename = "fallback_policy")]
-    pub spawn_policy: SpawnPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,30 +64,6 @@ impl Registry {
     }
 }
 
-/// Limits on an agent spawn. Stored under the historical key
-/// `fallback_policy` so existing registries keep their timeout; the fallback
-/// fields it once held (`max_retries`, `retryable_*`, …) are ignored.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpawnPolicy {
-    /// Per-spawn wall-clock timeout. Default 600s (10 min). Exceeded → the
-    /// agent's process tree is killed and exit code 124 is synthesized (GNU
-    /// timeout convention).
-    #[serde(default = "default_spawn_timeout_secs")]
-    pub spawn_timeout_secs: u64,
-}
-
-impl Default for SpawnPolicy {
-    fn default() -> Self {
-        Self {
-            spawn_timeout_secs: default_spawn_timeout_secs(),
-        }
-    }
-}
-
-fn default_spawn_timeout_secs() -> u64 {
-    600
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,21 +74,17 @@ mod tests {
         let y = serde_yaml::to_string(&r).unwrap();
         let back: Registry = serde_yaml::from_str(&y).unwrap();
         assert_eq!(back.projects.len(), 0);
-        assert_eq!(back.spawn_policy.spawn_timeout_secs, 600);
     }
 
+    /// `fallback_policy` is gone: an old registry still loads, and the key
+    /// is dropped on the next save.
     #[test]
-    fn a_registry_from_the_fallback_era_keeps_its_timeout() {
+    fn a_registry_from_the_fallback_era_still_loads() {
         let y = "projects: []\nagents: {}\nfallback_policy:\n  max_retries: 3\n  \
-                 retryable_exit_codes: [2]\n  spawn_timeout_secs: 90\n";
+                 spawn_timeout_secs: 90\n";
         let r: Registry = serde_yaml::from_str(y).unwrap();
-        assert_eq!(r.spawn_policy.spawn_timeout_secs, 90);
         let saved = serde_yaml::to_string(&r).unwrap();
-        assert!(
-            saved.contains("fallback_policy:\n  spawn_timeout_secs: 90"),
-            "{saved}"
-        );
-        assert!(!saved.contains("max_retries"), "{saved}");
+        assert!(!saved.contains("fallback_policy"), "{saved}");
     }
 
     #[test]

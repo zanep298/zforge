@@ -168,7 +168,7 @@ fn install_migrates_a_v1_store_once() {
         !reg.contains("max_retries") && !reg.contains("retryable"),
         "{reg}"
     );
-    assert!(reg.contains("spawn_timeout_secs: 900"), "{reg}");
+    assert!(!reg.contains("fallback_policy"), "{reg}");
     assert!(
         reg.contains("- stream-json\n") && reg.contains("- --verbose\n"),
         "the earlier claude default is upgraded: {reg}"

@@ -30,6 +30,9 @@ pub(crate) const EXECUTION_BLOCK: &str = "execution:
   # budget_usd: 5.0
   # Have an agent review passing work against its contract before it counts.
   # review: true
+  # Safety net for a hung agent call, in seconds; the budget should stop a
+  # working one first.
+  # agent_timeout_secs: 3600
 ";
 
 /// Template for a fresh config. Placeholders are filled by [`render_fresh`].

@@ -76,6 +76,12 @@ pub struct ExecutionConfig {
     /// is another agent call on the task's budget.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub review: bool,
+    /// Wall-clock limit on one agent call of a run. A safety net for a hung
+    /// agent: the budget (`--max-budget-usd`) is what should stop a working
+    /// one, because Claude then reports what it spent — a call zforge kills
+    /// counts its whole allotment.
+    #[serde(default = "default_agent_timeout_secs")]
+    pub agent_timeout_secs: u64,
 }
 
 impl Default for ExecutionConfig {
@@ -85,8 +91,15 @@ impl Default for ExecutionConfig {
             budget_usd: None,
             protected_tests: None,
             review: false,
+            agent_timeout_secs: default_agent_timeout_secs(),
         }
     }
+}
+
+/// One hour. A coding call on a real task routinely passes the ten minutes
+/// that once applied to every spawn.
+fn default_agent_timeout_secs() -> u64 {
+    3600
 }
 
 fn default_max_iterations() -> u32 {
@@ -434,6 +447,7 @@ mod tests {
         assert_eq!(cfg.project.test_command, "cargo test");
         assert_eq!(cfg.execution.max_iterations, 3);
         assert_eq!(cfg.execution.budget_usd, None);
+        assert_eq!(cfg.execution.agent_timeout_secs, 3600);
     }
 
     /// Keys of the removed task pipeline (`opencode`, `review`,
