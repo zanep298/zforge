@@ -261,6 +261,16 @@ struct FileView {
     issues: Vec<lint::Issue>,
 }
 
+/// `zforge onboard status`'s full view: each file, plus every stale and
+/// moved citation among the accepted files (ONBOARD REQ-009, TASK-004,
+/// Output: "onboard status lists stale items and moved citations").
+#[derive(serde::Serialize)]
+struct StatusView {
+    files: Vec<FileView>,
+    stale: Vec<crate::knowledge::stale::StaleItem>,
+    moved: Vec<crate::knowledge::stale::Moved>,
+}
+
 fn status(k: &Knowledge, json: bool) -> Result<()> {
     let views: Vec<FileView> = knowledge::statuses(k)?
         .into_iter()
@@ -273,8 +283,14 @@ fn status(k: &Knowledge, json: bool) -> Result<()> {
             }
         })
         .collect();
+    let stale_report = knowledge::stale::check(k)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&views)?);
+        let view = StatusView {
+            files: views,
+            stale: stale_report.stale,
+            moved: stale_report.moved,
+        };
+        println!("{}", serde_json::to_string_pretty(&view)?);
         return Ok(());
     }
     println!("{}  ({})", "knowledge".bold(), k.dir.display());
@@ -308,5 +324,36 @@ fn status(k: &Knowledge, json: bool) -> Result<()> {
             println!("      {mark} {}", issue.message);
         }
     }
+    if !stale_report.stale.is_empty() {
+        println!("{}", "stale:".bold());
+        for s in &stale_report.stale {
+            let reason = match s.reason {
+                crate::knowledge::stale::Reason::Changed => "changed",
+                crate::knowledge::stale::Reason::Gone => "gone",
+            };
+            println!("  {} {}: {} — {reason}", s.id, s.file, cite_label(&s.cite));
+        }
+    }
+    if !stale_report.moved.is_empty() {
+        println!("{}", "moved:".bold());
+        for m in &stale_report.moved {
+            println!(
+                "  {} {}: {} → {}-{}",
+                m.id,
+                m.file,
+                cite_label(&m.cite),
+                m.new_start,
+                m.new_end
+            );
+        }
+    }
     Ok(())
+}
+
+fn cite_label(cite: &crate::knowledge::items::Cite) -> String {
+    if cite.start == cite.end {
+        format!("{}:{}", cite.path, cite.start)
+    } else {
+        format!("{}:{}-{}", cite.path, cite.start, cite.end)
+    }
 }

@@ -14,6 +14,7 @@ pub mod items;
 pub mod known;
 pub mod lint;
 pub mod probe;
+pub mod stale;
 
 use crate::config::Config;
 use crate::intake::lint::{self as intake_lint, Issue, Severity};

@@ -24,6 +24,25 @@ fn onboarding_line(o: &OnboardingStatus) -> String {
     }
 }
 
+/// `knowledge: N item(s) stale — DOM-004 (domain.md), ...` (ONBOARD
+/// REQ-009, TASK-004, Output) — `None` while nothing is stale.
+fn stale_line(o: &OnboardingStatus) -> Option<String> {
+    if o.stale.is_empty() {
+        return None;
+    }
+    let noun = if o.stale.len() == 1 { "item" } else { "items" };
+    let named: Vec<String> = o
+        .stale
+        .iter()
+        .map(|s| format!("{} ({})", s.id, s.file))
+        .collect();
+    Some(format!(
+        "knowledge: {} {noun} stale — {}",
+        o.stale.len(),
+        named.join(", ")
+    ))
+}
+
 pub fn run(json: bool) -> Result<()> {
     let config = crate::config::load()?;
     let s = status::project(&config.project_root())?;
@@ -35,6 +54,9 @@ pub fn run(json: bool) -> Result<()> {
         println!("{}", MIGRATE_HINT.yellow());
     }
     println!("{} {}", "project:".bold(), onboarding_line(&s.onboarding));
+    if let Some(line) = stale_line(&s.onboarding) {
+        println!("{}", line.yellow());
+    }
     if s.intakes.is_empty() {
         println!("No intake yet. Start one: `zforge intake new <ID>`");
         return Ok(());
@@ -68,6 +90,9 @@ pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
                     println!("  {}", MIGRATE_HINT.yellow());
                 }
                 println!("  {}", onboarding_line(onboarding));
+                if let Some(line) = stale_line(onboarding) {
+                    println!("  {}", line.yellow());
+                }
                 if intakes.is_empty() {
                     println!("  no intake");
                 }

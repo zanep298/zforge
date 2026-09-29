@@ -16,7 +16,7 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 /// One `path:line` or `path:start-end` citation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Cite {
     pub path: String,
     pub start: u32,

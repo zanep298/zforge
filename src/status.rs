@@ -25,15 +25,28 @@ pub struct ProjectStatus {
     pub intakes: Vec<IntakeStatus>,
 }
 
+/// One stale citation, named for `zforge status`'s `knowledge: N items
+/// stale — …` line (ONBOARD REQ-009, TASK-004): which item, and which
+/// knowledge file it is in.
+#[derive(Debug, Clone, Serialize)]
+pub struct StaleKnowledge {
+    pub id: String,
+    pub file: String,
+}
+
 /// `zforge status`'s view of `crate::onboard::OnboardState`: just enough
 /// to print a line and, while the project is not onboarded, to point at
-/// `zforge onboard` (Output, AC-06).
+/// `zforge onboard` (Output, AC-06). `stale` is filled in separately by
+/// [`onboarding_status`] — deriving it needs the knowledge document set,
+/// not just `OnboardState` (ONBOARD TASK-004).
 #[derive(Debug, Clone, Serialize)]
 pub struct OnboardingStatus {
     pub onboarded: bool,
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stale: Vec<StaleKnowledge>,
 }
 
 impl From<crate::onboard::OnboardState> for OnboardingStatus {
@@ -70,20 +83,42 @@ impl From<crate::onboard::OnboardState> for OnboardingStatus {
             onboarded: s.onboarded,
             summary,
             next,
+            stale: Vec::new(),
         }
     }
 }
 
 fn onboarding_status(project_root: &Path) -> OnboardingStatus {
     let config_path = project_root.join(".zforge").join("config.yaml");
-    match crate::config::load_from(&config_path).and_then(|c| crate::onboard::state(&c)) {
+    let Ok(config) = crate::config::load_from(&config_path) else {
+        return OnboardingStatus {
+            onboarded: false,
+            summary: "not onboarded".to_string(),
+            next: Some("zforge onboard".to_string()),
+            stale: Vec::new(),
+        };
+    };
+    let mut s: OnboardingStatus = match crate::onboard::state(&config) {
         Ok(s) => s.into(),
         Err(_) => OnboardingStatus {
             onboarded: false,
             summary: "not onboarded".to_string(),
             next: Some("zforge onboard".to_string()),
+            stale: Vec::new(),
         },
+    };
+    let k = crate::knowledge::Knowledge::open(&config);
+    if let Ok(report) = crate::knowledge::stale::check(&k) {
+        s.stale = report
+            .stale
+            .into_iter()
+            .map(|i| StaleKnowledge {
+                id: i.id,
+                file: i.file,
+            })
+            .collect();
     }
+    s
 }
 
 #[derive(Debug, Clone, Serialize)]
