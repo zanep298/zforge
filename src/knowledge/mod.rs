@@ -18,7 +18,10 @@ pub mod probe;
 pub mod stale;
 
 use crate::config::Config;
+use crate::intake::hash;
 use crate::intake::lint::{self as intake_lint, Issue, Severity};
+use crate::intake::readiness::Pinned;
+use crate::intake::record;
 use crate::intake::review as intake_review;
 use crate::intake::status::{DocStatus, Rev};
 use anyhow::{bail, Context, Result};
@@ -192,6 +195,32 @@ pub fn revise(k: &Knowledge, rel: &str, by: Option<String>, note: &str) -> Resul
     intake_review::revise(k, rel, by, note)
 }
 
+/// Read the knowledge snapshots a handover pinned (ONBOARD TASK-006),
+/// verifying each one's hash against what was pinned. Anything reading a
+/// handover's knowledge — a run, later — must go through this rather than
+/// `record::read_snapshot` directly: a snapshot altered since the handover
+/// (a hand edit of `.records/`, corruption) is refused, naming the file
+/// (AC-02), the same guarantee `run::contract` already gives intake files.
+pub fn read_pinned(k: &Knowledge, pinned: &[Pinned]) -> Result<Vec<(String, String)>> {
+    pinned
+        .iter()
+        .map(|p| {
+            let text = record::read_snapshot(k, &p.file, p.revision).with_context(|| {
+                format!("read pinned knowledge {} revision {}", p.file, p.revision)
+            })?;
+            if hash::sha256(&text) != p.sha256 {
+                bail!(
+                    "{}: pinned knowledge snapshot has changed since the handover \
+                     (hash mismatch on revision {})",
+                    p.file,
+                    p.revision
+                );
+            }
+            Ok((p.file.clone(), text))
+        })
+        .collect()
+}
+
 /// Add the union-merge line for `<dir>/.records/decisions.jsonl` to
 /// `.gitattributes` at the repository root, once, leaving the rest of the
 /// file as it was (Output).
@@ -321,6 +350,41 @@ mod tests {
         for f in FILES {
             assert!(validate_file(f).is_ok());
         }
+    }
+
+    /// AC-02: a pinned snapshot altered after the handover is refused,
+    /// naming the file — the fresh snapshot reads back exactly as accepted.
+    #[test]
+    fn read_pinned_refuses_a_snapshot_altered_since_the_handover() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        let k = knowledge(tmp.path());
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(k.dir.join("domain.md"), DOMAIN_TEXT).unwrap();
+        review(tmp.path(), &k, "domain.md").unwrap();
+        let rev = accept(&k, "domain.md", None).unwrap();
+        let pinned = vec![crate::intake::readiness::Pinned {
+            file: "domain.md".into(),
+            revision: rev.revision,
+            sha256: rev.sha256.clone(),
+        }];
+
+        let read = read_pinned(&k, &pinned).unwrap();
+        assert_eq!(
+            read,
+            vec![("domain.md".to_string(), DOMAIN_TEXT.to_string())]
+        );
+
+        let snapshot = k
+            .dir
+            .join(".records")
+            .join("revisions")
+            .join("domain.md")
+            .join(format!("{}.md", rev.revision));
+        std::fs::write(&snapshot, "tampered after the handover").unwrap();
+
+        let err = read_pinned(&k, &pinned).unwrap_err().to_string();
+        assert!(err.contains("domain.md"), "{err}");
     }
 
     /// The actual terminal check lives upstream in `cli::onboard::decide`

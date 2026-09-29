@@ -26,6 +26,8 @@ pub struct Config {
     pub knowledge: KnowledgeConfig,
     #[serde(default)]
     pub execution: ExecutionConfig,
+    #[serde(default)]
+    pub onboarding: OnboardingConfig,
 
     #[serde(skip)]
     pub config_file: PathBuf,
@@ -111,6 +113,16 @@ impl Default for ExecutionConfig {
 /// that once applied to every spawn.
 fn default_agent_timeout_secs() -> u64 {
     3600
+}
+
+/// Whether the project's own gaps (ONBOARD REQ-010) — not onboarded, a
+/// stale knowledge item, a baseline not green or known — block a handover
+/// instead of only warning. Off by default: a project that has never
+/// onboarded still reaches handover, as it always could.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct OnboardingConfig {
+    #[serde(default)]
+    pub required: bool,
 }
 
 fn default_max_iterations() -> u32 {

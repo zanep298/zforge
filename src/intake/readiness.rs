@@ -349,6 +349,27 @@ impl Readiness {
         self.checks.push(c);
         self
     }
+
+    /// Add the project's own readiness (ONBOARD REQ-010): its knowledge
+    /// onboarded, no stale citation, baseline green or its failures known.
+    /// A gap warns by default and does not affect [`Readiness::ready`];
+    /// `onboarding.required: true` turns every gap into an ordinary
+    /// failing check instead, so it blocks a handover like any other.
+    pub fn with_project(self, config: &Config) -> Self {
+        let gaps = crate::onboard::readiness_gaps(config);
+        if config.onboarding.required {
+            let ok = gaps.is_empty();
+            self.with(Check {
+                name: "project onboarding",
+                ok,
+                problems: gaps,
+            })
+        } else {
+            let mut r = self;
+            r.warnings.extend(gaps);
+            r
+        }
+    }
 }
 
 /// The runner a run needs, as this machine has it: registered for the
@@ -535,5 +556,129 @@ mod tests {
             problems,
             ["T1 depends on T3, which is outside the handover scope"]
         );
+    }
+
+    fn init_repo(dir: &Path) {
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@t"]);
+        run(&["config", "user.name", "t"]);
+    }
+
+    fn commit_all(dir: &Path) {
+        for args in [
+            vec!["add", "-A"],
+            vec!["commit", "-q", "--allow-empty", "-m", "c"],
+        ] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+        }
+    }
+
+    fn config_at(root: &Path, onboarding_required: bool) -> Config {
+        let extra = if onboarding_required {
+            "onboarding:\n  required: true\n"
+        } else {
+            ""
+        };
+        let yaml = format!(
+            "project:\n  name: p\n  language: shell\n  test_command: \"true\"\n\
+             execution:\n  budget_usd: 1.0\n{extra}"
+        );
+        let mut cfg: Config = serde_yaml::from_str(&yaml).unwrap();
+        cfg.config_file = root.join(".zforge").join("config.yaml");
+        cfg
+    }
+
+    /// A minimal intake, accepted top to bottom, with one task serving its
+    /// one requirement — just enough for `check` to be ready on its own.
+    fn accept_intake(root: &Path) -> Intake {
+        let i = crate::intake::review::create(root, "F").unwrap();
+        std::fs::write(
+            i.dir.join("01-outcome.md"),
+            "# F — Outcome\n\n## Requirements\n\n- REQ-001: does a thing\n\n## Open questions\n",
+        )
+        .unwrap();
+        std::fs::write(
+            i.dir.join("02-behavior.md"),
+            "# F — Behavior\n\n## Situations\n\nREQ-001: it happens.\n\n## Open questions\n",
+        )
+        .unwrap();
+        std::fs::write(
+            i.dir.join("03-solution.md"),
+            "# F — Solution\n\n## Flow\n\nDoes the thing.\n\n## Open questions\n",
+        )
+        .unwrap();
+        std::fs::write(
+            i.dir.join("04-breakdown.md"),
+            "# F — Breakdown\n\n## Tasks\n\nTASK-001.\n\n\
+             ## Integration verification\n\nsh test.sh\n\n## Open questions\n",
+        )
+        .unwrap();
+        std::fs::write(
+            i.dir.join("tasks/TASK-001.md"),
+            "---\nid: TASK-001\nparent: F\nrequirements: [REQ-001]\ndepends_on: []\n---\n\n\
+             # TASK-001\n\n## Goal\nDo it.\n\n## Input\nx.\n\n## Output\ny.\n\n\
+             ## Constraints\nz.\n\n## Autonomy\nw.\n\n\
+             ## Acceptance and verification\n- AC-01: ok\n\n## Delivery\nLocal.\n\n\
+             ## Amend the contract when\nNever.\n\n## Open questions\n",
+        )
+        .unwrap();
+        for f in i.files() {
+            crate::intake::review::review(&i, &f).unwrap();
+            crate::intake::review::accept(&i, &f, None).unwrap();
+        }
+        i
+    }
+
+    /// AC-03: a project that never onboarded still hands over — the gap
+    /// is a warning, and readiness stays ready.
+    #[test]
+    fn with_project_warns_by_default_when_not_onboarded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+        commit_all(root);
+        let cfg = config_at(root, false);
+        let i = accept_intake(root);
+
+        let r = check(&i, root, &[], &cfg).unwrap().with_project(&cfg);
+        assert!(r.ready, "{:?}", r.checks);
+        assert!(
+            r.warnings.iter().any(|w| w.contains("domain.md")),
+            "{:?}",
+            r.warnings
+        );
+    }
+
+    /// AC-04: `onboarding.required: true` turns the same gap into a
+    /// failing check, so readiness — and a handover — refuses.
+    #[test]
+    fn with_project_blocks_when_onboarding_required() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+        commit_all(root);
+        let cfg = config_at(root, true);
+        let i = accept_intake(root);
+
+        let r = check(&i, root, &[], &cfg).unwrap().with_project(&cfg);
+        assert!(!r.ready, "{:?}", r.checks);
+        let project = r
+            .checks
+            .iter()
+            .find(|c| c.name == "project onboarding")
+            .unwrap();
+        assert!(!project.ok, "{:?}", project.problems);
+        assert!(!project.problems.is_empty());
     }
 }

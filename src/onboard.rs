@@ -73,6 +73,70 @@ pub fn state(config: &Config) -> Result<OnboardState> {
     })
 }
 
+/// Gaps in the project's own readiness (ONBOARD REQ-010, TASK-006): every
+/// knowledge file not accepted, a baseline never probed or red with an
+/// unknown failure, and every stale citation, named by its item ID
+/// (AC-05). Pure text — `intake::readiness::Readiness::with_project`
+/// decides whether a gap warns or blocks a handover
+/// (`onboarding.required`). Never errors: a project that never onboarded
+/// just has more gaps to report ([`state`]'s own guarantee).
+pub fn readiness_gaps(config: &Config) -> Vec<String> {
+    let k = Knowledge::open(config);
+    let mut gaps = Vec::new();
+    match state(config) {
+        Ok(s) => {
+            for f in &s.files {
+                if f.state != DocState::Accepted {
+                    gaps.push(format!(
+                        "{} is not accepted ({}); see `zforge onboard`",
+                        f.file,
+                        f.state.as_str()
+                    ));
+                }
+            }
+            match (s.baseline.result, &s.baseline.reason) {
+                (None, _) => gaps.push(
+                    "the project's baseline test run has never been probed (`zforge onboard`)"
+                        .to_string(),
+                ),
+                (Some(true), _) => {}
+                (Some(false), Some(reason)) => {
+                    gaps.push(format!("the baseline test run failed to run: {reason}"))
+                }
+                (Some(false), None) => {
+                    let unknown: Vec<&str> = s
+                        .baseline
+                        .failing
+                        .iter()
+                        .filter(|t| !s.baseline.known.contains(t))
+                        .map(String::as_str)
+                        .collect();
+                    if !unknown.is_empty() {
+                        gaps.push(format!(
+                            "the baseline has unknown failing test(s): {}",
+                            unknown.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+        Err(e) => gaps.push(format!("cannot read the project's knowledge: {e:#}")),
+    }
+    if let Ok(report) = knowledge::stale::check(&k) {
+        for item in report.stale {
+            let reason = match item.reason {
+                knowledge::stale::Reason::Changed => "changed",
+                knowledge::stale::Reason::Gone => "gone",
+            };
+            gaps.push(format!(
+                "{}: {} is stale ({reason} at {}:{}-{})",
+                item.file, item.id, item.cite.path, item.cite.start, item.cite.end
+            ));
+        }
+    }
+    gaps
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +237,7 @@ mod tests {
             runner: Default::default(),
             knowledge: Default::default(),
             execution: Default::default(),
+            onboarding: Default::default(),
             config_file: tmp.path().join(".zforge").join("config.yaml"),
         };
 
@@ -189,5 +254,70 @@ mod tests {
         known::record_known(&k, &["TestA".to_string()], None).unwrap();
         let s = state(&cfg).unwrap();
         assert!(s.onboarded, "TestA is now known: {s:?}");
+    }
+
+    /// AC-03: a project that was never probed or onboarded gets a gap per
+    /// unaccepted knowledge file plus one for the baseline, not an error.
+    #[test]
+    fn readiness_gaps_lists_unaccepted_files_and_the_unprobed_baseline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = config_at(tmp.path());
+
+        let gaps = readiness_gaps(&cfg);
+        for f in crate::knowledge::FILES {
+            assert!(gaps.iter().any(|g| g.contains(f)), "{f}: {gaps:?}");
+        }
+        assert!(
+            gaps.iter().any(|g| g.contains("never been probed")),
+            "{gaps:?}"
+        );
+    }
+
+    fn head(dir: &std::path::Path) -> String {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(dir)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string()
+    }
+
+    /// AC-05: a stale item shows up in the gaps by its own ID, not just a
+    /// generic "knowledge is stale" line.
+    #[test]
+    fn readiness_gaps_names_a_stale_item_by_its_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+        std::fs::write(root.join("x.rs"), "line1\nline2\nline3\n").unwrap();
+        commit_all(root);
+        let pinned = head(root);
+        let cfg = config_at(root);
+        let k = Knowledge::open(&cfg);
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(
+            k.dir.join("domain.md"),
+            format!(
+                "---\npinned: {pinned}\n---\n## m\n- DOM-001: a thing happens. (x.rs:2)\n\n## Open questions\n"
+            ),
+        )
+        .unwrap();
+        crate::intake::review::review(&k, "domain.md").unwrap();
+        crate::intake::review::accept(&k, "domain.md", None).unwrap();
+
+        std::fs::write(root.join("x.rs"), "line1\nchanged\nline3\n").unwrap();
+        commit_all(root);
+
+        let gaps = readiness_gaps(&cfg);
+        assert!(
+            gaps.iter()
+                .any(|g| g.contains("DOM-001") && g.contains("domain.md")),
+            "{gaps:?}"
+        );
     }
 }

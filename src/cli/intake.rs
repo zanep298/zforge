@@ -213,7 +213,8 @@ pub fn readiness(id: &str, tasks: &[String], json: bool) -> Result<()> {
     let root = config.project_root();
     let i = Intake::open(&root, id)?;
     let r = crate::intake::readiness::check(&i, &root, tasks, &config)?
-        .with(crate::intake::readiness::runtime(&root));
+        .with(crate::intake::readiness::runtime(&root))
+        .with_project(&config);
     let view = crate::intake::readiness::render(&r);
     crate::fs::write_atomic(&i.dir.join("readiness.md"), view.as_bytes())?;
     if json {
@@ -240,7 +241,8 @@ pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
     let root = config.project_root();
     let i = Intake::open(&root, id)?;
     let r = crate::intake::readiness::check(&i, &root, tasks, &config)?
-        .with(crate::intake::readiness::runtime(&root));
+        .with(crate::intake::readiness::runtime(&root))
+        .with_project(&config);
     if !r.ready {
         print!("{}", crate::intake::readiness::render(&r));
         bail!("{id} is not ready to hand over");

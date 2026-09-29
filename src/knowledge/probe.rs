@@ -412,6 +412,7 @@ mod tests {
             runner: Default::default(),
             knowledge: Default::default(),
             execution: Default::default(),
+            onboarding: Default::default(),
             config_file: root.join(".zforge").join("config.yaml"),
         }
     }

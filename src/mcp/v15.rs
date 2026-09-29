@@ -182,7 +182,8 @@ fn readiness_report(args: &Value) -> Result<String> {
     let i = Intake::open(&root, &str_arg(args, "intake_id")?)?;
     let config = config::load().map_err(|_| anyhow!("config not found — run: zf init"))?;
     let r = readiness::check(&i, &root, &string_list(args, "tasks"), &config)?
-        .with(readiness::runtime(&root));
+        .with(readiness::runtime(&root))
+        .with_project(&config);
     Ok(serde_json::to_string_pretty(&r)?)
 }
 

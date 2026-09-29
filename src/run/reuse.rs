@@ -177,6 +177,8 @@ mod tests {
                 by: None,
                 tasks,
                 files: Vec::<Pinned>::new(),
+                knowledge: Vec::new(),
+                known_failures: Vec::new(),
                 baseline: Baseline {
                     branch: "main".into(),
                     commit: baseline.into(),
