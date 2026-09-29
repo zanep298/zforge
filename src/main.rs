@@ -155,12 +155,13 @@ enum Commands {
         #[command(subcommand)]
         cmd: KnowledgeCmd,
     },
-    /// The project's own knowledge (domain, conventions, rules): review,
-    /// accept and revise it the same way an intake file is. `accept` /
-    /// `revise` need an interactive terminal.
+    /// Probe the project (no model) and review the project's own knowledge
+    /// (domain, conventions, rules) the same way an intake file is. Bare
+    /// `zforge onboard` probes and records `baseline.md`. `accept`,
+    /// `revise` and `baseline` need an interactive terminal.
     Onboard {
         #[command(subcommand)]
-        cmd: crate::cli::onboard::OnboardCmd,
+        cmd: Option<crate::cli::onboard::OnboardCmd>,
     },
 }
 

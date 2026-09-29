@@ -96,6 +96,11 @@ pub fn derive(file: &str, log: &[Decision], current: Option<&str>) -> DocStatus 
                 in_review = None;
                 revision_note = Some(d.note.clone());
             }
+            // Not a file review decision (ONBOARD TASK-003) — `file` here
+            // is never one of a document set's reviewable files, so this
+            // is unreachable in practice; still handled so the match stays
+            // exhaustive without a wildcard on a business-critical enum.
+            DecisionKind::BaselineKnown => {}
         }
     }
 

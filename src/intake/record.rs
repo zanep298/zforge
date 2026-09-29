@@ -25,6 +25,13 @@ pub enum DecisionKind {
     Accepted,
     /// The user asked for changes to the revision under review.
     NeedsRevision,
+    /// The user recorded (or cleared) the baseline's known-failure list at
+    /// a terminal (ONBOARD TASK-003, business rule 8). Not bound to a
+    /// reviewable file's revision/hash like the other three kinds — `file`
+    /// names a stable key (`knowledge::known::KEY`), `note` the
+    /// comma-separated test names (empty for a clear), `revision` an
+    /// incrementing counter of these decisions only.
+    BaselineKnown,
 }
 
 impl DecisionKind {
@@ -33,6 +40,7 @@ impl DecisionKind {
             Self::Review => "review",
             Self::Accepted => "accepted",
             Self::NeedsRevision => "needs_revision",
+            Self::BaselineKnown => "baseline_known",
         }
     }
 }

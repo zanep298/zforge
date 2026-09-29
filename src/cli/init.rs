@@ -314,7 +314,59 @@ pub fn run_for(targets: &[&'static str], opts: InitOptions) -> Result<()> {
         register_project(&cwd, &targets, opts.name.as_deref(), opts.switch);
     }
 
+    // ONBOARD REQ-001: init stays fast, repeatable and model-free — this
+    // only offers, and only when a human is actually at the terminal to
+    // answer. `--force` (also how `migrate` refreshes clients) and any
+    // non-interactive invocation never ask (Output, AC-07).
+    if !force {
+        offer_onboarding(&cwd);
+    }
+
     Ok(())
+}
+
+/// `Onboard now? [Y/n]` — skipped entirely without both stdin and stdout
+/// attached to a real terminal, so a script or an agent driving `zforge
+/// init` never blocks on it and never triggers a probe by surprise.
+fn offer_onboarding(cwd: &Path) {
+    use std::io::IsTerminal;
+    if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+        return;
+    }
+    print!("\nOnboard now? [Y/n] ");
+    if io::stdout().flush().is_err() {
+        return;
+    }
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return;
+    }
+    let answer = input.trim().to_ascii_lowercase();
+    if answer == "n" || answer == "no" {
+        return;
+    }
+    let config = match crate::config::load_from(&cwd.join(".zforge").join("config.yaml")) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{} could not load config to onboard: {e:#}", "⚠".yellow());
+            return;
+        }
+    };
+    match crate::knowledge::probe::run(&config) {
+        Ok(report) => {
+            println!(
+                "{} probed the project ({})",
+                "✓".green(),
+                if report.baseline.result {
+                    "baseline green".to_string()
+                } else {
+                    "baseline red — see `zforge onboard`".to_string()
+                }
+            );
+            println!("  next: draft the knowledge, then `zforge onboard review <file>`");
+        }
+        Err(e) => eprintln!("{} onboarding probe failed: {e:#}", "⚠".yellow()),
+    }
 }
 
 /// Seed registry rows for exactly the clients scaffolded — before FIX-015

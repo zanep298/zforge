@@ -19,7 +19,71 @@ pub struct ProjectStatus {
     /// `zforge migrate` moves them.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub needs_migration: bool,
+    /// Whether the project's own knowledge is onboarded (ONBOARD REQ-001):
+    /// shown above the intakes, since it applies to the whole project.
+    pub onboarding: OnboardingStatus,
     pub intakes: Vec<IntakeStatus>,
+}
+
+/// `zforge status`'s view of `crate::onboard::OnboardState`: just enough
+/// to print a line and, while the project is not onboarded, to point at
+/// `zforge onboard` (Output, AC-06).
+#[derive(Debug, Clone, Serialize)]
+pub struct OnboardingStatus {
+    pub onboarded: bool,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+impl From<crate::onboard::OnboardState> for OnboardingStatus {
+    fn from(s: crate::onboard::OnboardState) -> Self {
+        let accepted = s
+            .files
+            .iter()
+            .filter(|f| f.state == DocState::Accepted)
+            .count();
+        let total = s.files.len();
+        let baseline_bit = match (s.baseline.result, &s.baseline.reason) {
+            (None, _) => "baseline not probed yet".to_string(),
+            (Some(true), _) => "baseline green".to_string(),
+            (Some(false), Some(reason)) => format!("baseline red: {reason}"),
+            (Some(false), None) => {
+                let unknown = s
+                    .baseline
+                    .failing
+                    .iter()
+                    .filter(|t| !s.baseline.known.contains(t))
+                    .count();
+                if s.baseline.failing.is_empty() {
+                    "baseline red".to_string()
+                } else if unknown == 0 {
+                    format!("baseline red, {} known", s.baseline.failing.len())
+                } else {
+                    format!("baseline red, {unknown} unknown failure(s)")
+                }
+            }
+        };
+        let summary = format!("{accepted}/{total} knowledge files accepted, {baseline_bit}");
+        let next = (!s.onboarded).then(|| "zforge onboard".to_string());
+        Self {
+            onboarded: s.onboarded,
+            summary,
+            next,
+        }
+    }
+}
+
+fn onboarding_status(project_root: &Path) -> OnboardingStatus {
+    let config_path = project_root.join(".zforge").join("config.yaml");
+    match crate::config::load_from(&config_path).and_then(|c| crate::onboard::state(&c)) {
+        Ok(s) => s.into(),
+        Err(_) => OnboardingStatus {
+            onboarded: false,
+            summary: "not onboarded".to_string(),
+            next: Some("zforge onboard".to_string()),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,6 +118,7 @@ pub fn project(project_root: &Path) -> Result<ProjectStatus> {
     Ok(ProjectStatus {
         root: project_root.to_path_buf(),
         needs_migration: crate::migrate::project::needs_migration(project_root),
+        onboarding: onboarding_status(project_root),
         intakes,
     })
 }
@@ -207,6 +272,7 @@ pub enum GlobalResult {
     Ok {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         needs_migration: bool,
+        onboarding: OnboardingStatus,
         intakes: Vec<IntakeStatus>,
     },
     Skipped {
@@ -239,6 +305,7 @@ pub fn global(timeout: Duration) -> Result<Vec<GlobalRow>> {
             let result = match rx.recv_timeout(left) {
                 Ok(Ok(s)) => GlobalResult::Ok {
                     needs_migration: s.needs_migration,
+                    onboarding: s.onboarding,
                     intakes: s.intakes,
                 },
                 Ok(Err(e)) => GlobalResult::Skipped {

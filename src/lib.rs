@@ -8,6 +8,7 @@ pub mod knowledge;
 pub mod lock;
 pub mod mcp;
 pub mod migrate;
+pub mod onboard;
 pub mod orchestrator;
 pub mod process;
 pub mod registry;

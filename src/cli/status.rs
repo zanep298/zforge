@@ -2,13 +2,27 @@
 //! every registered project) — its files, handovers, runs — and the next
 //! step. The data comes from `crate::status`.
 
-use crate::status::{self, GlobalResult, IntakeStatus};
+use crate::status::{self, GlobalResult, IntakeStatus, OnboardingStatus};
 use anyhow::Result;
 use colored::Colorize;
 use std::time::Duration;
 
 const MIGRATE_HINT: &str =
     "task-pipeline files left — run `zforge migrate` in the project to move to v1.5";
+
+/// `<summary> — next: zforge onboard` while not onboarded, else just the
+/// summary (Output, AC-06).
+fn onboarding_line(o: &OnboardingStatus) -> String {
+    let summary = if o.onboarded {
+        o.summary.green()
+    } else {
+        o.summary.yellow()
+    };
+    match &o.next {
+        Some(next) => format!("{summary} — next: {}", next.cyan()),
+        None => summary.to_string(),
+    }
+}
 
 pub fn run(json: bool) -> Result<()> {
     let config = crate::config::load()?;
@@ -20,6 +34,7 @@ pub fn run(json: bool) -> Result<()> {
     if s.needs_migration {
         println!("{}", MIGRATE_HINT.yellow());
     }
+    println!("{} {}", "project:".bold(), onboarding_line(&s.onboarding));
     if s.intakes.is_empty() {
         println!("No intake yet. Start one: `zforge intake new <ID>`");
         return Ok(());
@@ -46,11 +61,13 @@ pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
             GlobalResult::Skipped { reason } => println!("  {} {reason}", "skipped:".yellow()),
             GlobalResult::Ok {
                 needs_migration,
+                onboarding,
                 intakes,
             } => {
                 if *needs_migration {
                     println!("  {}", MIGRATE_HINT.yellow());
                 }
+                println!("  {}", onboarding_line(onboarding));
                 if intakes.is_empty() {
                     println!("  no intake");
                 }

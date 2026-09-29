@@ -8,8 +8,8 @@ use crate::config;
 use crate::intake::hash;
 use crate::intake::lint;
 use crate::intake::status::DocState;
-use crate::knowledge::{self, Knowledge};
-use anyhow::{anyhow, Result};
+use crate::knowledge::{self, known, probe, Knowledge};
+use anyhow::{anyhow, bail, Result};
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -31,18 +31,163 @@ pub enum OnboardCmd {
         #[arg(long)]
         note: String,
     },
+    /// Record or clear the baseline's known-failure list. Interactive
+    /// terminal only (D1).
+    Baseline {
+        /// Comma-separated test names to record as known failures.
+        /// Replaces the list in force; it does not add to it.
+        #[arg(long)]
+        known: Option<String>,
+        /// Clear the known-failure list.
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
-pub fn run(cmd: OnboardCmd) -> Result<()> {
+/// `cmd = None` is bare `zforge onboard`: probe the project (Output).
+pub fn run(cmd: Option<OnboardCmd>) -> Result<()> {
     let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
     let root = config.project_root();
     let k = Knowledge::open(&config);
     match cmd {
-        OnboardCmd::Status { json } => status(&k, json),
-        OnboardCmd::Review { file } => send_for_review(&root, &k, &file),
-        OnboardCmd::Accept { file } => decide(&k, &file, None),
-        OnboardCmd::Revise { file, note } => decide(&k, &file, Some(&note)),
+        None => run_probe(&config),
+        Some(OnboardCmd::Status { json }) => status(&k, json),
+        Some(OnboardCmd::Review { file }) => send_for_review(&root, &k, &file),
+        Some(OnboardCmd::Accept { file }) => decide(&k, &file, None),
+        Some(OnboardCmd::Revise { file, note }) => decide(&k, &file, Some(&note)),
+        Some(OnboardCmd::Baseline { known, clear }) => baseline(&k, known, clear),
     }
+}
+
+/// Probe the project (no model) and print what it found and the next
+/// step (Output). Refuses on an uncommitted working tree (AC-03); a red
+/// or missing test command is reported, not an error (AC-04).
+fn run_probe(config: &config::Config) -> Result<()> {
+    let report = probe::run(config)?;
+    for f in &report.created_files {
+        println!(
+            "{} docs/knowledge/{f} — created (draft it, then `zforge onboard review {f}`)",
+            "✓".green()
+        );
+    }
+    let b = &report.baseline;
+    println!(
+        "commit     {} ({}{})",
+        hash::short(&b.commit),
+        b.branch,
+        if b.clean { ", clean" } else { "" }
+    );
+    println!("language   {}; {}", b.language, b.toolchain);
+    println!(
+        "tracked    {} files, {} lines",
+        b.tracked_files, b.tracked_lines
+    );
+    println!(
+        "docs       {}",
+        if b.docs.is_empty() {
+            "none found".to_string()
+        } else {
+            b.docs.join(", ")
+        }
+    );
+    println!(
+        "codegraph  {}",
+        if b.codegraph {
+            "indexed"
+        } else {
+            "not indexed"
+        }
+    );
+    if b.result {
+        println!(
+            "{} baseline   {} → PASS in {:.1}s",
+            "✓".green(),
+            b.test_command,
+            b.duration_secs
+        );
+    } else if !b.failing.is_empty() {
+        println!(
+            "{} baseline   {} → FAIL in {:.1}s: {}",
+            "✗".red(),
+            b.test_command,
+            b.duration_secs,
+            b.failing.join(", ")
+        );
+    } else {
+        println!(
+            "{} baseline   {} → RED: {}",
+            "✗".red(),
+            b.test_command,
+            b.reason.as_deref().unwrap_or("unknown reason")
+        );
+    }
+    println!();
+    let state = crate::onboard::state(config)?;
+    if state.onboarded {
+        println!("{} onboarded", "✓".green());
+    } else {
+        println!(
+            "not onboarded yet — next: `zforge onboard status` or `zforge onboard review <file>`"
+        );
+        if !b.result && !b.failing.is_empty() {
+            let unknown: Vec<&String> = b
+                .failing
+                .iter()
+                .filter(|t| !state.baseline.known.contains(t))
+                .collect();
+            if !unknown.is_empty() {
+                println!(
+                    "  {} unrecorded failing test(s): {} — record with `zforge onboard baseline --known {}`",
+                    unknown.len(),
+                    unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+                    unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `zforge onboard baseline --known <tests>` / `--clear`. Interactive
+/// terminal and a typed confirmation, like `accept`/`revise` (D1).
+fn baseline(k: &Knowledge, known_arg: Option<String>, clear: bool) -> Result<()> {
+    match (&known_arg, clear) {
+        (Some(_), true) => bail!("pass either --known <tests> or --clear, not both"),
+        (None, false) => bail!("pass --known <tests> (comma-separated) or --clear"),
+        _ => {}
+    }
+    confirm::require_terminal("zforge onboard baseline")?;
+    let by = std::env::var("USER").ok().filter(|u| !u.is_empty());
+    if clear {
+        println!("{}", "CLEAR the known-failure list".bold());
+        confirm::type_to_confirm("clear")?;
+        known::clear(k, by)?;
+        println!("{} known-failure list cleared", "✓".green());
+    } else {
+        let tests: Vec<String> = known_arg
+            .as_deref()
+            .unwrap_or_default()
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if tests.is_empty() {
+            bail!("--known needs at least one test name");
+        }
+        println!(
+            "{} known-failure list: {}",
+            "RECORD".bold(),
+            tests.join(", ")
+        );
+        confirm::type_to_confirm("known")?;
+        let recorded = known::record_known(k, &tests, by)?;
+        println!(
+            "{} known-failure list is now: {}",
+            "✓".green(),
+            recorded.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn send_for_review(root: &std::path::Path, k: &Knowledge, rel: &str) -> Result<()> {

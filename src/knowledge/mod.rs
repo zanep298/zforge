@@ -11,7 +11,9 @@
 
 pub mod docs;
 pub mod items;
+pub mod known;
 pub mod lint;
+pub mod probe;
 
 use crate::config::Config;
 use crate::intake::lint::{self as intake_lint, Issue, Severity};
@@ -23,6 +25,11 @@ use std::path::{Path, PathBuf};
 
 /// The three files the user reviews and accepts.
 pub const FILES: [&str; 3] = ["domain.md", "conventions.md", "rules.md"];
+
+/// The probe's own file (ONBOARD TASK-003): generated, not reviewed, and
+/// not one of [`FILES`] — `zforge onboard review baseline.md` is refused
+/// like any other name outside the three.
+pub const BASELINE_FILE: &str = "baseline.md";
 
 /// The project's knowledge: `knowledge.dir` plus its `.records/`.
 #[derive(Debug, Clone)]
@@ -116,6 +123,37 @@ pub fn lint_issues(rel: &str, text: &str) -> Vec<Issue> {
         });
     }
     issues
+}
+
+/// Minimal starting content for a knowledge file the probe finds missing:
+/// just enough structure to be a valid, if empty, document — drafting the
+/// actual items is ONBOARD TASK-008's job, by hand or with `zforge onboard
+/// draft`.
+fn stub(rel: &str) -> String {
+    let title = match rel {
+        "domain.md" => "Domain",
+        "conventions.md" => "Conventions",
+        "rules.md" => "Rules",
+        _ => rel,
+    };
+    format!("# {title}\n\n<!-- Drafted by `zforge onboard draft`, or by hand. -->\n\n## Open questions\n")
+}
+
+/// Write each of [`FILES`] from its stub wherever it does not exist yet
+/// (Output: "creates the three knowledge files from templates when
+/// absent"). An existing file — hand-written or already drafted — is
+/// never touched. Returns the names actually created.
+pub fn ensure_files(k: &Knowledge) -> Result<Vec<String>> {
+    std::fs::create_dir_all(&k.dir)?;
+    let mut created = Vec::new();
+    for rel in FILES {
+        let path = k.dir.join(rel);
+        if !path.exists() {
+            crate::fs::write_atomic(&path, stub(rel).as_bytes())?;
+            created.push(rel.to_string());
+        }
+    }
+    Ok(created)
 }
 
 pub fn statuses(k: &Knowledge) -> Result<Vec<DocStatus>> {
