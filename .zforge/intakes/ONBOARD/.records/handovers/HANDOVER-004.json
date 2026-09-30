@@ -1,0 +1,100 @@
+{
+  "id": "HANDOVER-004",
+  "intake": "ONBOARD",
+  "created_at": "2026-09-29T08:07:50.784795Z",
+  "channel": "cli-tty",
+  "by": "zane",
+  "tasks": [
+    "TASK-001",
+    "TASK-010",
+    "TASK-002",
+    "TASK-003",
+    "TASK-004",
+    "TASK-005",
+    "TASK-006",
+    "TASK-007",
+    "TASK-008",
+    "TASK-009"
+  ],
+  "files": [
+    {
+      "file": "01-outcome.md",
+      "revision": 2,
+      "sha256": "ffd5e94e3de4122ebdc249d6f2b3c8425d4e495242a10d776db792b0897746ec"
+    },
+    {
+      "file": "02-behavior.md",
+      "revision": 2,
+      "sha256": "129f49a4ab30711951a717811980cdb7b42d02fdb4ffae24b3ab7dcd216f334f"
+    },
+    {
+      "file": "03-solution.md",
+      "revision": 3,
+      "sha256": "172d1b10d87c25769e688658297566e694849d686d428c720f4078a81d946044"
+    },
+    {
+      "file": "04-breakdown.md",
+      "revision": 1,
+      "sha256": "a933390b43d3571f25c522c6afd00ffa50284c62b0de60648d2e43a6ed67ea15"
+    },
+    {
+      "file": "tasks/TASK-001.md",
+      "revision": 1,
+      "sha256": "1edb7bb37b7239b07e3beb11bda31f65815b6fcb08ec2e6753a9944e350ca845"
+    },
+    {
+      "file": "tasks/TASK-002.md",
+      "revision": 2,
+      "sha256": "5643e4f0a810778469427a180573e50cddb39cce774be8ce68faef6c05f6aee3"
+    },
+    {
+      "file": "tasks/TASK-003.md",
+      "revision": 2,
+      "sha256": "3e69303194d48df2dec600177eb3c95bbc90de1d15227499fe785ad1c8ff5125"
+    },
+    {
+      "file": "tasks/TASK-004.md",
+      "revision": 2,
+      "sha256": "a6a51357be828b4c863a9366963d28c27388c46962afbddd1bc5dd307b05f5e8"
+    },
+    {
+      "file": "tasks/TASK-005.md",
+      "revision": 2,
+      "sha256": "4717c020461b80e949f4236dc25d405e7eb60f8ddc3291ba6ba741bd153ebe08"
+    },
+    {
+      "file": "tasks/TASK-006.md",
+      "revision": 2,
+      "sha256": "08a302766ab5d9fbf3ce37bc54e9022ead31c440d52733dbdc17309f5e6687c6"
+    },
+    {
+      "file": "tasks/TASK-007.md",
+      "revision": 2,
+      "sha256": "d983e8a671e3b8c8f7a80eaedc2339560c3ad8066bfcb178c10670dfea6497a3"
+    },
+    {
+      "file": "tasks/TASK-008.md",
+      "revision": 2,
+      "sha256": "6e5b34faaf51680d189d9326d88fc8f94b61acfbc72e5203e3a3da87d145b62b"
+    },
+    {
+      "file": "tasks/TASK-009.md",
+      "revision": 2,
+      "sha256": "fea26b651831fc3a5225e43c8432cb051e8dbdf846de13a4617ddd31b9e350ab"
+    },
+    {
+      "file": "tasks/TASK-010.md",
+      "revision": 1,
+      "sha256": "d9a2bcabb33ff05a3ce96d613c58753d78c383a1f5560aa0630761de502d5830"
+    }
+  ],
+  "baseline": {
+    "branch": "main",
+    "commit": "d93ecde6800f845665ba6e0ef1f77df42d134392"
+  },
+  "policy": {
+    "max_iterations": 3,
+    "budget_usd": 10.0
+  },
+  "delivery": "local changes and a verification report; no push or merge"
+}

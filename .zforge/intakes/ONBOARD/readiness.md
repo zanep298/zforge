@@ -4,7 +4,7 @@
 
 **Ready to hand over**
 
-Scope (all tasks), in dependency order: TASK-001 → TASK-002 → TASK-003 → TASK-004 → TASK-005 → TASK-006 → TASK-007 → TASK-008 → TASK-009
+Scope (all tasks), in dependency order: TASK-001 → TASK-010 → TASK-002 → TASK-003 → TASK-004 → TASK-005 → TASK-006 → TASK-007 → TASK-011 → TASK-008 → TASK-009
 
 ## Checks
 
@@ -27,11 +27,13 @@ Scope (all tasks), in dependency order: TASK-001 → TASK-002 → TASK-003 → T
 - 03-solution.md rev 3 `172d1b10d87c`
 - 04-breakdown.md rev 1 `a933390b43d3`
 - tasks/TASK-001.md rev 1 `1edb7bb37b72`
-- tasks/TASK-002.md rev 1 `6d8e18381dda`
-- tasks/TASK-003.md rev 1 `aea442f5c48e`
-- tasks/TASK-004.md rev 1 `a6a51357be82`
-- tasks/TASK-005.md rev 1 `6859fc7d3b45`
-- tasks/TASK-006.md rev 1 `08a302766ab5`
-- tasks/TASK-007.md rev 1 `d983e8a671e3`
-- tasks/TASK-008.md rev 1 `6e5b34faaf51`
-- tasks/TASK-009.md rev 1 `fea26b651831`
+- tasks/TASK-002.md rev 2 `5643e4f0a810`
+- tasks/TASK-003.md rev 3 `9edea8475ee1`
+- tasks/TASK-004.md rev 3 `045788e03880`
+- tasks/TASK-005.md rev 3 `cc85296d9907`
+- tasks/TASK-006.md rev 3 `2e8d632da230`
+- tasks/TASK-007.md rev 4 `517d529b9cc4`
+- tasks/TASK-008.md rev 4 `9a95c7dd5a36`
+- tasks/TASK-009.md rev 4 `4dd647b3e824`
+- tasks/TASK-010.md rev 1 `d9a2bcabb33f`
+- tasks/TASK-011.md rev 1 `b06e017545ff`
