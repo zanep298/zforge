@@ -34,6 +34,9 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__zforge__change_new",
       "mcp__zforge__readiness",
       "mcp__zforge__knowledge_index",
+      "mcp__zforge__onboard_probe",
+      "mcp__zforge__onboard_status",
+      "mcp__zforge__onboard_review",
       "mcp__zforge__run_start",
       "mcp__zforge__run_status",
       "mcp__zforge__run_log",
@@ -56,11 +59,13 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "Bash(zforge handover*)",
       "Bash(zforge onboard accept*)",
       "Bash(zforge onboard revise*)",
+      "Bash(zforge onboard baseline*)",
       "Bash(zf intake accept*)",
       "Bash(zf intake revise*)",
       "Bash(zf handover*)",
       "Bash(zf onboard accept*)",
-      "Bash(zf onboard revise*)"
+      "Bash(zf onboard revise*)",
+      "Bash(zf onboard baseline*)"
     ]
   }
 }
@@ -275,5 +280,36 @@ mod tests {
         std::fs::write(&path, "{\"permissions\": {\"allow\": \"everything\"}}").unwrap();
         let err = write_settings(&path, true).unwrap_err();
         assert!(format!("{err:#}").contains("not an array"), "{err:#}");
+    }
+
+    /// ONBOARD TASK-009 AC-03: a generated settings file allows the three
+    /// onboard MCP tools and denies the three onboard decision commands —
+    /// accepting, revising or recording known baseline failures needs a
+    /// terminal (D1), like intake accept/revise and handover.
+    #[test]
+    fn onboard_tools_allowed_and_onboard_decisions_denied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        write_settings(&path, false).unwrap();
+        let out = read(&path);
+        let allow = out["permissions"]["allow"].as_array().unwrap();
+        for tool in [
+            "mcp__zforge__onboard_probe",
+            "mcp__zforge__onboard_status",
+            "mcp__zforge__onboard_review",
+        ] {
+            assert!(
+                allow.contains(&json!(tool)),
+                "{tool} missing from {allow:?}"
+            );
+        }
+        let deny = out["permissions"]["deny"].as_array().unwrap();
+        for cmd in [
+            "Bash(zforge onboard accept*)",
+            "Bash(zforge onboard revise*)",
+            "Bash(zforge onboard baseline*)",
+        ] {
+            assert!(deny.contains(&json!(cmd)), "{cmd} missing from {deny:?}");
+        }
     }
 }

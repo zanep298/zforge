@@ -379,6 +379,60 @@ fn an_agent_runs_a_whole_handover() {
     assert_eq!(f["tasks"][0]["status"], "cancelled");
 }
 
+/// ONBOARD TASK-009 AC-02: the onboard tools prepare and observe — probe,
+/// status, send for review — and deciding (accept/revise/baseline) stays
+/// off the transport (D1), covered generically by
+/// `the_transport_offers_no_way_to_decide` above via `v15::FORBIDDEN`.
+#[test]
+fn onboard_probe_status_and_review_over_mcp() {
+    let p = Project::new();
+    // The probe pins knowledge to a commit and refuses an uncommitted tree;
+    // `Project::new()`'s own commit is empty (`.zforge/` is left untracked),
+    // so commit it here before probing.
+    for args in [&["add", "-A"][..], &["commit", "-q", "-m", "cfg"][..]] {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(&p.root)
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    let frames = p.mcp(&[call(1, "onboard_probe", json!({}))]);
+    let probe = json_result(&frames[0]);
+    assert!(probe["baseline"]["result"].as_bool().unwrap(), "{probe}");
+    assert!(
+        p.root.join("docs/knowledge/rules.md").is_file(),
+        "the probe creates the three knowledge files from a stub"
+    );
+
+    std::fs::write(
+        p.root.join("docs/knowledge/rules.md"),
+        "# Rules\n\nSomething must not happen.\n\n## Open questions\n",
+    )
+    .unwrap();
+
+    let frames = p.mcp(&[
+        call(1, "onboard_review", json!({"file": "rules.md"})),
+        call(2, "onboard_status", json!({})),
+    ]);
+    let r = json_result(&frames[0]);
+    assert_eq!(r["revision"], 1, "{r}");
+
+    let s = json_result(&frames[1]);
+    assert_eq!(s["onboarded"], false, "{s}");
+    let files = s["files"].as_array().unwrap();
+    let rules = files
+        .iter()
+        .find(|f| f["status"]["file"] == "rules.md")
+        .unwrap();
+    assert_eq!(rules["status"]["state"], "in_review", "{rules}");
+
+    // Calling the decision tool anyway is an unknown tool.
+    let frames = p.mcp(&[call(1, "onboard_accept", json!({"file": "rules.md"}))]);
+    assert!(text(&frames[0]).contains("unknown tool"), "{:?}", frames[0]);
+}
+
 /// `status` gives an agent the same view as `zforge status --json`,
 /// next step included.
 #[test]

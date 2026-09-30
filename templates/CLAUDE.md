@@ -42,6 +42,25 @@ zforge status
 
 ---
 
+## Project Knowledge
+
+`zforge onboard` drafts the project's own knowledge from the code —
+`domain.md`, `conventions.md`, `rules.md` under `docs/knowledge/`, each
+statement citing `path:line` — and probes the test suite's baseline. It is
+separate from `init`: a project can skip it and intakes and runs still
+work, with a warning at readiness. Once a file is accepted (same review as
+an intake file: `zforge onboard review\|accept\|revise`, the user's
+decision at a terminal), intakes read and cite it (`zforge-intake` skill)
+and runs get the parts that apply to their task. `zforge onboard status`
+shows each file's state and any citation gone stale since it was accepted.
+
+| Stage | Command | Who |
+|-------|---------|-----|
+| Probe and draft the knowledge | `zforge onboard`, `zforge onboard draft` | agent or user |
+| Send a knowledge file for review | `zforge onboard review <file>` | agent or user |
+| Accept or ask for changes | `zforge onboard accept\|revise <file>` | **user, in a terminal** |
+| Redraft what changed since | `zforge onboard refresh` | agent or user |
+
 ## When You Are Asked To Build Something
 
 - If there is no intake for it yet, help the user write one (the
@@ -84,7 +103,15 @@ tools prepare and observe; none of them accepts, revises or hands over.
 | `readiness` | Can the accepted files be handed over, and why not |
 | `run_start`, `run_status`, `run_log`, `run_list`, `run_cancel` | Build a handover or one task, and follow it |
 | `knowledge_index` | Rebuild `.zforge/knowledge/` from accepted intakes and runs |
+| `onboard_probe` | Probe the project (language, docs, baseline test run) — no model call |
+| `onboard_status` | Each knowledge file's review state, open questions and stale citations |
+| `onboard_review` | Send a knowledge file for the user's review |
 | `project_list`, `project_add`, `project_remove`, `switch_project` | The registry of zforge projects |
+
+Accepting a knowledge file, asking for changes, and recording known baseline
+failures are the user's decisions too — no `onboard_accept`, `onboard_revise`
+or `onboard_baseline` tool exists; they are terminal-only, like
+`intake_accept` and `handover`.
 
 ### codegraph
 Semantic code search over the pre-built codebase index. `zforge init` registers

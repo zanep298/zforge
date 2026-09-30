@@ -28,6 +28,7 @@ use crate::intake::review as intake_review;
 use crate::intake::status::{DocStatus, Rev};
 use anyhow::{bail, Context, Result};
 use docs::DocSet;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The three files the user reviews and accepts.
@@ -221,6 +222,24 @@ pub fn read_pinned(k: &Knowledge, pinned: &[Pinned]) -> Result<Vec<(String, Stri
             Ok((p.file.clone(), text))
         })
         .collect()
+}
+
+/// Item IDs (`DOM-`, `CONV-`, `RULE-`) the project's accepted knowledge
+/// states right now — every id parsed from each of [`FILES`]'s *accepted*
+/// revision, if it has one (ONBOARD TASK-009, `intake::lint::Known`). A
+/// file never accepted, or a knowledge directory that does not exist yet,
+/// contributes nothing rather than erroring: an unonboarded project's
+/// intakes still lint, they just cite nothing yet.
+pub fn accepted_item_ids(k: &Knowledge) -> Result<BTreeSet<String>> {
+    let mut ids = BTreeSet::new();
+    for file in FILES {
+        let status = intake_review::file_status(k, file)?;
+        if let Some(rev) = status.accepted {
+            let text = record::read_snapshot(k, file, rev.revision)?;
+            ids.extend(items::items(&text).into_iter().map(|it| it.id));
+        }
+    }
+    Ok(ids)
 }
 
 /// Add the union-merge line for `<dir>/.records/decisions.jsonl` to

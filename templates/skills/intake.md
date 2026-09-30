@@ -17,6 +17,10 @@ You prepare, explain and send files for review. **The user decides.**
 ## Required Inputs
 
 - The user's request, in their words
+- The project's accepted knowledge — `domain.md`, `conventions.md`, `rules.md`
+  under `docs/knowledge/` (`zforge onboard status` shows what is accepted; a
+  project that has not onboarded has none, and that is fine — proceed
+  without it). Read whichever files are accepted before drafting any stage.
 - `.zforge/knowledge/index.md` — accepted requirements and decisions still in force
 - The code and tests the change touches (read them; CodeGraph when available)
 
@@ -51,6 +55,10 @@ per intake.
      files the task may modify. A run that passes only after changing any
      other existing test is not counted. Add it only when the contract
      means it, with exact paths, and say why under Constraints.
+   - When the task builds on or departs from the accepted knowledge, name
+     the items under Constraints: `Knowledge: DOM-004, RULE-001`. `zforge
+     intake review` warns, naming the ID, on a citation that is not in the
+     accepted knowledge — fix the ID or note the departure, don't ignore it.
 
 Every file answers, in plain language: what is being decided and how it
 serves the level above; the proposal with a concrete example; why, with
@@ -59,8 +67,11 @@ the version they saw.
 
 ## Workflow
 
-1. Read the knowledge index and the code before asking anything you could
-   find out yourself.
+1. Read the accepted knowledge and the code before asking anything you
+   could find out yourself. Every stage you draft cites the knowledge item
+   IDs it relies on (`Keeps RULE-001: …`); where the stage departs from an
+   accepted item, say so in the stage, with the item's ID and why, for the
+   user to accept or not — never depart silently.
 2. Write or revise the file; keep conclusions in the file, not only in chat.
 3. Put every question that needs the user under **Open questions** as
    `- [ ] question — stage where it will be settled`. Tick it `[x]` only

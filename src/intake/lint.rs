@@ -111,6 +111,12 @@ impl Issue {
 pub struct Known {
     pub requirements: BTreeSet<String>,
     pub tasks: BTreeSet<String>,
+    /// Item IDs (`DOM-`, `CONV-`, `RULE-`) the project's accepted knowledge
+    /// states right now (ONBOARD REQ-007, TASK-009). Empty for a project
+    /// that never onboarded, or whose knowledge cannot be read — a stage
+    /// citing an ID then always gets the warning, which is correct: there
+    /// is nothing accepted to cite.
+    pub knowledge_ids: BTreeSet<String>,
 }
 
 /// Leaf task frontmatter.
@@ -146,6 +152,12 @@ fn ac_def() -> &'static Regex {
 fn task_ref() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     re(r"\bTASK-\d{3,}\b", &R)
+}
+
+/// A citation of a knowledge item (`DOM-004`, `CONV-002`, `RULE-001`, …).
+fn knowledge_ref() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    re(r"\b(?:DOM|CONV|RULE)-\d+\b", &R)
 }
 
 /// Text with HTML comments removed.
@@ -314,6 +326,23 @@ pub fn lint(rel: &str, text: &str, intake_id: &str, known: &Known) -> Vec<Issue>
         }
     }
 
+    // A stage or task citing a knowledge item ID that is not (or no longer)
+    // in the accepted knowledge — a warning, not an error: the citation
+    // itself is still meaningful once the knowledge catches up, and a
+    // project that never onboarded should not have every intake refused
+    // (ONBOARD REQ-007, TASK-009, AC-01).
+    let uncited: BTreeSet<&str> = knowledge_ref()
+        .find_iter(&clean)
+        .map(|m| m.as_str())
+        .filter(|id| !known.knowledge_ids.contains(*id))
+        .collect();
+    for id in uncited {
+        issues.push(Issue::warning(
+            rel,
+            format!("cites {id}, which is not in the project's accepted knowledge"),
+        ));
+    }
+
     if rel == BREAKDOWN {
         let secs = sections(&clean);
         if !section(&secs, INTEGRATION).is_some_and(has_content) {
@@ -454,6 +483,7 @@ mod tests {
         Known {
             requirements: ["REQ-001", "REQ-002"].map(String::from).into(),
             tasks: ["TASK-001"].map(String::from).into(),
+            ..Known::default()
         }
     }
 

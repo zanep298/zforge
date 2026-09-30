@@ -61,7 +61,7 @@ pub struct Module {
 }
 
 /// Everything one probe produced.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub baseline: Baseline,
     pub modules: Vec<Module>,

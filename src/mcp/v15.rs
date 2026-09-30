@@ -12,7 +12,7 @@
 
 use crate::config;
 use crate::intake::{self, readiness, review, Intake};
-use crate::knowledge::commitments;
+use crate::knowledge::{self, commitments, probe, Knowledge};
 use crate::run::{execute, feature, feature_ops, is_handover, ops, record::Run};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -20,13 +20,16 @@ use std::path::PathBuf;
 
 /// Tool names that must never exist: they would let an agent record a
 /// decision that is the user's (D1).
-pub const FORBIDDEN: [&str; 6] = [
+pub const FORBIDDEN: [&str; 9] = [
     "intake_accept",
     "intake_revise",
     "handover",
     "change_accept",
     "accept",
     "revise",
+    "onboard_accept",
+    "onboard_revise",
+    "onboard_baseline",
 ];
 
 fn root() -> Result<PathBuf> {
@@ -68,6 +71,9 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
         "change_new" => change_new,
         "readiness" => readiness_report,
         "knowledge_index" => knowledge_index,
+        "onboard_probe" => onboard_probe,
+        "onboard_status" => onboard_status,
+        "onboard_review" => onboard_review,
         "run_start" => run_start,
         "run_status" => run_status,
         "run_list" => run_list,
@@ -191,6 +197,71 @@ fn knowledge_index(_args: &Value) -> Result<String> {
     Ok(serde_json::to_string_pretty(
         &commitments::build(&root()?)?,
     )?)
+}
+
+fn load_config() -> Result<config::Config> {
+    config::load().map_err(|_| anyhow!("config not found — run: zf init"))
+}
+
+/// Probe the project (no model call): language, docs, baseline test run.
+/// Refuses on an uncommitted working tree — the knowledge is pinned to a
+/// commit — a real refusal, not a hidden decision (ONBOARD TASK-003).
+fn onboard_probe(_args: &Value) -> Result<String> {
+    let config = load_config()?;
+    Ok(serde_json::to_string_pretty(&probe::run(&config)?)?)
+}
+
+/// Every knowledge file's review state, open questions, lint issues (a
+/// citation of a knowledge item ID not in the accepted knowledge is one),
+/// and every stale or moved citation — plus whether the project counts as
+/// onboarded (ONBOARD TASK-003, TASK-004). Read-only: deciding is the
+/// user's, at a terminal (`zforge onboard accept|revise|baseline`).
+fn onboard_status(_args: &Value) -> Result<String> {
+    let config = load_config()?;
+    let k = Knowledge::open(&config);
+    let state = crate::onboard::state(&config)?;
+    let files: Vec<Value> = state
+        .files
+        .into_iter()
+        .map(|status| {
+            let text = std::fs::read_to_string(k.dir.join(&status.file)).unwrap_or_default();
+            json!({
+                "status": status,
+                "open_questions": intake::lint::open_questions(&text),
+                "issues": knowledge::lint_issues(&status.file, &text),
+            })
+        })
+        .collect();
+    let stale = knowledge::stale::check(&k)?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "onboarded": state.onboarded,
+        "baseline": state.baseline,
+        "files": files,
+        "stale": stale.stale,
+        "moved": stale.moved,
+        "decides": "the user accepts, revises or records known baseline failures at a terminal: zforge onboard accept|revise|baseline",
+    }))?)
+}
+
+/// Send a knowledge file's current content for the user's review (this is
+/// not acceptance).
+fn onboard_review(args: &Value) -> Result<String> {
+    let root = root()?;
+    let config = load_config()?;
+    let k = Knowledge::open(&config);
+    let file = str_arg(args, "file")?;
+    let r = knowledge::review(&root, &k, &file)?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "file": file,
+        "revision": r.revision,
+        "sha256": r.sha256,
+        "already_under_review": r.unchanged,
+        "warnings": r.warnings,
+        "diff": r.diff,
+        "next": format!(
+            "tell the user what to look at, then they run: zforge onboard accept {file}"
+        ),
+    }))?)
 }
 
 /// Start a run of a handed-over task in the background — or, without a
@@ -348,6 +419,23 @@ pub fn definitions() -> Vec<Value> {
             "name": "knowledge_index",
             "description": "v1.5: accepted requirements and binding decisions across all intakes, each with its source revision, whether the decision is still active, and whether it is implemented (handed over, or verified by a run with the candidate it tested).",
             "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "onboard_probe",
+            "description": "ONBOARD: probe the project without calling a model — language and toolchain, repository size, existing docs, CodeGraph index state, and one run of the test command (pass/fail, failing tests, duration). Refuses on an uncommitted working tree; the knowledge is pinned to a commit.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "onboard_status",
+            "description": "ONBOARD: each knowledge file's review state (draft, in_review, changed_since_review, needs_revision, accepted), open questions, structural issues (including a citation of a knowledge item ID not in the accepted knowledge), stale and moved citations, and whether the project counts as onboarded. Read this before drafting or refreshing.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "onboard_review",
+            "description": "ONBOARD: send a knowledge file's (domain.md, conventions.md, rules.md) current content for the user's review as a new revision. Refuses while structural errors remain (missing evidence, an ID reused for a different item). This is not acceptance: only the user accepts, revises or records known baseline failures, at a terminal.",
+            "inputSchema": { "type": "object", "properties": {
+                "file": { "type": "string", "description": "domain.md, conventions.md or rules.md" }
+            }, "required": ["file"] }
         }),
         json!({
             "name": "run_start",

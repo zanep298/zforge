@@ -22,6 +22,9 @@ depends_on: []
 
 ## Constraints
 
+<!-- Cite the accepted knowledge items this task builds on or departs from,
+     if any: `Knowledge: DOM-004, RULE-001`. -->
+
 ## Autonomy
 
 ## Acceptance and verification

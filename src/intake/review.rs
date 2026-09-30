@@ -13,6 +13,7 @@ use super::{hash, templates, validate_id, Intake, CHANGES_DIR, STAGES, TASKS_DIR
 use crate::knowledge::docs::DocSet;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Create `.zforge/intakes/<id>/` with a template for every stage.
@@ -47,7 +48,10 @@ pub fn create_task(intake: &Intake, task_id: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Requirement and task IDs defined by the intake's current files.
+/// Requirement and task IDs defined by the intake's current files, plus the
+/// item IDs the project's accepted knowledge states now (ONBOARD REQ-007,
+/// TASK-009), so a stage citing one that is not accepted gets a warning
+/// naming it.
 pub fn known(intake: &Intake) -> Known {
     let outcome = std::fs::read_to_string(intake.dir.join(lint::OUTCOME)).unwrap_or_default();
     Known {
@@ -61,7 +65,31 @@ pub fn known(intake: &Intake) -> Known {
                     .map(String::from)
             })
             .collect(),
+        knowledge_ids: knowledge_ids(intake),
     }
+}
+
+/// The project's accepted knowledge item IDs, or empty when the project
+/// root, its config, or its knowledge cannot be read — never an error: a
+/// project that has not been onboarded, or an intake opened outside a full
+/// project layout (as some tests do), still lints.
+fn knowledge_ids(intake: &Intake) -> BTreeSet<String> {
+    (|| -> Result<BTreeSet<String>> {
+        // `intake.dir` is `<project_root>/.zforge/intakes/<id>` (see
+        // `intakes_dir`); walk back up to the project root.
+        let root = intake
+            .dir
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .ok_or_else(|| {
+                anyhow::anyhow!("cannot resolve the project root from {:?}", intake.dir)
+            })?;
+        let config = crate::config::load_from(&root.join(".zforge").join("config.yaml"))?;
+        let k = crate::knowledge::Knowledge::open(&config);
+        crate::knowledge::accepted_item_ids(&k)
+    })()
+    .unwrap_or_default()
 }
 
 /// Status of every file in a document set (an intake, or the knowledge).
@@ -366,6 +394,99 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not under review"));
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    fn head(dir: &std::path::Path) -> String {
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(dir)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string()
+    }
+
+    /// AC-01: a stage citing a knowledge ID that is not (yet) accepted gets
+    /// a warning naming it; a citation of an ID that *is* accepted does not.
+    #[test]
+    fn citing_an_unaccepted_knowledge_id_warns_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "t@t"]);
+        git(root, &["config", "user.name", "t"]);
+        std::fs::write(root.join("x.rs"), "one\ntwo\nthree\n").unwrap();
+        std::fs::create_dir_all(root.join(".zforge")).unwrap();
+        std::fs::write(
+            root.join(".zforge/config.yaml"),
+            "project:\n  name: t\n  language: rust\n  test_command: \"true\"\n",
+        )
+        .unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "c"]);
+        let pinned = head(root);
+
+        let config = crate::config::load_from(&root.join(".zforge/config.yaml")).unwrap();
+        let k = crate::knowledge::Knowledge::open(&config);
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(
+            k.dir.join("rules.md"),
+            format!(
+                "---\npinned: {pinned}\n---\n## m\n- RULE-001: r1. (x.rs:1)\n- RULE-002: r2. (x.rs:2)\n- RULE-003: r3. (x.rs:3)\n\n## Open questions\n"
+            ),
+        )
+        .unwrap();
+        for f in ["domain.md", "conventions.md"] {
+            std::fs::write(
+                k.dir.join(f),
+                "# k\n\nSomething happens.\n\n## Open questions\n",
+            )
+            .unwrap();
+        }
+        for f in crate::knowledge::FILES {
+            review(&k, f).unwrap();
+            accept(&k, f, None).unwrap();
+        }
+
+        let intake = create(root, "F").unwrap();
+        std::fs::write(
+            intake.dir.join("01-outcome.md"),
+            "# F — Outcome\n\n## Yêu cầu\n\n- REQ-001: Keeps RULE-001; departs from RULE-009 because reasons.\n\n## Câu hỏi còn mở\n",
+        )
+        .unwrap();
+
+        let k2 = known(&intake);
+        assert!(k2.knowledge_ids.contains("RULE-001"));
+        assert!(!k2.knowledge_ids.contains("RULE-009"));
+
+        let text = std::fs::read_to_string(intake.dir.join("01-outcome.md")).unwrap();
+        let issues = lint::lint("01-outcome.md", &text, "F", &k2);
+        let warnings: Vec<&str> = issues
+            .iter()
+            .filter(|i| i.severity == Severity::Warning)
+            .map(|i| i.message.as_str())
+            .collect();
+        assert!(
+            warnings.iter().any(|m| m.contains("RULE-009")),
+            "{warnings:?}"
+        );
+        assert!(
+            !warnings.iter().any(|m| m.contains("RULE-001")),
+            "an accepted id must not warn: {warnings:?}"
+        );
     }
 
     #[test]

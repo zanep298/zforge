@@ -146,6 +146,7 @@ pub fn check(
     let known = Known {
         requirements: lint::defined_requirements(&outcome).into_iter().collect(),
         tasks: metas.keys().cloned().collect(),
+        ..Known::default()
     };
     let mut problems = Vec::new();
     for p in &pinned {
