@@ -32,6 +32,9 @@ pub const STAGES: [&str; 4] = [
     "04-breakdown.md",
 ];
 pub const TASKS_DIR: &str = "tasks";
+/// The intake's one-page reading view, written by the agent in the user's
+/// language. Not a contract file: never reviewed, linted or pinned.
+pub const BRIEF_FILE: &str = "brief.md";
 pub const CHANGES_DIR: &str = "changes";
 pub const RECORDS_DIR: &str = ".records";
 

@@ -30,6 +30,10 @@ pub fn create(project_root: &Path, id: &str) -> Result<Intake> {
         let body = templates::stage(stage, id).expect("template for every stage");
         crate::fs::write_atomic(&dir.join(stage), body.as_bytes())?;
     }
+    crate::fs::write_atomic(
+        &dir.join(super::BRIEF_FILE),
+        templates::brief(id).as_bytes(),
+    )?;
     Ok(Intake {
         id: id.to_string(),
         dir,
@@ -516,5 +520,18 @@ mod tests {
             "F"
         )
         .is_err());
+    }
+
+    /// The brief is the agent's reading view for the user: created with
+    /// the intake, never one of the files that are reviewed and pinned.
+    #[test]
+    fn a_new_intake_has_a_brief_that_is_not_a_contract_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = create(tmp.path(), "F").unwrap();
+        let brief = std::fs::read_to_string(i.dir.join(crate::intake::BRIEF_FILE)).unwrap();
+        assert!(brief.starts_with("# F — Brief"), "{brief}");
+        assert!(!i.files().contains(&crate::intake::BRIEF_FILE.to_string()));
+        assert!(crate::intake::validate_file(crate::intake::BRIEF_FILE).is_err());
+        assert!(review(&i, crate::intake::BRIEF_FILE).is_err());
     }
 }

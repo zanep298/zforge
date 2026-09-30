@@ -87,6 +87,32 @@ them. `zforge intake review` warns when a file goes past these:
   (`stateDiagram-v2`), or what contains what (`graph`) — about eight
   nodes, a verb on every arrow. A second question gets a second diagram.
 
+## The brief
+
+`brief.md` is one page for the person who decides — the whole intake in
+their language and in plain words: no IDs, no paths, no code. It is a
+reading view, never the contract: zforge does not review, pin or lint it,
+and accepting is still done on the files. Keep to this shape, about 400
+words:
+
+- **Goal** in one sentence, then **one concrete example** from the user's
+  world.
+- **Behavior** as a mermaid flowchart of what the user and the system do —
+  plain-language nodes, at most eight.
+- **Solution** in two or three sentences.
+- **Choices to understand before accepting**: a table `Choice |
+  Consequence`.
+- **Work split**: a mermaid flowchart of the phases, not every task.
+- **Done when**: what will have been proven.
+- **Still unclear**: open points, and any place where the files disagree
+  with each other — writing the brief is when you notice them.
+- A last line: "Reading copy, not the contract. Describes: 01-outcome rev
+  n, …".
+
+Write it as soon as 01-outcome exists, and rewrite it every time a stage or
+a task is written, revised or accepted, so it always describes the files as
+they are. Show it in chat when you present a stage.
+
 ## Workflow
 
 1. Read the accepted knowledge and the code before asking anything you
@@ -141,6 +167,7 @@ yourself, `change_new` (MCP) creates the file with the required sections.
 - [ ] `tests_may_change` appears only where the contract means it, with exact paths
 - [ ] Each stage opens with a Summary; no readability warning left unexplained
 - [ ] Diagrams are mermaid, one question each; no hand-drawn dependency graph
+- [ ] `brief.md` describes the files as they are now, in the user's language
 - [ ] No open question left unchecked in a file offered for acceptance
 - [ ] Conflicts with accepted knowledge are listed for the user, not resolved silently
 
@@ -151,6 +178,7 @@ yourself, `change_new` (MCP) creates the file with the required sections.
   terminal or from the user's own `/accept`, `/revise`, `/handover` message
 - Take "ok", "looks good" or any other reply as a decision: only the
   hook's report that it recorded one counts
+- Let the brief say something the files do not: fix the file, then the brief
 - Write "approved", "accepted" or a status into a file: status is derived
   from the runtime's records
 - Edit a file while the user is reviewing it — it can then no longer be accepted

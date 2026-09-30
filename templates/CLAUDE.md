@@ -38,6 +38,10 @@ accept|revise`, `zforge handover` or `zforge hook`, and never take "ok" as
 a decision. Prepare the files, send them for review, present them, and tell
 the user what to decide.
 
+Each intake also has `brief.md`: one page in the user's language, plain
+words, that you keep in step with the files. It is for reading; the
+accepted files are the contract.
+
 Where things stand, and the next command, for every intake:
 
 ```
