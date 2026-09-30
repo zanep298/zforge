@@ -1484,9 +1484,17 @@ fn knowledge_follows_the_integration_into_the_baseline() {
         commit
     );
 
+    assert!(
+        next(&p).contains("merge its integration branch"),
+        "{}",
+        next(&p)
+    );
+
     merge_into_main(&p, &["--no-edit", "zforge/F/integration/RUN-005"]);
     let req = entry(&p.knowledge(), "REQ-001");
     assert_eq!(req["implementation"], "integrated");
+    // Merged: status no longer asks for the merge.
+    assert!(next(&p).contains("is in main"), "{}", next(&p));
     let out = p.zforge(&["knowledge", "index"]);
     assert!(out.status.success());
     let md = std::fs::read_to_string(p.root.join("docs/knowledge/commitments.md")).unwrap();
@@ -1497,6 +1505,16 @@ fn knowledge_follows_the_integration_into_the_baseline() {
         )),
         "{md}"
     );
+}
+
+/// What `zforge status` says to do next for intake F.
+fn next(p: &Project) -> String {
+    let v: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["status", "--json"]).stdout).unwrap();
+    v["intakes"][0]["next"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// AC-03: a squash merge carries the content but not the commit; knowledge

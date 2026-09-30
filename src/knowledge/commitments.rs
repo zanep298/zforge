@@ -217,18 +217,8 @@ fn add_integration(
         .into_iter()
         .map(|m| (m.id, m.baseline.branch))
         .collect();
-    let integrated = |commit: &str, branch: &str| {
-        crate::run::git::run(
-            project_root,
-            &[
-                "merge-base",
-                "--is-ancestor",
-                commit,
-                &format!("refs/heads/{branch}"),
-            ],
-        )
-        .is_ok_and(|o| o.status.success())
-    };
+    let integrated =
+        |commit: &str, branch: &str| crate::run::git::in_branch(project_root, commit, branch);
     for e in entries.iter_mut() {
         if e.kind != "requirement" || e.implementation != Implementation::Verified {
             continue;

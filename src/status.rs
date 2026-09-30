@@ -205,7 +205,7 @@ fn intake_status(project_root: &Path, intake: &Intake) -> Result<IntakeStatus> {
     let docs = review::statuses(intake)?;
     let stale: Vec<String> = readiness::stale(intake)?.into_iter().collect();
     let mut handovers = Vec::new();
-    let mut latest: Option<FeatureState> = None;
+    let mut latest: Option<(FeatureState, String)> = None;
     for m in handover::list(intake)? {
         let f = feature::load(project_root, &format!("{}/{}", intake.id, m.id))?;
         handovers.push(HandoverStatus {
@@ -217,13 +217,21 @@ fn intake_status(project_root: &Path, intake: &Intake) -> Result<IntakeStatus> {
                 .collect(),
             integration: f.integration.label().to_string(),
         });
-        latest = Some(f);
+        latest = Some((f, m.baseline.branch));
     }
     let files: BTreeMap<String, String> = docs
         .iter()
         .map(|d| (d.file.clone(), label(d.state, d.has_draft)))
         .collect();
-    let next = next_step(&intake.id, &docs, &stale, latest.as_ref());
+    let next = next_step(
+        &intake.id,
+        &docs,
+        &stale,
+        latest.as_ref().map(|(f, branch)| Latest {
+            feature: f,
+            merged_into: merged_into(project_root, f, branch),
+        }),
+    );
     Ok(IntakeStatus {
         id: intake.id.clone(),
         files,
@@ -240,6 +248,24 @@ fn label(state: DocState, has_draft: bool) -> String {
     }
 }
 
+/// The intake's latest handover, as the next step needs it.
+struct Latest<'a> {
+    feature: &'a FeatureState,
+    /// The baseline branch, once the verified integration's output is in it.
+    merged_into: Option<&'a str>,
+}
+
+/// `branch` when the handover's verified integration output is in it now.
+fn merged_into<'a>(project_root: &Path, f: &FeatureState, branch: &'a str) -> Option<&'a str> {
+    match &f.integration {
+        Progress::Verified {
+            commit: Some(commit),
+            ..
+        } if crate::run::git::in_branch(project_root, commit, branch) => Some(branch),
+        _ => None,
+    }
+}
+
 /// What the user does next, earliest stage first: files still being
 /// written or reviewed come before handing over, and handing over before
 /// running.
@@ -247,7 +273,7 @@ fn next_step(
     id: &str,
     docs: &[intake::status::DocStatus],
     stale: &[String],
-    latest: Option<&FeatureState>,
+    latest: Option<Latest>,
 ) -> String {
     let named = |pred: &dyn Fn(&intake::status::DocStatus) -> bool| -> Vec<&str> {
         docs.iter()
@@ -280,10 +306,10 @@ fn next_step(
             few(stale)
         );
     }
-    let Some(f) = latest else {
+    let Some(latest) = latest else {
         return format!("`zforge readiness {id}`, then `zforge handover {id}` in a terminal");
     };
-    run_step(f)
+    run_step(latest)
 }
 
 /// Files named in a hint: the first few, then how many more.
@@ -296,7 +322,8 @@ fn few<S: AsRef<str>>(files: &[S]) -> String {
     }
 }
 
-fn run_step(f: &FeatureState) -> String {
+fn run_step(latest: Latest) -> String {
+    let f = latest.feature;
     let h = &f.handover;
     let none = BTreeSet::new();
     match feature_ops::next_step(f, &none, &none) {
@@ -304,9 +331,14 @@ fn run_step(f: &FeatureState) -> String {
         Step::Task { .. } | Step::Integration { .. } => {
             format!("`zforge run {h}` (resumes where it stopped)")
         }
-        Step::Done if f.is_verified() => {
-            format!("{h} is verified; merge its integration branch, then `zforge knowledge index`")
-        }
+        Step::Done if f.is_verified() => match latest.merged_into {
+            Some(branch) => format!(
+                "{h} is in {branch}; `zforge knowledge index` if the commitments predate the merge"
+            ),
+            None => format!(
+                "{h} is verified; merge its integration branch, then `zforge knowledge index`"
+            ),
+        },
         Step::Done => {
             let stopped: Vec<&str> = f
                 .tasks

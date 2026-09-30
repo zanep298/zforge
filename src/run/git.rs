@@ -40,6 +40,22 @@ pub fn ok(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Whether `commit` is in local branch `branch` now (`git merge-base
+/// --is-ancestor`). A squash or rebase merge copies the content, not the
+/// commit, so it does not count; neither does anything git cannot answer.
+pub fn in_branch(dir: &Path, commit: &str, branch: &str) -> bool {
+    run(
+        dir,
+        &[
+            "merge-base",
+            "--is-ancestor",
+            commit,
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok_and(|o| o.status.success())
+}
+
 pub fn head(dir: &Path) -> Result<String> {
     ok(dir, &["rev-parse", "HEAD"])
 }
