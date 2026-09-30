@@ -35,6 +35,9 @@ const MIN_ALLOTMENT_USD: f64 = 0.01;
 const FEEDBACK_LINES: usize = 60;
 /// Test suite time limit.
 const TEST_TIMEOUT_SECS: u64 = 300;
+/// The result subtype Claude reports when `--max-budget-usd` stopped the
+/// agent.
+const BUDGET_EXHAUSTED: &str = "error_max_budget_usd";
 
 /// Why a run stopped before the verifier loop finished.
 #[derive(Debug)]
@@ -224,6 +227,8 @@ fn work(
     // REQ-008): computed once, so the code and review prompts carry the
     // same selection (AC-04), and traced with what was actually included.
     let knowledge = contract.knowledge_selection(config.knowledge.prompt_limit);
+    // IDs a change request may cite: those the handover pins.
+    let known = contract.known();
     let knowledge_revisions: Vec<(String, u32)> = contract
         .knowledge
         .iter()
@@ -279,8 +284,16 @@ fn work(
         interrupted()?;
         // §8: the agent may only ask for the contract to change, never
         // change it. A change request ends the run; the user decides.
-        if let Some(reason) = amendment_requested(&change_request, &meta.intake) {
+        if let Some(reason) = amendment_requested(&change_request, &meta.intake, &known) {
             return Err(Halt::Blocked(reason).into());
+        }
+        if called.budget_exhausted {
+            let used = run.state()?.cost_usd;
+            return Err(Halt::Blocked(format!(
+                "budget: ${used:.2} of ${:.2} used",
+                meta.budget_usd
+            ))
+            .into());
         }
         if called.out.timed_out {
             return Err(Halt::Failed(format!("agent timed out after {timeout_secs}s")).into());
@@ -472,7 +485,11 @@ fn finish(run: &Run, outcome: Result<crate::orchestrator::LoopOutcome>) -> Resul
 /// The reason to block when the agent wrote a change request, with what the
 /// linter makes of it (workflow §8): an incomplete request is still a stop,
 /// but says what is missing.
-fn amendment_requested(path: &str, intake: &str) -> Option<String> {
+fn amendment_requested(
+    path: &str,
+    intake: &str,
+    known: &crate::intake::lint::Known,
+) -> Option<String> {
     let path = Path::new(path);
     let text = std::fs::read_to_string(path).ok()?;
     let name = path.file_name()?.to_string_lossy().into_owned();
@@ -481,7 +498,7 @@ fn amendment_requested(path: &str, intake: &str) -> Option<String> {
         &format!("{}{name}", crate::intake::lint::CHANGES_PREFIX),
         &text,
         intake,
-        &crate::intake::lint::Known::default(),
+        known,
     );
     let missing: Vec<&str> = issues
         .iter()
@@ -563,6 +580,8 @@ pub(super) struct Called {
     pub cost_usd: Option<f64>,
     /// The client's own account of an error result, if it gave one.
     pub error: Option<String>,
+    /// The client stopped the agent at `--max-budget-usd`.
+    pub budget_exhausted: bool,
 }
 
 impl Called {
@@ -607,6 +626,7 @@ pub(super) fn call_agent(c: &Call) -> Result<Called> {
     let result = trace.observed.as_ref().and_then(|o| o.result.as_ref());
     let cost_usd = result.and_then(|r| r.cost_usd);
     let error = result.and_then(|r| r.message.clone());
+    let budget_exhausted = result.is_some_and(|r| r.subtype == BUDGET_EXHAUSTED);
     if let Err(e) = crate::trace::log::append(&super::runs_dir(c.project_root), &trace) {
         eprintln!("warning: trace not recorded: {e:#}");
     }
@@ -614,6 +634,7 @@ pub(super) fn call_agent(c: &Call) -> Result<Called> {
         out,
         cost_usd,
         error,
+        budget_exhausted,
     })
 }
 

@@ -320,6 +320,27 @@ impl Contract {
             .expect("load checks the task is pinned")
     }
 
+    /// The requirement and task IDs this handover pins, to lint what an
+    /// agent writes against the contract (a change request) — from the
+    /// pinned 01-outcome and task files, never the working ones.
+    pub fn known(&self) -> lint::Known {
+        let outcome = self
+            .files
+            .iter()
+            .find(|f| f.file == lint::OUTCOME)
+            .map_or("", |f| f.text.as_str());
+        lint::Known {
+            requirements: lint::defined_requirements(outcome).into_iter().collect(),
+            tasks: self
+                .files
+                .iter()
+                .filter_map(|f| f.file.strip_prefix("tasks/")?.strip_suffix(".md"))
+                .map(String::from)
+                .collect(),
+            ..lint::Known::default()
+        }
+    }
+
     /// The code prompt for this run. `feedback` is the verifier's report on
     /// the previous attempt, if any. `change_request_path` is where the agent
     /// writes a change request when the contract must change. `checklists`

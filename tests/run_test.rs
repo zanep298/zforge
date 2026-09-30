@@ -617,6 +617,63 @@ fn a_failed_agent_call_says_why() {
     );
 }
 
+/// An agent that stops at `--max-budget-usd` used the budget up: the run is
+/// blocked on it, not failed as if the agent had crashed (found on ONBOARD
+/// HANDOVER-005 TASK-007).
+#[test]
+fn an_agent_stopped_by_its_budget_blocks_the_run() {
+    let p = Project::new(3.0, 3);
+    p.stub(
+        "printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"error_max_budget_usd\",\"is_error\":true,\"total_cost_usd\":3.01}'\nexit 1",
+    );
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    let last = p.last("RUN-001");
+    assert_eq!(last["event"], "blocked", "{last}");
+    assert!(
+        last["reason"].as_str().unwrap().starts_with("budget:"),
+        "{last}"
+    );
+}
+
+/// A complete request that names the task's requirement and task is not
+/// reported incomplete: IDs are checked against the handover's pinned
+/// 01-outcome and tasks (the linter used to be given none, so every REQ
+/// reference read as undefined).
+#[test]
+fn a_complete_change_request_citing_the_contract_is_complete() {
+    let p = Project::new(3.0, 3);
+    let cr = p.root.join(".zforge/intakes/F/changes/CHANGE-RUN-001.md");
+    let body = [
+        "## Contract in force",
+        "TASK-001 for REQ-001",
+        "## Evidence",
+        "add is wrong",
+        "## Proposal",
+        "change the output",
+        "## Impact",
+        "TASK-001 only",
+        "## Decision needed",
+        "accept the proposal",
+    ]
+    .join("\\n");
+    p.stub(&format!(
+        "printf '{body}\\n' > {}\ncat {FIXTURE}",
+        cr.display()
+    ));
+
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-001"])
+        .status
+        .success());
+    assert_eq!(
+        p.last("RUN-001")["reason"].as_str().unwrap(),
+        "amendment: CHANGE-RUN-001"
+    );
+}
+
 /// An incomplete request still stops the run, and says what is missing.
 #[test]
 fn an_incomplete_change_request_says_what_it_lacks() {
