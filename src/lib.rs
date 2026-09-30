@@ -3,6 +3,7 @@ pub mod config;
 pub mod embedded;
 pub mod evidence;
 pub mod fs;
+pub mod hook;
 pub mod intake;
 pub mod knowledge;
 pub mod lock;

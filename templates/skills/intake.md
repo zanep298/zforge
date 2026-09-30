@@ -77,12 +77,18 @@ the version they saw.
    `- [ ] question — stage where it will be settled`. Tick it `[x]` only
    when the answer is written into the file.
 4. `zforge intake review <ID> <file>` — fix every structural error it
-   reports, then tell the user what to look at and why.
-5. The user runs `zforge intake accept` or `zforge intake revise --note …`
-   in their terminal. Read the note and revise.
+   reports, then present the file in chat: what it decides, the proposal
+   with an example, the trade-offs, what changed since the last revision.
+   Present a stage, or a batch of tasks, then stop and wait.
+5. The user decides — in Claude Code, by typing `/accept all`,
+   `/accept <file>…` or `/revise <file>: <what to change>` (zforge's prompt
+   hook records it and tells you what it recorded); at a terminal, with
+   `zforge intake accept|revise`. Read a revision note and revise.
 6. When all files are accepted, `zforge readiness <ID>`; fix what it lists
    by revising files (each goes through review again).
-7. Tell the user the intake is ready; they run `zforge handover <ID>`.
+7. Show the user what the handover would pin (readiness lists it) and ask
+   them to type `/handover` (or run `zforge handover <ID>`). Once the hook
+   reports the handover recorded, start it with `run_start` and follow it.
 
 Revising a file after the ones below it were accepted leaves them resting
 on the old version, and readiness refuses them. Send each of them for
@@ -113,8 +119,11 @@ yourself, `change_new` (MCP) creates the file with the required sections.
 
 ## Never
 
-- Run `zforge intake accept`, `zforge intake revise` or `zforge handover` —
-  they are the user's decisions (they refuse without an interactive terminal)
+- Run `zforge intake accept`, `zforge intake revise`, `zforge handover` or
+  `zforge hook` — they are the user's decisions, recorded only from a
+  terminal or from the user's own `/accept`, `/revise`, `/handover` message
+- Take "ok", "looks good" or any other reply as a decision: only the
+  hook's report that it recorded one counts
 - Write "approved", "accepted" or a status into a file: status is derived
   from the runtime's records
 - Edit a file while the user is reviewing it — it can then no longer be accepted

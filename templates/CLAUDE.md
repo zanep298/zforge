@@ -22,17 +22,21 @@ intake new → write 01-outcome … 04-breakdown + tasks/ → review → [USER a
 |-------|---------|-----|
 | Start an intake | `zforge intake new <ID>`, `zforge intake task <ID> <TASK>` | agent or user |
 | Send a file for review | `zforge intake review <ID> <file>` | agent or user |
-| Accept or ask for changes | `zforge intake accept\|revise <ID> <file>` | **user, in a terminal** |
+| Accept or ask for changes | type `/accept all`, `/accept <file>…`, `/revise <file>: <note>` here — or `zforge intake accept\|revise <ID> <file>` in a terminal | **user** |
 | Check it can be handed over | `zforge readiness <ID>` | agent or user |
-| Hand over | `zforge handover <ID>` | **user, in a terminal** |
+| Hand over | type `/handover` here — or `zforge handover <ID>` in a terminal | **user** |
 | Build every task, then check integration | `zforge run <HANDOVER> [--async]` | agent or user |
 | Follow a run or a handover | `zforge run status\|log\|cancel <ID>` | agent or user |
 | Record what is built | `zforge knowledge index` | agent or user |
 
-Accepting, asking for changes and handing over are the user's decisions. They
-need an interactive terminal and a typed confirmation; there is no flag, env
-var or MCP tool that makes them for you. Prepare the files, send them for
-review, and tell the user what to decide.
+Accepting, asking for changes and handing over are the user's decisions.
+The user makes them by typing `/accept`, `/revise` or `/handover` to you —
+zforge's prompt hook records the message before you see it and tells you
+what it recorded — or at a terminal. There is no flag, env var, MCP tool
+or command you may run that makes them: never run `zforge intake
+accept|revise`, `zforge handover` or `zforge hook`, and never take "ok" as
+a decision. Prepare the files, send them for review, present them, and tell
+the user what to decide.
 
 Where things stand, and the next command, for every intake:
 

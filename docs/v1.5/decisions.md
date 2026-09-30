@@ -4,7 +4,7 @@
 
 | # | Đã chọn |
 |---|---|
-| D1 | Chỉ chốt qua CLI có TTY; không có kênh chốt qua chat |
+| D1 | Chốt qua CLI có TTY, hoặc (sửa đổi 30/09/2026) qua tin nhắn người dùng gõ cho Claude Code, do hook `UserPromptSubmit` ghi — không bao giờ do model ghi |
 | D2 | Leaf task là Markdown + frontmatter nhỏ |
 | D3 | Bắt buộc git + một worktree cho mỗi run ngay từ bản đầu |
 | D4 | CLI trước, MCP sau |
@@ -86,6 +86,30 @@ thứ hai. MCP không có tool chốt (xem D4).
 > **Đã chọn: CLI có TTY.** Câu hỏi ban đầu (D1): chốt chỉ qua CLI có TTY (đề xuất) — hay chấp nhận thêm kênh
 > chat nếu người dùng gõ lại mã xác nhận hiện trên màn hình? Kênh thứ hai tiện hơn
 > nhưng agent có thể đọc và gõ lại mã, nên không chứng minh được con người đã chốt.
+
+### Sửa đổi 30/09/2026 — kênh thứ hai: tin nhắn người dùng gõ, hook ghi
+
+**Vì sao.** Chốt từng file bằng lệnh ở terminal quá nặng khi cả intake được làm
+trong chat: 9 task là 9 lệnh accept, cộng readiness, cộng handover, và mỗi lần
+một stage đổi thì các file stale lại phải chốt từng cái.
+
+**Kênh mới.** Claude Code chạy hook `UserPromptSubmit` (`zforge hook prompt`,
+`zforge init` đăng ký trong `.claude/settings.json`) trên **nguyên văn** mỗi tin
+nhắn người dùng gửi, trước khi model thấy nó. Model không tạo được sự kiện này.
+Khi tin nhắn là `/accept [INTAKE|knowledge] [all|file…]`, `/revise [INTAKE] <file>: <ghi chú>`
+hoặc `/handover [INTAKE]`, zforge tự ghi quyết định với `channel: claude-prompt`,
+`by` (login) và `session` (phiên Claude Code), rồi báo lại cho người dùng
+(`systemMessage`: file, revision, hash rút gọn) và cho model (`additionalContext`).
+Tin nhắn khác đi qua nguyên vẹn.
+
+**Giữ nguyên.** Chỉ revision đang review, đúng hash, mới được chốt (file sửa sau
+review bị từ chối và báo ra); handover kiểm tra lại readiness dưới lock. Model vẫn
+bị `deny` `Bash(zforge intake accept*)`, `Bash(zforge handover*)`… và thêm
+`Bash(zforge hook*)`. MCP vẫn không có tool chốt. TTY vẫn là kênh cho người dùng CLI.
+
+**Giới hạn — như TTY.** Đây là rào chắn để agent không chốt do nhầm hay "nhiệt
+tình", không phải chống code chạy dưới quyền của chính người dùng: một tiến trình
+cùng user vẫn có thể giả input của hook, cũng như có thể tự cấp pty cho CLI.
 
 ---
 

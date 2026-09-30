@@ -1,5 +1,6 @@
 pub mod confirm;
 pub mod doctor;
+pub mod hook;
 pub mod init;
 pub mod install;
 pub mod intake;

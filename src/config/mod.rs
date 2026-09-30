@@ -267,17 +267,7 @@ impl Config {
     }
 
     pub fn find_config_file() -> Option<PathBuf> {
-        let mut dir = env::current_dir().ok()?;
-        loop {
-            let candidate = dir.join(".zforge").join("config.yaml");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
-        None
+        find_config_from(&env::current_dir().ok()?)
     }
 }
 
@@ -433,6 +423,14 @@ fn parse_models(content: &str, path: &Path) -> Option<ModelsConfig> {
             None
         }
     }
+}
+
+/// `.zforge/config.yaml` in `start` or the nearest directory above it.
+pub fn find_config_from(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .map(|d| d.join(".zforge").join("config.yaml"))
+        .find(|c| c.exists())
 }
 
 pub fn load() -> Result<Config> {

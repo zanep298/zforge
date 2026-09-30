@@ -12,6 +12,13 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+enum HookCmd {
+    /// Claude Code's `UserPromptSubmit` hook: records `/accept`, `/revise`
+    /// and `/handover` typed by the user; reads the hook's JSON on stdin.
+    Prompt,
+}
+
+#[derive(Subcommand, Debug)]
 enum KnowledgeCmd {
     /// Regenerate `commitments.md` (in `knowledge.dir`) and
     /// `.zforge/knowledge/commitments.json` from the accepted revisions of
@@ -124,6 +131,12 @@ enum Commands {
     /// `set`, `unset`. Unset phases use zforge's default tier (Claude:
     /// sonnet for code, opus for review) or the client's own default.
     Models(crate::cli::models::ModelsArgs),
+    /// INTERNAL: Claude Code hooks, registered by `zforge init`.
+    #[command(hide = true)]
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
     /// INTERNAL: background run worker — started by `zforge run --async`,
     /// for one run or (`--handover`) a whole handover.
     #[command(hide = true)]
@@ -266,6 +279,9 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Intake { cmd } => cli::intake::run(cmd),
         Commands::Run(args) => cli::run::run(args),
         Commands::Models(args) => cli::models::run(args),
+        Commands::Hook {
+            cmd: HookCmd::Prompt,
+        } => cli::hook::prompt(),
         Commands::RunWorker { run_id, handover } => match (run_id, handover) {
             (Some(run_id), _) => cli::run::worker(&run_id),
             (None, Some(handover)) => cli::run::feature_worker(&handover),

@@ -8,7 +8,7 @@
 //! never changed; a new handover is a new manifest.
 
 use super::readiness::{self, Pinned};
-use super::record::CHANNEL_TTY;
+use super::record::Decider;
 use super::Intake;
 use crate::config::Config;
 use crate::knowledge::{self, Knowledge};
@@ -27,6 +27,9 @@ pub struct Manifest {
     pub channel: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
+    /// The Claude Code session the user handed over from (`claude-prompt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// Tasks handed over, in dependency order.
     pub tasks: Vec<String>,
     /// Accepted revisions the contract consists of.
@@ -102,6 +105,26 @@ pub fn create(
     confirmed: &[Pinned],
     by: Option<String>,
 ) -> Result<Manifest> {
+    create_as(
+        intake,
+        project_root,
+        requested,
+        config,
+        confirmed,
+        &Decider::terminal(by),
+    )
+}
+
+/// [`create`] through `who`'s channel (D1: a terminal, or the user's own
+/// message to Claude Code read by the prompt hook).
+pub fn create_as(
+    intake: &Intake,
+    project_root: &Path,
+    requested: &[String],
+    config: &Config,
+    confirmed: &[Pinned],
+    who: &Decider,
+) -> Result<Manifest> {
     let _lock = super::review::lock(intake)?;
     let r = readiness::check(intake, project_root, requested, config)?;
     if !r.ready {
@@ -133,8 +156,9 @@ pub fn create(
         id: format!("HANDOVER-{n:03}"),
         intake: intake.id.clone(),
         created_at: Utc::now(),
-        channel: CHANNEL_TTY.into(),
-        by,
+        channel: who.channel.into(),
+        by: who.by.clone(),
+        session: who.session.clone(),
         tasks: r.tasks,
         files: r.files,
         knowledge: knowledge_pins,

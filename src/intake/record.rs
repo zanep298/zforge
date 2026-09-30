@@ -54,11 +54,16 @@ pub struct Decision {
     pub sha256: String,
     pub decision: DecisionKind,
     /// How the decision was made: `cli` for reviews, `cli-tty` for a human
-    /// at a terminal. Authority rests on the channel, not on a name.
+    /// at a terminal, `claude-prompt` for a message the user typed to
+    /// Claude Code (read by the prompt hook, never by the model). Authority
+    /// rests on the channel, not on a name.
     pub channel: String,
-    /// Login name of the terminal user, for accepts and revision requests.
+    /// Login name of the user, for accepts and revision requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
+    /// The Claude Code session the message was typed in (`claude-prompt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
 }
@@ -66,6 +71,35 @@ pub struct Decision {
 pub const DECISIONS_FILE: &str = "decisions.jsonl";
 pub const CHANNEL_CLI: &str = "cli";
 pub const CHANNEL_TTY: &str = "cli-tty";
+pub const CHANNEL_PROMPT: &str = "claude-prompt";
+
+/// Who records a user's decision, and through which channel (D1): a human
+/// at a terminal, or the user's own message to Claude Code as the prompt
+/// hook read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decider {
+    pub channel: &'static str,
+    pub by: Option<String>,
+    pub session: Option<String>,
+}
+
+impl Decider {
+    pub fn terminal(by: Option<String>) -> Self {
+        Self {
+            channel: CHANNEL_TTY,
+            by,
+            session: None,
+        }
+    }
+
+    pub fn prompt(by: Option<String>, session: Option<String>) -> Self {
+        Self {
+            channel: CHANNEL_PROMPT,
+            by,
+            session,
+        }
+    }
+}
 
 fn log_path<D: DocSet>(doc: &D) -> PathBuf {
     doc.records_dir().join(DECISIONS_FILE)
@@ -139,6 +173,7 @@ mod tests {
             decision: kind,
             channel: CHANNEL_CLI.into(),
             by: None,
+            session: None,
             note: String::new(),
         }
     }
@@ -196,6 +231,7 @@ mod torn_append_tests {
             decision: kind,
             channel: CHANNEL_CLI.into(),
             by: None,
+            session: None,
             note: String::new(),
         };
         append(&i, &d(DecisionKind::Review)).unwrap();

@@ -188,7 +188,7 @@ pub fn project(project_root: &Path) -> Result<ProjectStatus> {
     })
 }
 
-fn intake_ids(project_root: &Path) -> Vec<String> {
+pub(crate) fn intake_ids(project_root: &Path) -> Vec<String> {
     let mut ids: Vec<String> = std::fs::read_dir(intake::intakes_dir(project_root))
         .into_iter()
         .flatten()
@@ -284,7 +284,8 @@ fn next_step(
     let in_review = named(&|d| d.state == DocState::InReview);
     if !in_review.is_empty() {
         return format!(
-            "decide on {} in a terminal: `zforge intake accept|revise {id} <file>`",
+            "decide on {}: type `/accept all` or `/revise <file>: <note>` to Claude Code, \
+             or `zforge intake accept|revise {id} <file>` in a terminal",
             few(&in_review)
         );
     }
@@ -307,7 +308,10 @@ fn next_step(
         );
     }
     let Some(latest) = latest else {
-        return format!("`zforge readiness {id}`, then `zforge handover {id}` in a terminal");
+        return format!(
+            "`zforge readiness {id}`, then hand over: type `/handover {id}` to Claude Code, \
+             or `zforge handover {id}` in a terminal"
+        );
     };
     run_step(latest)
 }

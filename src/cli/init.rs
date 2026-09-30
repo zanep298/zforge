@@ -480,6 +480,24 @@ fn scaffold_claude(
         }
     );
 
+    // .claude/commands/ — /accept, /revise, /handover, recorded by the
+    // prompt hook in .claude/settings.json
+    let commands = claude_commands::write(cwd)?;
+    stats.record(commands.written > 0);
+    println!(
+        "{} .claude/commands/ — /accept, /revise, /handover ({} written){}",
+        label(commands.written > 0),
+        commands.written,
+        if commands.theirs.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; kept the project's own {} — zforge's hook still records the decision",
+                commands.theirs.join(", ")
+            )
+        }
+    );
+
     // .claude/rules/
     let claude_rules_dir = claude_dir.join("rules");
     std::fs::create_dir_all(&claude_rules_dir)?;
@@ -645,6 +663,7 @@ use detect::detect_project;
 use lang_skills::{build_lang_skills_section, lang_skill_templates};
 
 mod agent_render;
+mod claude_commands;
 mod claude_settings;
 pub(crate) mod claude_skills;
 pub(crate) mod config_file;

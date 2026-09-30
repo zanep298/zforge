@@ -175,6 +175,7 @@ mod tests {
                 created_at: Utc::now(),
                 channel: "tty".into(),
                 by: None,
+                session: None,
                 tasks,
                 files: Vec::<Pinned>::new(),
                 knowledge: Vec::new(),

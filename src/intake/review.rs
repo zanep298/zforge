@@ -7,7 +7,7 @@
 //! reach [`accept`] and [`revise`] (see `cli::intake`).
 
 use super::lint::{self, Issue, Known, Severity};
-use super::record::{self, Decision, DecisionKind, CHANNEL_CLI, CHANNEL_TTY};
+use super::record::{self, Decider, Decision, DecisionKind, CHANNEL_CLI};
 use super::status::{self, DocStatus, Rev};
 use super::{hash, templates, validate_id, Intake, CHANGES_DIR, STAGES, TASKS_DIR};
 use crate::knowledge::docs::DocSet;
@@ -183,6 +183,7 @@ pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
             decision: DecisionKind::Review,
             channel: CHANNEL_CLI.into(),
             by: None,
+            session: None,
             note: String::new(),
         },
     )?;
@@ -240,14 +241,26 @@ pub fn pending_review<D: DocSet>(doc: &D, rel: &str) -> Result<Rev> {
     Ok(pending)
 }
 
-/// Record the user's acceptance of the revision under review. Callers must
-/// have confirmed a human decided (see module docs).
+/// Record the user's acceptance of the revision under review, made at a
+/// terminal. Callers must have confirmed a human decided (see module docs).
 pub fn accept<D: DocSet>(doc: &D, rel: &str, by: Option<String>) -> Result<Rev> {
-    decide(doc, rel, DecisionKind::Accepted, by, String::new())
+    accept_as(doc, rel, &Decider::terminal(by))
 }
 
-/// Record the user's request for changes to the revision under review.
+/// Record the user's request for changes to the revision under review,
+/// made at a terminal.
 pub fn revise<D: DocSet>(doc: &D, rel: &str, by: Option<String>, note: &str) -> Result<Rev> {
+    revise_as(doc, rel, &Decider::terminal(by), note)
+}
+
+/// [`accept`] through `who`'s channel (D1: a terminal, or the user's own
+/// message to Claude Code read by the prompt hook).
+pub fn accept_as<D: DocSet>(doc: &D, rel: &str, who: &Decider) -> Result<Rev> {
+    decide(doc, rel, DecisionKind::Accepted, who, String::new())
+}
+
+/// [`revise`] through `who`'s channel.
+pub fn revise_as<D: DocSet>(doc: &D, rel: &str, who: &Decider, note: &str) -> Result<Rev> {
     if note.trim().is_empty() {
         bail!("say what needs to change (--note)");
     }
@@ -255,7 +268,7 @@ pub fn revise<D: DocSet>(doc: &D, rel: &str, by: Option<String>, note: &str) -> 
         doc,
         rel,
         DecisionKind::NeedsRevision,
-        by,
+        who,
         note.trim().to_string(),
     )
 }
@@ -264,7 +277,7 @@ fn decide<D: DocSet>(
     doc: &D,
     rel: &str,
     kind: DecisionKind,
-    by: Option<String>,
+    who: &Decider,
     note: String,
 ) -> Result<Rev> {
     let _lock = lock(doc)?;
@@ -285,8 +298,9 @@ fn decide<D: DocSet>(
             revision: pending.revision,
             sha256: pending.sha256.clone(),
             decision: kind,
-            channel: CHANNEL_TTY.into(),
-            by,
+            channel: who.channel.into(),
+            by: who.by.clone(),
+            session: who.session.clone(),
             note,
         },
     )?;

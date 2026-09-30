@@ -151,6 +151,7 @@ mod tests {
             decision: kind,
             channel: CHANNEL_CLI.into(),
             by: None,
+            session: None,
             note: if kind == DecisionKind::NeedsRevision {
                 "clarify".into()
             } else {

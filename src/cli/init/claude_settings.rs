@@ -9,6 +9,9 @@
 //! - every key and allow entry already in the file stays, in its order;
 //! - zforge's allow and deny entries that are missing are appended (deny
 //!   keeps agents from running the user's decision commands, D1);
+//! - zforge's `UserPromptSubmit` hook ([`PROMPT_HOOK`]) is added when no
+//!   hook runs it yet: it records the decisions the user types in chat
+//!   (`/accept`, `/revise`, `/handover`) — never the model;
 //! - entries zforge itself used to write and no longer does
 //!   ([`RETIRED_ALLOW`]) are removed — no other entry is ever dropped.
 //!
@@ -65,11 +68,28 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "Bash(zf handover*)",
       "Bash(zf onboard accept*)",
       "Bash(zf onboard revise*)",
-      "Bash(zf onboard baseline*)"
+      "Bash(zf onboard baseline*)",
+      "Bash(zforge hook*)",
+      "Bash(zf hook*)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "zforge hook prompt"
+          }
+        ]
+      }
     ]
   }
 }
 "#;
+
+/// The command Claude Code runs on every message the user sends.
+pub(crate) const PROMPT_HOOK: &str = "zforge hook prompt";
 
 /// Allow entries earlier zforge versions wrote that name tools which no
 /// longer exist: CodeGraph before 0.9, and the v1 task pipeline's tools.
@@ -127,7 +147,37 @@ fn merge(existing: &Value) -> Result<Value> {
             .expect("template has permissions.allow and .deny");
         merge_list(&mut merged, key, wanted)?;
     }
+    merge_prompt_hook(&mut merged, &template["hooks"]["UserPromptSubmit"][0])?;
     Ok(merged)
+}
+
+/// Append zforge's `UserPromptSubmit` entry unless a hook already runs
+/// [`PROMPT_HOOK`]; the user's other hooks stay as they are.
+fn merge_prompt_hook(merged: &mut Value, entry: &Value) -> Result<()> {
+    let Some(root) = merged.as_object_mut() else {
+        bail!("expected a JSON object at the top level");
+    };
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let Some(hooks) = hooks.as_object_mut() else {
+        bail!("`hooks` is not an object");
+    };
+    let list = hooks
+        .entry("UserPromptSubmit")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(list) = list.as_array_mut() else {
+        bail!("`hooks.UserPromptSubmit` is not an array");
+    };
+    let present = list.iter().any(|e| {
+        e["hooks"]
+            .as_array()
+            .is_some_and(|hs| hs.iter().any(|h| h["command"] == PROMPT_HOOK))
+    });
+    if !present {
+        list.push(entry.clone());
+    }
+    Ok(())
 }
 
 /// Append zforge's missing `permissions.<key>` entries; for `allow`, drop
@@ -222,7 +272,14 @@ mod tests {
 
         let out = read(&path);
         assert_eq!(out["env"], user["env"]);
-        assert_eq!(out["hooks"], user["hooks"]);
+        assert_eq!(
+            out["hooks"]["Stop"], user["hooks"]["Stop"],
+            "user hooks kept"
+        );
+        assert_eq!(
+            out["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+            PROMPT_HOOK
+        );
         let deny = out["permissions"]["deny"].as_array().unwrap();
         assert_eq!(
             deny[0], "Bash(rm -rf *)",
@@ -311,5 +368,32 @@ mod tests {
         ] {
             assert!(deny.contains(&json!(cmd)), "{cmd} missing from {deny:?}");
         }
+    }
+
+    /// Chat decisions: the hook is added once, beside the user's own
+    /// `UserPromptSubmit` hooks, and the model may not run it itself.
+    #[test]
+    fn the_prompt_hook_is_added_once_and_denied_to_the_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        let theirs = json!({"hooks": {"UserPromptSubmit": [
+            {"hooks": [{"type": "command", "command": "my-hook"}]}
+        ]}});
+        std::fs::write(&path, theirs.to_string()).unwrap();
+
+        write_settings(&path, true).unwrap();
+        let out = read(&path);
+        let entries = out["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], theirs["hooks"]["UserPromptSubmit"][0]);
+        assert_eq!(entries[1]["hooks"][0]["command"], PROMPT_HOOK);
+        let deny = out["permissions"]["deny"].as_array().unwrap();
+        assert!(deny.contains(&json!("Bash(zforge hook*)")), "{deny:?}");
+
+        assert_eq!(
+            write_settings(&path, true).unwrap(),
+            SettingsWrite::Unchanged,
+            "not added twice"
+        );
     }
 }

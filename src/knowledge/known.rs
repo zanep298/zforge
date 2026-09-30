@@ -73,6 +73,7 @@ fn append(k: &Knowledge, tests: &[String], by: Option<String>) -> Result<Vec<Str
             decision: DecisionKind::BaselineKnown,
             channel: CHANNEL_TTY.into(),
             by,
+            session: None,
             note: note.clone(),
         },
     )?;

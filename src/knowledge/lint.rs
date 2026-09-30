@@ -445,6 +445,7 @@ mod tests {
                 decision: DecisionKind::Accepted,
                 channel: "cli-tty".into(),
                 by: None,
+                session: None,
                 note: String::new(),
             },
         )
@@ -463,6 +464,7 @@ mod tests {
                 decision: DecisionKind::Accepted,
                 channel: "cli-tty".into(),
                 by: None,
+                session: None,
                 note: String::new(),
             },
         )
