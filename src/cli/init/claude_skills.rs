@@ -60,6 +60,11 @@ const BASE: &[BaseSkill] = &[
         phases: &[],
     },
     BaseSkill {
+        source: "onboard.md",
+        description: "Draft the project's own knowledge from the code — domain.md, conventions.md, rules.md under docs/knowledge/ — every statement cited at path:line, what the code cannot show asked as an open question, sent for review but never accepted. Use for onboarding requests, or when `zforge onboard status` shows files in draft or stale.",
+        phases: &[],
+    },
+    BaseSkill {
         source: "security-review.md",
         description: "Find security vulnerabilities in a changeset before merge: injection, authn/authz, secrets, unsafe input handling, dependency risks. Use when a change touches user input, auth, data access or external calls.",
         phases: &[],
@@ -439,6 +444,31 @@ mod tests {
         assert_eq!(
             agent_frontmatter("review", "rust"),
             "skills:\n  - zforge-review-patch\n"
+        );
+    }
+
+    /// ONBOARD TASK-008 AC-01: `zforge-onboard` is in the catalog, preloaded
+    /// by nothing (it triggers on onboarding requests, not a run phase), and
+    /// its body states the evidence rule, the questions rule and that it
+    /// never accepts.
+    #[test]
+    fn onboard_skill_is_catalogued_and_states_its_three_rules() {
+        let skill = catalog("rust")
+            .into_iter()
+            .find(|s| s.name == "zforge-onboard")
+            .expect("zforge-onboard in the catalog");
+        assert!(skill.phases.is_empty(), "{:?}", skill.phases);
+        assert!(skill.source == "onboard.md");
+        let body = crate::embedded::SKILLS
+            .iter()
+            .find(|(n, _)| *n == "onboard.md")
+            .unwrap()
+            .1;
+        assert!(body.contains("path:line"), "evidence rule");
+        assert!(body.contains("Open questions"), "questions rule");
+        assert!(
+            body.to_lowercase().contains("never accept"),
+            "never-accepts rule"
         );
     }
 }

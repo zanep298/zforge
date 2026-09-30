@@ -244,6 +244,81 @@ fn parse_cites(list: &str) -> Vec<Cite> {
         .collect()
 }
 
+/// The ID a raw answer line starts with (`- DOM-004: ...`), or `None` when
+/// it does not look like an item at all — evidence need not be present yet.
+/// Used by `draft`/`refresh` (ONBOARD TASK-008) to match an agent's answer
+/// lines against the IDs it was given, before the file goes through the
+/// full lint that `review` runs.
+pub fn line_id(line: &str) -> Option<String> {
+    item_start_re().captures(line).map(|c| c[1].to_string())
+}
+
+/// The 0-based `[start, end)` line range, within the text after any
+/// frontmatter, of `id`'s item block (its list-item line plus any
+/// continuation lines) — or `None` if `id` is not present. Used by
+/// [`replace_item`].
+fn item_line_range(body: &str, id: &str) -> Option<(usize, usize)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut section = String::new();
+    let mut in_fence = false;
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            i += 1;
+            continue;
+        }
+        if in_fence {
+            i += 1;
+            continue;
+        }
+        if let Some(title) = line.strip_prefix("## ") {
+            section = title.trim().to_string();
+            i += 1;
+            continue;
+        }
+        if OPEN_QUESTIONS.matches(&section) || line.trim().is_empty() {
+            i += 1;
+            continue;
+        }
+        if let Some(caps) = item_start_re().captures(line) {
+            let this_id = caps[1].to_string();
+            let mut j = i + 1;
+            while j < lines.len() && is_continuation(lines[j]) {
+                j += 1;
+            }
+            if this_id == id {
+                return Some((i, j));
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Replace `id`'s item block with the single line `new_line`, leaving every
+/// other line of `text` byte-identical — including the frontmatter, which
+/// this never touches (ONBOARD TASK-008 `refresh`, AC-04). `None` if `id`
+/// is not present in `text`.
+pub fn replace_item(text: &str, id: &str, new_line: &str) -> Option<String> {
+    let (_, body) = split_frontmatter(text);
+    let prefix = &text[..text.len() - body.len()];
+    let (start, end) = item_line_range(body, id)?;
+    let lines: Vec<&str> = body.lines().collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len() + 1 - (end - start));
+    out.extend_from_slice(&lines[..start]);
+    out.push(new_line);
+    out.extend_from_slice(&lines[end..]);
+    let mut new_body = out.join("\n");
+    if body.ends_with('\n') {
+        new_body.push('\n');
+    }
+    Some(format!("{prefix}{new_body}"))
+}
+
 /// `DOM-`, `CONV-` or `RULE-` — the prefix items in `rel` must use.
 pub fn expected_prefix(rel: &str) -> Option<&'static str> {
     match rel {
@@ -360,5 +435,43 @@ mod tests {
         assert_eq!(expected_prefix("conventions.md"), Some("CONV"));
         assert_eq!(expected_prefix("rules.md"), Some("RULE"));
         assert_eq!(expected_prefix("other.md"), None);
+    }
+
+    #[test]
+    fn line_id_reads_the_id_even_without_evidence() {
+        assert_eq!(
+            line_id("- DOM-004: no evidence here").as_deref(),
+            Some("DOM-004")
+        );
+        assert_eq!(line_id("- just a bullet"), None);
+        assert_eq!(line_id("not a list item at all"), None);
+    }
+
+    /// ONBOARD TASK-008 AC-04: replacing one item leaves every other line —
+    /// including the frontmatter — byte-identical.
+    #[test]
+    fn replace_item_touches_only_the_named_item() {
+        let text = "---\npinned: abc\n---\n## m\n- DOM-001: first. (a/b.rs:1)\n- DOM-002: second. (a/b.rs:2)\n\n## Open questions\n";
+        let out = replace_item(text, "DOM-001", "- DOM-001: refreshed. (a/b.rs:9)").unwrap();
+        assert_eq!(
+            out,
+            "---\npinned: abc\n---\n## m\n- DOM-001: refreshed. (a/b.rs:9)\n- DOM-002: second. (a/b.rs:2)\n\n## Open questions\n"
+        );
+    }
+
+    #[test]
+    fn replace_item_keeps_a_wrapped_items_continuation_together() {
+        let text = "## m\n- DOM-001: first line\n  continues here. (a/b.rs:1-2)\n- DOM-002: second. (a/b.rs:3)\n";
+        let out = replace_item(text, "DOM-001", "- DOM-001: one line now. (a/b.rs:1)").unwrap();
+        assert_eq!(
+            out,
+            "## m\n- DOM-001: one line now. (a/b.rs:1)\n- DOM-002: second. (a/b.rs:3)\n"
+        );
+    }
+
+    #[test]
+    fn replace_item_on_a_missing_id_is_none() {
+        let text = "## m\n- DOM-001: first. (a/b.rs:1)\n";
+        assert!(replace_item(text, "DOM-999", "- DOM-999: x. (a/b.rs:1)").is_none());
     }
 }

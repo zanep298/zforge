@@ -60,6 +60,11 @@ pub struct KnowledgeConfig {
     pub dir: PathBuf,
     #[serde(default = "default_prompt_limit")]
     pub prompt_limit: usize,
+    /// `--max-budget-usd` of one headless `zforge onboard draft` /
+    /// `refresh` agent call, when `--budget` does not override it (ONBOARD
+    /// TASK-008).
+    #[serde(default = "default_draft_budget_usd")]
+    pub draft_budget_usd: f64,
 }
 
 impl Default for KnowledgeConfig {
@@ -68,6 +73,7 @@ impl Default for KnowledgeConfig {
             baseline: default_baseline(),
             dir: default_knowledge_dir(),
             prompt_limit: default_prompt_limit(),
+            draft_budget_usd: default_draft_budget_usd(),
         }
     }
 }
@@ -82,6 +88,10 @@ fn default_knowledge_dir() -> PathBuf {
 
 fn default_prompt_limit() -> usize {
     24_000
+}
+
+fn default_draft_budget_usd() -> f64 {
+    2.0
 }
 
 /// v1.5 execution policy written into each handover manifest (workflow
@@ -489,6 +499,7 @@ mod tests {
         assert_eq!(cfg.execution.max_iterations, 3);
         assert_eq!(cfg.execution.budget_usd, None);
         assert_eq!(cfg.execution.agent_timeout_secs, 3600);
+        assert_eq!(cfg.knowledge.draft_budget_usd, 2.0);
     }
 
     /// Keys of the removed task pipeline (`opencode`, `review`,

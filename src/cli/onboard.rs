@@ -42,6 +42,23 @@ pub enum OnboardCmd {
         #[arg(long)]
         clear: bool,
     },
+    /// Draft `domain.md`'s module sections with one headless, edit-disabled
+    /// agent call per module; sends the file for review, never accepts it.
+    Draft {
+        /// Draft only this module instead of every module `baseline.md` lists.
+        #[arg(long)]
+        module: Option<String>,
+        /// Override `knowledge.draft_budget_usd` for this call.
+        #[arg(long)]
+        budget: Option<f64>,
+    },
+    /// Redraft only the knowledge items `zforge onboard status` reports
+    /// stale, one headless, edit-disabled agent call per file.
+    Refresh {
+        /// Override `knowledge.draft_budget_usd` for this call.
+        #[arg(long)]
+        budget: Option<f64>,
+    },
 }
 
 /// `cmd = None` is bare `zforge onboard`: probe the project (Output).
@@ -56,6 +73,64 @@ pub fn run(cmd: Option<OnboardCmd>) -> Result<()> {
         Some(OnboardCmd::Accept { file }) => decide(&k, &file, None),
         Some(OnboardCmd::Revise { file, note }) => decide(&k, &file, Some(&note)),
         Some(OnboardCmd::Baseline { known, clear }) => baseline(&k, known, clear),
+        Some(OnboardCmd::Draft { module, budget }) => {
+            draft_cmd(&root, &config, module.as_deref(), budget)
+        }
+        Some(OnboardCmd::Refresh { budget }) => refresh_cmd(&root, &config, budget),
+    }
+}
+
+fn draft_cmd(
+    root: &std::path::Path,
+    config: &config::Config,
+    module: Option<&str>,
+    budget: Option<f64>,
+) -> Result<()> {
+    let report = knowledge::draft::draft(root, config, module, budget)?;
+    print_report(&report);
+    if !report.all_ok() {
+        bail!("drafting had problems — see above");
+    }
+    Ok(())
+}
+
+fn refresh_cmd(root: &std::path::Path, config: &config::Config, budget: Option<f64>) -> Result<()> {
+    let report = knowledge::draft::refresh(root, config, budget)?;
+    if report.outcomes.is_empty() {
+        println!("{} nothing stale — nothing to refresh", "✓".green());
+        return Ok(());
+    }
+    print_report(&report);
+    if !report.all_ok() {
+        bail!("refresh had problems — see above");
+    }
+    Ok(())
+}
+
+fn print_report(report: &knowledge::draft::Report) {
+    for o in &report.outcomes {
+        if !o.applied {
+            println!(
+                "{} {}: {}",
+                "✗".red(),
+                o.file,
+                o.reason.as_deref().unwrap_or("failed")
+            );
+            continue;
+        }
+        match &o.review {
+            Some(Ok(rev)) => println!(
+                "{} {} sent for review as revision {rev}",
+                "✓".green(),
+                o.file
+            ),
+            Some(Err(e)) => println!(
+                "{} {} written, but review refused it: {e}",
+                "✗".red(),
+                o.file
+            ),
+            None => {}
+        }
     }
 }
 

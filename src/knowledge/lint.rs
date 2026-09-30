@@ -270,7 +270,10 @@ const MODULES: Heading = Heading {
     legacy: "Modules",
 };
 
-fn baseline_modules(text: &str) -> Vec<String> {
+/// Module names `baseline.md`'s "## Modules" section lists — also used by
+/// `draft` (ONBOARD TASK-008) to know what to draft when `--module` is not
+/// given.
+pub(crate) fn baseline_modules(text: &str) -> Vec<String> {
     let secs = crate::intake::lint::sections(text);
     let Some(lines) = crate::intake::lint::section(&secs, MODULES) else {
         return Vec::new();

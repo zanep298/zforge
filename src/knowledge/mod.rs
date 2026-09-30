@@ -11,6 +11,7 @@
 
 pub mod commitments;
 pub mod docs;
+pub mod draft;
 pub mod items;
 pub mod known;
 pub mod lint;
