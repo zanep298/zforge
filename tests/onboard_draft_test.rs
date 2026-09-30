@@ -264,6 +264,56 @@ fn draft_starts_the_agent_without_editing_tools() {
     assert!(args.contains("NotebookEdit"), "{args}");
 }
 
+/// AC-06 (defense in depth): `--disallowedTools` is not the only thing
+/// standing between the agent and the checkout — a stub that behaves as if
+/// it ran a shell command anyway, writing a file in its working directory,
+/// is treated as a failed call because it left its isolated worktree
+/// dirty. No knowledge file changes, and the write never reaches the
+/// project's real checkout.
+#[test]
+fn draft_where_the_agent_writes_a_file_anyway_is_treated_as_failed() {
+    let p = Project::new();
+    std::fs::write(
+        p.home.join("response.json"),
+        result_line(
+            "- DOM-1: refresh tokens are single-use. (src/lib.rs:1)\n",
+            0.01,
+        ),
+    )
+    .unwrap();
+    let script = p.home.join("claude-stub");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat > /dev/null\necho mutated > mutated-by-agent.txt\ncat {home}/response.json\n",
+            home = p.home.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        p.home.join("registry.yaml"),
+        format!(
+            "agents:\n  claude:\n    command: {}\n    args: [\"-p\", \"--output-format\", \"stream-json\", \"--verbose\"]\n",
+            script.display()
+        ),
+    )
+    .unwrap();
+
+    let before = p.domain_md();
+    let out = p.zforge(&["onboard", "draft", "--module", "internal/token"]);
+    assert!(!out.status.success());
+    let combined = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(combined.contains("uncommitted changes"), "{combined}");
+    assert_eq!(p.domain_md(), before);
+    assert_eq!(p.decisions_log().trim(), "");
+
+    // The mutation happened in a throwaway worktree, never the project's
+    // real checkout.
+    assert!(!p.root.join("mutated-by-agent.txt").exists());
+}
+
 /// AC-04: `onboard refresh` replaces only the stale IDs; every other line
 /// is byte-identical.
 #[test]

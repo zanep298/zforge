@@ -14,18 +14,25 @@
 //! (REQ-003); this command is the headless, per-module path the skill (and
 //! CI) can call without a human answering open questions.
 //!
-//! **No separate worktree.** The probe already refuses onboarding on an
-//! uncommitted tree (`probe::run`), so a clean tree *is* HEAD's content;
-//! the agent has no editing tools either way, so a worktree here would add
-//! bookkeeping (a branch per call) without changing what the agent can do.
-//! Both commands run directly in the project's working tree instead.
+//! **Isolation (Output: "in a worktree at HEAD").** The probe already
+//! refuses onboarding on an uncommitted tree (`probe::run`), so a clean
+//! tree *is* HEAD's content, and each call gets its own throwaway
+//! `run::worktree` checked out at that commit — never the project's real
+//! working tree. `--disallowedTools` keeps Edit, Write and NotebookEdit out
+//! of the agent's hands, but that alone is not airtight: Bash (also
+//! disallowed here, but a client bug or an unknown runner might not honour
+//! it) could still write, delete or run arbitrary commands. The worktree
+//! contains whatever a call does, and [`call_agent`] treats the call as
+//! failed — whatever its exit code says — unless that worktree is clean
+//! when the call ends; either way the worktree and its branch are removed
+//! before the call returns, so nothing it did survives.
 
 use super::items;
 use super::{lint as klint, stale, Knowledge};
 use crate::config::Config;
 use crate::intake::lint as intake_lint;
 use crate::orchestrator::{headless_args, spawn};
-use crate::run::git;
+use crate::run::{git, worktree};
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -36,8 +43,10 @@ const RUNNER: &str = "claude";
 const CALL_TIMEOUT_SECS: u64 = 900;
 const MIN_BUDGET_USD: f64 = 0.01;
 /// Never given to a drafting or refresh call (Output, AC-06): it may read
-/// the code, never change it — the same tools `review-agent` disallows.
-const DISALLOWED_TOOLS: &str = "Edit,Write,NotebookEdit";
+/// the code, never change it. Same as `review-agent`'s read-only tools,
+/// plus `Bash` — a shell is how an agent without Edit/Write would otherwise
+/// still write, delete or overwrite a file.
+const DISALLOWED_TOOLS: &str = "Edit,Write,NotebookEdit,Bash";
 
 /// What happened to one file a call touched.
 #[derive(Debug)]
@@ -106,6 +115,7 @@ pub fn draft(
 pub fn refresh(project_root: &Path, config: &Config, budget_usd: Option<f64>) -> Result<Report> {
     ensure_clean(project_root)?;
     let k = Knowledge::open(config);
+    let head = git::head(project_root)?;
     let budget = budget_usd.unwrap_or(config.knowledge.draft_budget_usd);
     let report = stale::check(&k)?;
     let mut by_file: BTreeMap<String, Vec<stale::StaleItem>> = BTreeMap::new();
@@ -114,7 +124,14 @@ pub fn refresh(project_root: &Path, config: &Config, budget_usd: Option<f64>) ->
     }
     let mut outcomes = Vec::new();
     for (file, items) in by_file {
-        outcomes.push(refresh_file(project_root, &k, &file, &items, budget)?);
+        outcomes.push(refresh_file(
+            project_root,
+            &k,
+            &head,
+            &file,
+            &items,
+            budget,
+        )?);
     }
     Ok(Report { outcomes })
 }
@@ -156,7 +173,7 @@ fn draft_module(
     let next_dom = next_id(&current, "DOM");
     let prompt = draft_prompt(module, head, next_dom);
     let call_id = format!("draft-{module}");
-    let answer = match call_agent(project_root, "draft", &call_id, &prompt, budget)? {
+    let answer = match call_agent(project_root, head, "draft", &call_id, &prompt, budget)? {
         CallResult::Answered(a) => a,
         CallResult::Failed(reason) => {
             return Ok(FileOutcome::failed(
@@ -256,6 +273,7 @@ fn parse_draft_answer(answer: &str) -> DraftAnswer {
 fn refresh_file(
     project_root: &Path,
     k: &Knowledge,
+    head: &str,
     file: &str,
     stale_items: &[stale::StaleItem],
     budget: f64,
@@ -265,7 +283,7 @@ fn refresh_file(
     let ids: Vec<String> = stale_items.iter().map(|s| s.id.clone()).collect();
     let prompt = refresh_prompt(project_root, file, stale_items)?;
     let call_id = format!("refresh-{file}");
-    let answer = match call_agent(project_root, "refresh", &call_id, &prompt, budget)? {
+    let answer = match call_agent(project_root, head, "refresh", &call_id, &prompt, budget)? {
         CallResult::Answered(a) => a,
         CallResult::Failed(reason) => return Ok(FileOutcome::failed(file, reason)),
     };
@@ -287,8 +305,7 @@ fn refresh_file(
         new_text = items::replace_item(&new_text, id, &answered[id])
             .ok_or_else(|| anyhow!("{id} not found in {file} any more"))?;
     }
-    let head = git::head(project_root)?;
-    new_text = set_scalar(&new_text, "pinned", &head);
+    new_text = set_scalar(&new_text, "pinned", head);
     crate::fs::write_atomic(&path, new_text.as_bytes())?;
 
     let review = super::review(project_root, k, file)
@@ -362,10 +379,30 @@ enum CallResult {
     Failed(String),
 }
 
-/// Spawn one headless, edit-disabled agent call; trace and cost it like a
-/// run's.
+/// A valid [`worktree::create_on`] id derived from `call_id`, which may
+/// contain characters (like a module path's `/`) that id is not: every
+/// character outside `[A-Za-z0-9._-]` becomes `-`.
+fn worktree_id(call_id: &str) -> String {
+    let cleaned: String = call_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("onboard-{cleaned}")
+}
+
+/// Spawn one headless, edit-disabled agent call in its own throwaway
+/// worktree at `head`; trace and cost it like a run's. The worktree (and
+/// its branch) are gone again before this returns, whatever the outcome —
+/// nothing the call did to it survives.
 fn call_agent(
     project_root: &Path,
+    head: &str,
     phase: &str,
     call_id: &str,
     prompt: &str,
@@ -387,65 +424,94 @@ fn call_agent(
     args.push(format!("{budget_usd:.2}"));
     spec.args = args;
 
-    let out = spawn::spawn_agent_in(&spec, prompt, CALL_TIMEOUT_SECS, project_root)
-        .with_context(|| format!("spawn the agent for {call_id}"))?;
+    let wt_id = worktree_id(call_id);
+    let branch = format!("zforge/onboard/{wt_id}");
+    let wt = worktree::create_on(project_root, &wt_id, &branch, head)
+        .with_context(|| format!("create an isolated worktree for {call_id}"))?;
 
-    let trace = crate::trace::from_invocation(crate::trace::Invocation {
-        task_id: call_id,
-        phase,
-        attempt: 1,
-        runner: RUNNER,
-        command: std::iter::once(spec.command.clone())
-            .chain(spec.args.iter().cloned())
-            .collect(),
-        expected: crate::trace::Expected::default(),
-        stdout: &out.stdout,
-        stderr: &out.stderr,
-        exit_code: out.exit_code,
-        timed_out: out.timed_out,
-        duration_ms: out.duration_ms,
-    });
-    if let Err(e) =
-        crate::trace::log::append(&project_root.join(".zforge/knowledge/traces"), &trace)
-    {
-        eprintln!("warning: trace not recorded: {e:#}");
-    }
+    let outcome = (|| -> Result<CallResult> {
+        let out = spawn::spawn_agent_in(&spec, prompt, CALL_TIMEOUT_SECS, &wt.path)
+            .with_context(|| format!("spawn the agent for {call_id}"))?;
 
-    if out.timed_out {
-        return Ok(CallResult::Failed(format!(
-            "timed out after {CALL_TIMEOUT_SECS}s"
-        )));
-    }
-    let result = extract_result(&out.stdout);
-    if out.exit_code != 0 {
-        return Ok(CallResult::Failed(format!(
-            "agent exited with {}{}",
-            out.exit_code,
-            result
-                .message
-                .as_deref()
-                .map(|m| format!(": {m}"))
-                .unwrap_or_default()
-        )));
-    }
-    if result.is_error {
-        return Ok(CallResult::Failed(format!(
-            "agent reported an error{}",
-            result
-                .message
-                .as_deref()
-                .map(|m| format!(": {m}"))
-                .unwrap_or_default()
-        )));
-    }
-    if let Some(cost) = result.cost_usd {
-        if cost > budget_usd + 1e-9 {
+        let trace = crate::trace::from_invocation(crate::trace::Invocation {
+            task_id: call_id,
+            phase,
+            attempt: 1,
+            runner: RUNNER,
+            command: std::iter::once(spec.command.clone())
+                .chain(spec.args.iter().cloned())
+                .collect(),
+            expected: crate::trace::Expected::default(),
+            stdout: &out.stdout,
+            stderr: &out.stderr,
+            exit_code: out.exit_code,
+            timed_out: out.timed_out,
+            duration_ms: out.duration_ms,
+        });
+        if let Err(e) =
+            crate::trace::log::append(&project_root.join(".zforge/knowledge/traces"), &trace)
+        {
+            eprintln!("warning: trace not recorded: {e:#}");
+        }
+
+        if out.timed_out {
             return Ok(CallResult::Failed(format!(
-                "cost ${cost:.2} exceeded the ${budget_usd:.2} budget"
+                "timed out after {CALL_TIMEOUT_SECS}s"
             )));
         }
+        // Defense in depth (AC-06): `--disallowedTools` is not proof by
+        // itself — treat the call as failed, whatever its exit code says,
+        // unless the worktree it ran in is still exactly as it started.
+        if !git::is_clean(&wt.path)
+            .with_context(|| format!("check the worktree for {call_id} stayed clean"))?
+        {
+            return Ok(CallResult::Failed(
+                "the agent left its worktree with uncommitted changes; a drafting or refresh \
+                 call must not write, delete or otherwise change any file"
+                    .to_string(),
+            ));
+        }
+        let result = extract_result(&out.stdout);
+        if out.exit_code != 0 {
+            return Ok(CallResult::Failed(format!(
+                "agent exited with {}{}",
+                out.exit_code,
+                result
+                    .message
+                    .as_deref()
+                    .map(|m| format!(": {m}"))
+                    .unwrap_or_default()
+            )));
+        }
+        if result.is_error {
+            return Ok(CallResult::Failed(format!(
+                "agent reported an error{}",
+                result
+                    .message
+                    .as_deref()
+                    .map(|m| format!(": {m}"))
+                    .unwrap_or_default()
+            )));
+        }
+        if let Some(cost) = result.cost_usd {
+            if cost > budget_usd + 1e-9 {
+                return Ok(CallResult::Failed(format!(
+                    "cost ${cost:.2} exceeded the ${budget_usd:.2} budget"
+                )));
+            }
+        }
+        Ok(CallResult::Answered(Answer { text: result.text }))
+    })();
+
+    if let Err(e) = worktree::remove(project_root, &wt, true) {
+        eprintln!(
+            "warning: could not remove onboarding worktree {}: {e:#}",
+            wt.path.display()
+        );
     }
-    Ok(CallResult::Answered(Answer { text: result.text }))
+    let _ = git::run(project_root, &["branch", "-D", branch.as_str()]);
+
+    outcome
 }
 
 struct RawResult {
