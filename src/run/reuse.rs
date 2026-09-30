@@ -191,6 +191,7 @@ mod tests {
                 delivery: String::new(),
             },
             manifest_sha256: "m".into(),
+            knowledge: Vec::new(),
             files: files
                 .iter()
                 .map(|(file, sha, deps)| ContractFile {

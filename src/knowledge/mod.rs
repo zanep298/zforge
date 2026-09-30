@@ -15,6 +15,7 @@ pub mod items;
 pub mod known;
 pub mod lint;
 pub mod probe;
+pub mod select;
 pub mod stale;
 
 use crate::config::Config;

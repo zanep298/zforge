@@ -46,12 +46,20 @@ pub struct RunnerConfig {
 /// `dir` is where the project's own knowledge (ONBOARD REQ-006) lives:
 /// `domain.md`, `conventions.md`, `rules.md` and their `.records/`,
 /// committed with the code.
+///
+/// `prompt_limit` bounds how many bytes of it a run's prompt carries
+/// (ONBOARD REQ-008, TASK-007): every accepted `rules.md` and
+/// `conventions.md` item, then the `domain.md` items the task's contract
+/// and stages name, up to this many bytes; what does not fit is named by
+/// ID with the accepted snapshot's path (`knowledge::select`).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KnowledgeConfig {
     #[serde(default = "default_baseline")]
     pub baseline: String,
     #[serde(default = "default_knowledge_dir")]
     pub dir: PathBuf,
+    #[serde(default = "default_prompt_limit")]
+    pub prompt_limit: usize,
 }
 
 impl Default for KnowledgeConfig {
@@ -59,6 +67,7 @@ impl Default for KnowledgeConfig {
         Self {
             baseline: default_baseline(),
             dir: default_knowledge_dir(),
+            prompt_limit: default_prompt_limit(),
         }
     }
 }
@@ -69,6 +78,10 @@ fn default_baseline() -> String {
 
 fn default_knowledge_dir() -> PathBuf {
     PathBuf::from("docs/knowledge")
+}
+
+fn default_prompt_limit() -> usize {
+    24_000
 }
 
 /// v1.5 execution policy written into each handover manifest (workflow

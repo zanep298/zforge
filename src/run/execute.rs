@@ -220,6 +220,15 @@ fn work(
         &contract.tests_may_change,
         &work_dir,
     );
+    // What this task's agents get from the project's knowledge (ONBOARD
+    // REQ-008): computed once, so the code and review prompts carry the
+    // same selection (AC-04), and traced with what was actually included.
+    let knowledge = contract.knowledge_selection(config.knowledge.prompt_limit);
+    let knowledge_revisions: Vec<(String, u32)> = contract
+        .knowledge
+        .iter()
+        .map(|k| (k.file.clone(), k.revision))
+        .collect();
 
     let code = |n: u32, prev: Option<&VerifyOutcome>| -> Result<()> {
         interrupted()?;
@@ -238,6 +247,7 @@ fn work(
             &change_request,
             &checklists,
             &config.project.test_command,
+            &knowledge,
         );
         eprintln!("{}: attempt {n} (up to ${left:.2})", run.id);
         run.append(&RunEvent::AttemptStarted {
@@ -256,6 +266,8 @@ fn work(
             prompt: &prompt,
             left_usd: left,
             timeout_secs,
+            knowledge_revisions: &knowledge_revisions,
+            knowledge_items: &knowledge.items,
         })?;
         run.append(&RunEvent::Attempt {
             at: Utc::now(),
@@ -337,7 +349,8 @@ fn work(
                         ))
                         .into());
                     }
-                    let prompt = contract.review_prompt(&start, &config.project.test_command);
+                    let prompt =
+                        contract.review_prompt(&start, &config.project.test_command, &knowledge);
                     let verdict = super::review::review(
                         &Call {
                             run,
@@ -350,6 +363,8 @@ fn work(
                             prompt: &prompt,
                             left_usd: left,
                             timeout_secs,
+                            knowledge_revisions: &knowledge_revisions,
+                            knowledge_items: &knowledge.items,
                         },
                         &candidate,
                     )?;
@@ -520,6 +535,11 @@ pub(super) struct Call<'a> {
     pub prompt: &'a str,
     pub left_usd: f64,
     pub timeout_secs: u64,
+    /// The pinned knowledge files (and revisions) this call's prompt was
+    /// drawn from, and the item IDs it actually included (ONBOARD
+    /// TASK-007, AC-04) — traced alongside the call.
+    pub knowledge_revisions: &'a [(String, u32)],
+    pub knowledge_items: &'a [String],
 }
 
 /// Run the agent in the worktree, record its trace, and return what it
@@ -562,6 +582,8 @@ pub(super) fn call_agent(c: &Call) -> Result<Called> {
             &named,
             model.as_deref(),
             Some(&c.config.project.language),
+            c.knowledge_revisions,
+            c.knowledge_items,
         ),
         stdout: &out.stdout,
         stderr: &out.stderr,

@@ -336,6 +336,7 @@ mod tests {
                 "zforge-implement-minimal-patch".into(),
             ],
             mcp_servers: vec!["codegraph".into()],
+            ..Default::default()
         }
     }
 
@@ -461,6 +462,7 @@ mod tests {
             model: Some("opus".into()),
             skills: vec!["zforge-not-installed".into()],
             mcp_servers: vec![],
+            ..Default::default()
         };
         let m = analyze(STREAM, "", &e)
             .findings

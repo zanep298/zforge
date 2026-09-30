@@ -31,6 +31,22 @@ fn render_phase(out: &mut String, p: &PhaseTrace) {
             if !p.expected.skills.is_empty() {
                 let _ = writeln!(out, "  preload skills: {}", p.expected.skills.join(", "));
             }
+            if !p.expected.knowledge.is_empty() {
+                let files: Vec<String> = p
+                    .expected
+                    .knowledge
+                    .iter()
+                    .map(|k| format!("{} rev {}", k.file, k.revision))
+                    .collect();
+                let _ = writeln!(out, "  knowledge: {}", files.join(", "));
+                if !p.expected.knowledge_items.is_empty() {
+                    let _ = writeln!(
+                        out,
+                        "  knowledge items: {}",
+                        p.expected.knowledge_items.join(", ")
+                    );
+                }
+            }
             if !o.mcp_servers.is_empty() {
                 let servers: Vec<String> = o
                     .mcp_servers

@@ -14,8 +14,9 @@
 use super::record::{Checks, ChecksFrom};
 use crate::intake::handover::Manifest;
 use crate::intake::{hash, lint, record, Intake, STAGES};
+use crate::knowledge::{self, select, Knowledge};
 use anyhow::{bail, Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const TEMPLATE: &str = include_str!("../../templates/contract.tmpl");
 const REVIEW_TEMPLATE: &str = include_str!("../../templates/review_contract.tmpl");
@@ -27,6 +28,18 @@ pub struct ContractFile {
     pub revision: u32,
     pub sha256: String,
     pub text: String,
+}
+
+/// One pinned knowledge file (ONBOARD TASK-007), as a run's contract loads
+/// it: the accepted revision's text, verified, plus its snapshot's absolute
+/// path so a selection over the byte limit can still point at the rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeFile {
+    pub file: String,
+    pub revision: u32,
+    pub sha256: String,
+    pub text: String,
+    pub snapshot_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +56,9 @@ pub struct Contract {
     pub tests_may_change: Vec<String>,
     /// Every file the manifest pins, verified.
     pub files: Vec<ContractFile>,
+    /// The handover's pinned knowledge (ONBOARD TASK-007), verified; empty
+    /// when the handover pinned none (AC-05).
+    pub knowledge: Vec<KnowledgeFile>,
 }
 
 /// The intake that holds `handover_id`. Handover ids are numbered per
@@ -96,6 +112,10 @@ pub struct Handover {
     /// SHA-256 of the manifest file, recorded in each run's `run.yaml`.
     pub manifest_sha256: String,
     pub files: Vec<ContractFile>,
+    /// The handover's pinned knowledge (ONBOARD TASK-007), verified; empty
+    /// on a handover that pinned none, including every manifest written
+    /// before this field existed.
+    pub knowledge: Vec<KnowledgeFile>,
 }
 
 /// Load and verify the contract of `task` in handover `handover_id`
@@ -124,6 +144,7 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         depends_on,
         tests_may_change: meta.tests_may_change,
         files: h.files,
+        knowledge: h.knowledge,
     })
 }
 
@@ -167,11 +188,33 @@ pub fn load_handover(project_root: &Path, handover_id: &str) -> Result<Handover>
         });
     }
 
+    // The handover's pinned knowledge (ONBOARD TASK-007), verified the same
+    // way `knowledge::read_pinned` already gives TASK-006's callers: a
+    // tampered or missing snapshot stops the run, not just the code it pins.
+    let config = crate::config::load_from(&project_root.join(".zforge").join("config.yaml"))
+        .with_context(|| format!("load the project config to read {id}'s pinned knowledge"))?;
+    let k = Knowledge::open(&config);
+    let read = knowledge::read_pinned(&k, &manifest.knowledge)
+        .with_context(|| format!("{id}'s pinned knowledge; nothing was run"))?;
+    let knowledge: Vec<KnowledgeFile> = manifest
+        .knowledge
+        .iter()
+        .zip(read)
+        .map(|(pin, (file, text))| KnowledgeFile {
+            snapshot_path: record::snapshot_path(&k, &file, pin.revision),
+            file,
+            revision: pin.revision,
+            sha256: pin.sha256.clone(),
+            text,
+        })
+        .collect();
+
     Ok(Handover {
         intake: intake.id,
         manifest,
         manifest_sha256: hash::sha256(&raw),
         files,
+        knowledge,
     })
 }
 
@@ -282,13 +325,16 @@ impl Contract {
     /// writes a change request when the contract must change. `checklists`
     /// are the project's checklists for writing code and tests, by absolute
     /// path (`agent_env::checklists`); `test_command` is what verification
-    /// runs.
+    /// runs. `knowledge` is this task's selection of the project's
+    /// knowledge (`knowledge_selection`), given identically to the review
+    /// prompt (AC-04).
     pub fn prompt(
         &self,
         feedback: Option<&str>,
         change_request_path: &str,
         checklists: &[std::path::PathBuf],
         test_command: &str,
+        knowledge: &select::Selection,
     ) -> String {
         let feedback = match feedback {
             Some(text) if !text.trim().is_empty() => format!(
@@ -318,21 +364,62 @@ impl Contract {
             .replace("{{handover_id}}", &self.manifest.id)
             .replace("{{change_request_path}}", change_request_path)
             .replace("{{verifier_feedback}}\n", &feedback)
+            .replace("{{project_knowledge}}\n", &Self::knowledge_block(knowledge))
             .replace("{{task_contract}}", self.task_file().text.trim_end())
             .replace("{{stage_context}}", &self.stage_context())
     }
 
     /// The prompt for reviewing a run's passing work (`run::review`):
-    /// `start` is the commit the task started from.
-    pub fn review_prompt(&self, start: &str, test_command: &str) -> String {
+    /// `start` is the commit the task started from. `knowledge` is the same
+    /// selection given to the code prompt (AC-04).
+    pub fn review_prompt(
+        &self,
+        start: &str,
+        test_command: &str,
+        knowledge: &select::Selection,
+    ) -> String {
         REVIEW_TEMPLATE
             .replace("{{test_command}}", test_command)
             .replace("{{start}}", start)
             .replace("{{task_id}}", &self.task)
             .replace("{{intake_id}}", &self.intake)
             .replace("{{handover_id}}", &self.manifest.id)
+            .replace("{{project_knowledge}}\n", &Self::knowledge_block(knowledge))
             .replace("{{task_contract}}", self.task_file().text.trim_end())
             .replace("{{stage_context}}", &self.stage_context())
+    }
+
+    /// What this task's agents get from the project's accepted knowledge
+    /// (ONBOARD REQ-008): every pinned `rules.md`/`conventions.md` item and
+    /// the `domain.md` items this task's contract and stages name, within
+    /// `limit` bytes (`knowledge.prompt_limit`) — drawn only from the
+    /// pinned snapshots (AC-01, AC-02, AC-03). Empty when the handover
+    /// pinned no knowledge (AC-05).
+    pub fn knowledge_selection(&self, limit: usize) -> select::Selection {
+        if self.knowledge.is_empty() {
+            return select::Selection::default();
+        }
+        let search_text = format!("{}\n\n{}", self.task_file().text, self.stage_context());
+        let pins: Vec<select::PinnedFile> = self
+            .knowledge
+            .iter()
+            .map(|k| select::PinnedFile {
+                file: &k.file,
+                revision: k.revision,
+                text: &k.text,
+                snapshot_path: &k.snapshot_path,
+            })
+            .collect();
+        select::for_task(&pins, &search_text, limit)
+    }
+
+    /// The `## Project knowledge` block for a prompt; empty (so the whole
+    /// section disappears, AC-05) when the selection has nothing to show.
+    fn knowledge_block(knowledge: &select::Selection) -> String {
+        if knowledge.text.trim().is_empty() {
+            return String::new();
+        }
+        format!("## Project knowledge\n\n{}\n\n", knowledge.text.trim_end())
     }
 
     /// The accepted stages, as pinned, in order.
@@ -365,7 +452,8 @@ pub(crate) mod tests {
     fn task(id: &str, deps: &str) -> String {
         format!(
             "---\nid: {id}\nparent: F\nrequirements: [REQ-001]\ndepends_on: [{deps}]\n---\n\n# {id}\n\n\
-             ## Mục tiêu\nLọc theo {id}.\n## Input\nAPI.\n## Output\nDanh sách.\n## Ràng buộc\nGiữ shape.\n\
+             ## Mục tiêu\nLọc theo {id}.\n## Input\nAPI.\n## Output\nDanh sách.\n\
+             ## Ràng buộc\nGiữ shape. Xem `internal/audit/writer.rs`. Knowledge: DOM-001.\n\
              ## Tự chủ\nTự chọn hàm.\n## Acceptance và kiểm chứng\n- AC-01: lọc đúng\n## Bàn giao\nLocal.\n\
              ## Cần amendment khi\nĐổi shape.\n## Câu hỏi còn mở\n"
         )
@@ -380,6 +468,14 @@ pub(crate) mod tests {
     /// A git project with intake F accepted and handed over as HANDOVER-001:
     /// TASK-001 (no dependency) and TASK-002 (depends on TASK-001).
     pub(crate) fn handed_over() -> Fixture {
+        handed_over_with(|_, _| {})
+    }
+
+    /// As [`handed_over`], but `setup_knowledge` runs first — writing and
+    /// accepting `docs/knowledge/*.md` — so the handover pins them.
+    pub(crate) fn handed_over_with(
+        setup_knowledge: impl FnOnce(&Path, &crate::config::Config),
+    ) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".zforge")).unwrap();
@@ -430,6 +526,7 @@ pub(crate) mod tests {
             review::accept(&intake, &f, None).unwrap();
         }
         let config = crate::config::load_from(&root.join(".zforge/config.yaml")).unwrap();
+        setup_knowledge(&root, &config);
         let r = readiness::check(&intake, &root, &[], &config).unwrap();
         assert!(r.ready, "{:?}", r.checks);
         handover::create(&intake, &root, &[], &config, &r.files, None).unwrap();
@@ -438,6 +535,15 @@ pub(crate) mod tests {
             root,
             intake,
         }
+    }
+
+    /// Write and accept `rel` as `text` in `config`'s knowledge directory.
+    fn accept_knowledge(root: &Path, config: &crate::config::Config, rel: &str, text: &str) {
+        let k = crate::knowledge::Knowledge::open(config);
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(k.dir.join(rel), text).unwrap();
+        crate::knowledge::review(root, &k, rel).unwrap();
+        crate::knowledge::accept(&k, rel, None).unwrap();
     }
 
     /// AC-01.
@@ -476,11 +582,13 @@ pub(crate) mod tests {
     #[test]
     fn editing_the_working_files_does_not_change_the_prompt() {
         let f = handed_over();
+        let empty = select::Selection::default();
         let before = load(&f.root, "HANDOVER-001", "TASK-001").unwrap().prompt(
             None,
             ".zforge/intakes/F/changes/CHANGE-001.md",
             &[],
             "cargo test",
+            &empty,
         );
         std::fs::write(
             f.intake.dir.join("tasks/TASK-001.md"),
@@ -493,6 +601,7 @@ pub(crate) mod tests {
             ".zforge/intakes/F/changes/CHANGE-001.md",
             &[],
             "cargo test",
+            &empty,
         );
         assert_eq!(before, after);
         assert!(!after.contains("SỬA"));
@@ -580,11 +689,12 @@ pub(crate) mod tests {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         let list = [std::path::PathBuf::from("/store/write-tests-first.md")];
-        let p = c.prompt(None, "CR.md", &list, "cargo test");
+        let empty = select::Selection::default();
+        let p = c.prompt(None, "CR.md", &list, "cargo test", &empty);
         assert!(p.contains("## Checklists"), "{p}");
         assert!(p.contains("- `/store/write-tests-first.md`"), "{p}");
         assert!(!c
-            .prompt(None, "CR.md", &[], "cargo test")
+            .prompt(None, "CR.md", &[], "cargo test", &empty)
             .contains("## Checklists"));
         assert!(!p.contains("{{checklists}}"));
     }
@@ -593,7 +703,8 @@ pub(crate) mod tests {
     fn prompt_carries_the_contract_context_feedback_and_change_path() {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
-        let p = c.prompt(None, "CR.md", &[], "cargo test");
+        let empty = select::Selection::default();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
         assert!(p.starts_with("# Leaf task TASK-001 — F / HANDOVER-001"));
         assert!(p.contains("## The task contract\n\n---\nid: TASK-001"));
         assert!(
@@ -605,7 +716,7 @@ pub(crate) mod tests {
         assert!(p.contains("Verification runs `cargo test` in this directory"));
         assert!(!p.contains("Verifier feedback") && !p.contains("{{"));
 
-        let p = c.prompt(Some("FAIL add_small"), "CR.md", &[], "cargo test");
+        let p = c.prompt(Some("FAIL add_small"), "CR.md", &[], "cargo test", &empty);
         assert!(p.contains("## Verifier feedback") && p.contains("FAIL add_small"));
         assert!(p.find("Verifier feedback").unwrap() < p.find("The task contract").unwrap());
     }
@@ -627,5 +738,157 @@ pub(crate) mod tests {
             "{err}"
         );
         assert_eq!(find_handover(&f.root, "F/HANDOVER-001").unwrap().id, "F");
+    }
+
+    const RULES: &str = "## general\n- RULE-001: never log secrets. (a/log.rs:10)\n";
+    const CONVENTIONS: &str = "## general\n- CONV-001: errors wrap with %w. (a/err.rs:20)\n";
+    const DOMAIN: &str = "## internal/token\n\
+        - DOM-001: a refresh token is single-use. (internal/token/refresh.rs:88)\n\
+        ## internal/audit\n\
+        - DOM-002: every export is logged. (internal/audit/writer.rs:12)\n\
+        ## internal/other\n\
+        - DOM-003: unrelated detail. (internal/other/x.rs:1)\n";
+
+    /// Commits the files `RULES`/`CONVENTIONS`/`DOMAIN` cite (lint checks
+    /// each citation against a real, pinned commit) and hands over a
+    /// project with all three knowledge files accepted against it.
+    fn handed_over_with_full_knowledge() -> Fixture {
+        handed_over_with(|root, config| {
+            for (rel, n) in [
+                ("a/log.rs", 10),
+                ("a/err.rs", 20),
+                ("internal/token/refresh.rs", 88),
+                ("internal/audit/writer.rs", 12),
+                ("internal/other/x.rs", 1),
+            ] {
+                let path = root.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let content: String = (1..=n).map(|i| format!("line{i}\n")).collect();
+                std::fs::write(&path, content).unwrap();
+            }
+            assert!(std::process::Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+            assert!(std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "user.name=t",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "evidence",
+                ])
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+            let sha = crate::run::git::head(root).unwrap();
+            accept_knowledge(
+                root,
+                config,
+                "rules.md",
+                &format!("---\npinned: {sha}\n---\n{RULES}"),
+            );
+            accept_knowledge(
+                root,
+                config,
+                "conventions.md",
+                &format!("---\npinned: {sha}\n---\n{CONVENTIONS}"),
+            );
+            accept_knowledge(
+                root,
+                config,
+                "domain.md",
+                &format!("---\npinned: {sha}\n---\n{DOMAIN}"),
+            );
+        })
+    }
+
+    /// AC-01, AC-02: every rules/conventions item, the domain item the
+    /// contract cites by ID, and the domain section a path it names
+    /// belongs to; a section neither cited nor named is left out.
+    #[test]
+    fn knowledge_selection_includes_rules_conventions_and_cited_or_named_domain_items() {
+        let f = handed_over_with_full_knowledge();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        assert_eq!(c.knowledge.len(), 3, "{:?}", c.knowledge);
+
+        let s = c.knowledge_selection(10_000);
+        assert_eq!(s.items, ["RULE-001", "CONV-001", "DOM-001", "DOM-002"]);
+        assert!(s.omitted.is_empty());
+        assert!(!s.items.contains(&"DOM-003".to_string()));
+        assert!(!s.text.contains("DOM-003"), "{}", s.text);
+    }
+
+    /// AC-04: the code and review prompts carry the same knowledge.
+    #[test]
+    fn code_and_review_prompts_carry_the_same_knowledge() {
+        let f = handed_over_with_full_knowledge();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let s = c.knowledge_selection(10_000);
+        let code_prompt = c.prompt(None, "CR.md", &[], "cargo test", &s);
+        let review_prompt = c.review_prompt("abc123", "cargo test", &s);
+        assert!(code_prompt.contains("## Project knowledge") && code_prompt.contains("RULE-001"));
+        let code_block = code_prompt
+            .split("## Project knowledge")
+            .nth(1)
+            .unwrap()
+            .split("## ")
+            .next()
+            .unwrap();
+        let review_block = review_prompt
+            .split("## Project knowledge")
+            .nth(1)
+            .unwrap()
+            .split("## ")
+            .next()
+            .unwrap();
+        assert_eq!(code_block, review_block);
+    }
+
+    /// AC-03: over the limit, the omitted IDs and the accepted snapshot's
+    /// absolute path are named in the prompt.
+    #[test]
+    fn over_the_limit_prompt_names_what_did_not_fit_and_its_snapshot() {
+        let f = handed_over_with_full_knowledge();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        // Room for the first item only.
+        let s = c.knowledge_selection(80);
+        assert!(!s.items.is_empty());
+        assert!(!s.omitted.is_empty(), "{:?}", s);
+        assert!(!s.snapshots.is_empty());
+        for p in &s.snapshots {
+            assert!(p.is_absolute(), "{}", p.display());
+            assert!(p.starts_with(f.root.join("docs/knowledge/.records/revisions")));
+        }
+        let prompt = c.prompt(None, "CR.md", &[], "cargo test", &s);
+        assert!(prompt.contains("Not shown"), "{prompt}");
+        for id in &s.omitted {
+            assert!(prompt.contains(id), "{prompt}");
+        }
+        for p in &s.snapshots {
+            assert!(prompt.contains(&p.display().to_string()), "{prompt}");
+        }
+    }
+
+    /// AC-05: a handover with no pinned knowledge gets no `## Project
+    /// knowledge` section at all — not an empty one — and the rest of the
+    /// prompt is unaffected.
+    #[test]
+    fn no_pinned_knowledge_means_no_knowledge_section() {
+        let f = handed_over();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        assert!(c.knowledge.is_empty());
+        let s = c.knowledge_selection(10_000);
+        assert_eq!(s, select::Selection::default());
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &s);
+        assert!(!p.contains("## Project knowledge"), "{p}");
+        let rp = c.review_prompt("abc123", "cargo test", &s);
+        assert!(!rp.contains("## Project knowledge"), "{rp}");
     }
 }

@@ -54,6 +54,22 @@ pub struct Expected {
     /// MCP servers the phase prompts rely on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<String>,
+    /// Pinned knowledge files this call's prompt was drawn from (ONBOARD
+    /// REQ-008, TASK-007), with the revision the handover pinned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge: Vec<KnowledgeFile>,
+    /// IDs of the knowledge items actually included in the prompt —
+    /// `knowledge::select::Selection::items`; what did not fit is not
+    /// named here (it is named in the prompt itself).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge_items: Vec<String>,
+}
+
+/// One pinned knowledge file this call's prompt drew from.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeFile {
+    pub file: String,
+    pub revision: u32,
 }
 
 /// What the client reported during the run.
