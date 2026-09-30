@@ -379,6 +379,7 @@ fn a_dead_background_worker_is_interrupted_and_retry_starts_over() {
     assert!(out.status.success(), "{}", err(&out));
     p.wait_for("RUN-001", "verify_started");
     let test_pid = p.pid_file("test.pid");
+    p.wait_for_recorded_child("RUN-001");
 
     let worker: i32 = std::fs::read_to_string(p.run_dir("RUN-001").join("launch.pid"))
         .unwrap()
@@ -431,6 +432,7 @@ fn cancel_stops_a_background_run_while_it_verifies() {
         .success());
     p.wait_for("RUN-001", "verify_started");
     let test_pid = p.pid_file("test.pid");
+    p.wait_for_recorded_child("RUN-001");
 
     let out = p.zforge(&["run", "cancel", "RUN-001"]);
     assert!(out.status.success(), "{}", err(&out));
