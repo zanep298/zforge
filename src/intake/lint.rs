@@ -31,7 +31,7 @@ pub struct Heading {
 }
 
 impl Heading {
-    const fn new(name: &'static str, legacy: &'static str) -> Self {
+    pub(crate) const fn new(name: &'static str, legacy: &'static str) -> Self {
         Self { name, legacy }
     }
 
@@ -97,7 +97,7 @@ impl Issue {
             message: message.into(),
         }
     }
-    fn warning(file: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn warning(file: &str, message: impl Into<String>) -> Self {
         Self {
             file: file.to_string(),
             severity: Severity::Warning,

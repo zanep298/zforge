@@ -33,18 +33,23 @@ per intake.
 
 1. `01-outcome.md` — problem, users, desired result, scope, what must not
    change, out of scope, signs of success. Each mandatory requirement is a
-   list item starting with a stable ID: `- REQ-001: …`.
-2. `02-behavior.md` — normal, edge, error and recovery situations with
-   observable input and output, citing the REQ they serve.
-3. `03-solution.md` — flow, components, data, interfaces. Separate
-   **Binding decisions** from **Implementation suggestions**.
-   Record alternatives considered, assumptions and the evidence they hold.
-4. `04-breakdown.md` — phases and tasks, order, dependencies, shared
-   interfaces, and **Integration verification**: how the whole is verified. Put
-   the exact commands in the section's first fenced code block, one per
-   line (`#` lines are comments) — zforge runs them, in order, on a tree
-   holding every task's output. Without a block it runs the project's test
-   command, which may not check what the tasks do together.
+   list item starting with a stable ID, one sentence of at most 25 words;
+   its conditions go in sub-items: `- REQ-001: …`.
+2. `02-behavior.md` — normal, edge, error and recovery situations as a
+   table, one row each: `# | Kind | When | Then | REQ`. An example below
+   the table only where a row alone would be ambiguous.
+3. `03-solution.md` — the flow as a diagram, then **Binding decisions** as
+   a table (`D-1 | Decision | Why | Rejected alternative`), kept apart from
+   **Implementation suggestions**. Components, interfaces, assumptions and
+   evidence go under `## Detail`.
+4. `04-breakdown.md` — a table of tasks (`Task | Serves | Depends on |
+   Output`, one line of output each) and **Integration verification**: how
+   the whole is verified. Put the exact commands in the section's first
+   fenced code block, one per line (`#` lines are comments) — zforge runs
+   them, in order, on a tree holding every task's output. Without a block
+   it runs the project's test command, which may not check what the tasks
+   do together. Do not draw the dependency graph: `zforge intake graph
+   <ID>` generates it from the tasks.
 5. `tasks/TASK-xxx.md` (`zforge intake task <ID> TASK-xxx`) — the contract:
    frontmatter `requirements` / `depends_on`, and the sections Goal, Input,
    Output, Constraints, Autonomy, Acceptance and verification (`- AC-01: …`),
@@ -60,10 +65,27 @@ per intake.
      intake review` warns, naming the ID, on a citation that is not in the
      accepted knowledge — fix the ID or note the departure, don't ignore it.
 
-Every file answers, in plain language: what is being decided and how it
-serves the level above; the proposal with a concrete example; why, with
-trade-offs and uncertainty; what the user must decide; what changed since
-the version they saw.
+## Writing for the person who decides
+
+The user accepts what they read, so every word above `## Detail` costs
+them. `zforge intake review` warns when a file goes past these:
+
+- **Summary first.** Each stage opens with `## Summary`, at most 150 words:
+  what this file decides, the main points, what the user must decide, and
+  — from the second revision — what changed.
+- **Budgets** for what is above `## Detail`: 01 — 500 words, 02 — 700,
+  03 — 800, 04 — 400, a task — 300. Code blocks do not count.
+- **`## Detail` is for the implementing agent**: paths, signatures,
+  formats, full example outputs, evidence. The user may skip it; nothing
+  they must decide goes there.
+- **Tables and lists, not paragraphs.** One situation, decision or task
+  per row; one line per output and per acceptance criterion.
+- **Refer, do not retell.** A lower stage names `REQ-003`, `situation 4`,
+  `D-2`; it does not explain them again.
+- **Diagrams are `mermaid`**, never drawn in text. One question per
+  diagram — who calls whom (`sequenceDiagram`), or which states exist
+  (`stateDiagram-v2`), or what contains what (`graph`) — about eight
+  nodes, a verb on every arrow. A second question gets a second diagram.
 
 ## Workflow
 
@@ -76,10 +98,13 @@ the version they saw.
 3. Put every question that needs the user under **Open questions** as
    `- [ ] question — stage where it will be settled`. Tick it `[x]` only
    when the answer is written into the file.
-4. `zforge intake review <ID> <file>` — fix every structural error it
-   reports, then present the file in chat: what it decides, the proposal
-   with an example, the trade-offs, what changed since the last revision.
-   Present a stage, or a batch of tasks, then stop and wait.
+4. `zforge intake review <ID> <file>` — fix every structural error and
+   readability warning it reports, then present the file in chat, in the
+   user's language: the summary, the diagram rendered (for tasks, the
+   graph from `zforge intake graph <ID>`), and the points to decide. For a
+   later revision, present only what changed (`intake_diff`). Do not paste
+   the whole file. Present a stage, or a batch of tasks, then stop and
+   wait.
 5. The user decides — in Claude Code, by typing `/accept all`,
    `/accept <file>…` or `/revise <file>: <what to change>` (zforge's prompt
    hook records it and tells you what it recorded); at a terminal, with
@@ -114,6 +139,8 @@ yourself, `change_new` (MCP) creates the file with the required sections.
 - [ ] Integration verification is a section of its own, with its commands in a
       fenced code block
 - [ ] `tests_may_change` appears only where the contract means it, with exact paths
+- [ ] Each stage opens with a Summary; no readability warning left unexplained
+- [ ] Diagrams are mermaid, one question each; no hand-drawn dependency graph
 - [ ] No open question left unchecked in a file offered for acceptance
 - [ ] Conflicts with accepted knowledge are listed for the user, not resolved silently
 

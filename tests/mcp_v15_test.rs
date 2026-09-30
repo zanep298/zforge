@@ -365,16 +365,22 @@ fn an_agent_runs_a_whole_handover() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    let frames = p.mcp(&[
-        call(1, "run_log", json!({"run": "HANDOVER-001"})),
-        call(2, "run_cancel", json!({"run": "HANDOVER-001"})),
-    ]);
-    assert!(
-        text(&frames[0]).contains("RUN-001 — TASK-001"),
-        "{:?}",
-        text(&frames[0])
-    );
-    let f = json_result(&frames[1]);
+    // The run is recorded before the loop writes its first log line: wait
+    // for the line rather than reading the log at once.
+    loop {
+        let frames = p.mcp(&[call(1, "run_log", json!({"run": "HANDOVER-001"}))]);
+        if text(&frames[0]).contains("RUN-001 — TASK-001") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the log never named the run: {:?}",
+            text(&frames[0])
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let frames = p.mcp(&[call(2, "run_cancel", json!({"run": "HANDOVER-001"}))]);
+    let f = json_result(&frames[0]);
     assert_eq!(f["tasks"][0]["state"], "stopped");
     assert_eq!(f["tasks"][0]["status"], "cancelled");
 }

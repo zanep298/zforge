@@ -27,6 +27,8 @@ pub enum IntakeCmd {
         #[arg(long)]
         json: bool,
     },
+    /// The task dependency graph as Mermaid, from each task's `depends_on`.
+    Graph { id: String },
     /// Send a file's current content for review as a new revision.
     Review(FileArgs),
     /// Accept the revision under review. Interactive terminal only.
@@ -66,6 +68,11 @@ pub fn run(cmd: IntakeCmd) -> Result<()> {
             Ok(())
         }
         IntakeCmd::Status { id, json } => status(&Intake::open(&root, &id)?, json),
+        IntakeCmd::Graph { id } => {
+            let nodes = crate::intake::graph::nodes(&Intake::open(&root, &id)?)?;
+            print!("{}", crate::intake::graph::mermaid(&nodes));
+            Ok(())
+        }
         IntakeCmd::Review(a) => send_for_review(&Intake::open(&root, &a.id)?, &a.file),
         IntakeCmd::Accept(a) => decide(&Intake::open(&root, &a.id)?, &a.file, None),
         IntakeCmd::Revise { file, note } => {
