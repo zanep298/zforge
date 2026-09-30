@@ -307,12 +307,23 @@ fn work(
             .hash()
             .map(String::from);
         *last_output.borrow_mut() = result.raw_output.clone();
+        // ONBOARD TASK-011: a non-zero exit still verifies when every
+        // failing name the runner read is on the handover's pinned
+        // known-failure list; unreadable output (no names at all) never
+        // passes this way (AC-03). The agent's feedback — `failed_names`
+        // below — never names a known failure (AC-02); the full raw list
+        // still goes into `verify_failed`'s record.
+        let tolerance = super::known_failures::evaluate(
+            &contract.manifest.known_failures,
+            result.passed && !result.timed_out,
+            &result.failed_names,
+        );
         let outcome = VerifyOutcome {
-            passed: result.passed && !result.timed_out,
+            passed: tolerance.passes && !result.timed_out,
             total_tests: result.total_tests,
             passed_tests: result.passed_tests,
-            failed_tests: result.failed_tests,
-            failed_names: result.failed_names.clone(),
+            failed_tests: tolerance.unknown.len(),
+            failed_names: tolerance.unknown.clone(),
             timed_out: result.timed_out,
         };
         match (outcome.passed, candidate) {
@@ -400,6 +411,8 @@ fn work(
                     at: Utc::now(),
                     candidate,
                     commit: Some(commit),
+                    tolerated: tolerance.tolerated,
+                    known_passing: tolerance.known_passing,
                 })?;
             }
             (true, None) => {

@@ -47,6 +47,12 @@ pub struct OnboardingStatus {
     pub next: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stale: Vec<StaleKnowledge>,
+    /// Tests still on the known-failure list that a run recorded passing
+    /// (ONBOARD TASK-011, AC-04, business rule 8) — worth dropping from
+    /// `zforge onboard baseline --known`. Filled in separately by
+    /// [`onboarding_status`], the same way `stale` is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub known_passing: Vec<String>,
 }
 
 impl From<crate::onboard::OnboardState> for OnboardingStatus {
@@ -84,6 +90,7 @@ impl From<crate::onboard::OnboardState> for OnboardingStatus {
             summary,
             next,
             stale: Vec::new(),
+            known_passing: Vec::new(),
         }
     }
 }
@@ -96,6 +103,7 @@ fn onboarding_status(project_root: &Path) -> OnboardingStatus {
             summary: "not onboarded".to_string(),
             next: Some("zforge onboard".to_string()),
             stale: Vec::new(),
+            known_passing: Vec::new(),
         };
     };
     let mut s: OnboardingStatus = match crate::onboard::state(&config) {
@@ -105,6 +113,7 @@ fn onboarding_status(project_root: &Path) -> OnboardingStatus {
             summary: "not onboarded".to_string(),
             next: Some("zforge onboard".to_string()),
             stale: Vec::new(),
+            known_passing: Vec::new(),
         },
     };
     let k = crate::knowledge::Knowledge::open(&config);
@@ -118,7 +127,28 @@ fn onboarding_status(project_root: &Path) -> OnboardingStatus {
             })
             .collect();
     }
+    if let Ok(known) = crate::knowledge::known::list(&k) {
+        if !known.is_empty() {
+            s.known_passing = recovered_known_tests(project_root, &known);
+        }
+    }
     s
+}
+
+/// Known-failure tests some run recorded as passing (ONBOARD TASK-011,
+/// AC-04, business rule 8): a run's `verified.known_passing` named one of
+/// them and it is still on `known`, so it is worth dropping from the list.
+fn recovered_known_tests(project_root: &Path, known: &[String]) -> Vec<String> {
+    let mut found = BTreeSet::new();
+    for run in crate::run::record::list(project_root).into_iter().flatten() {
+        let Ok(state) = run.state() else { continue };
+        for t in &state.known_passing {
+            if known.contains(t) {
+                found.insert(t.clone());
+            }
+        }
+    }
+    found.into_iter().collect()
 }
 
 #[derive(Debug, Clone, Serialize)]

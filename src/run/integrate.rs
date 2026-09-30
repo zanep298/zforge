@@ -208,6 +208,10 @@ fn seal(run: &Run, meta: &RunMeta) -> Result<RunState> {
             at: Utc::now(),
             candidate,
             commit: Some(commit),
+            // An integration run has no agent and no test names to compare
+            // against a known-failure list; it simply passes or does not.
+            tolerated: Vec::new(),
+            known_passing: Vec::new(),
         }),
         Err(e) => run.append(&RunEvent::Failed {
             at: Utc::now(),

@@ -43,6 +43,19 @@ fn stale_line(o: &OnboardingStatus) -> Option<String> {
     ))
 }
 
+/// `known failures now passing — TestA, TestB: consider zforge onboard
+/// baseline --known without them` (ONBOARD TASK-011, AC-04) — `None` while
+/// no run has recorded one.
+fn known_passing_line(o: &OnboardingStatus) -> Option<String> {
+    if o.known_passing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "known failures now passing — {}: consider `zforge onboard baseline --known` without them",
+        o.known_passing.join(", ")
+    ))
+}
+
 pub fn run(json: bool) -> Result<()> {
     let config = crate::config::load()?;
     let s = status::project(&config.project_root())?;
@@ -55,6 +68,9 @@ pub fn run(json: bool) -> Result<()> {
     }
     println!("{} {}", "project:".bold(), onboarding_line(&s.onboarding));
     if let Some(line) = stale_line(&s.onboarding) {
+        println!("{}", line.yellow());
+    }
+    if let Some(line) = known_passing_line(&s.onboarding) {
         println!("{}", line.yellow());
     }
     if s.intakes.is_empty() {
@@ -91,6 +107,9 @@ pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
                 }
                 println!("  {}", onboarding_line(onboarding));
                 if let Some(line) = stale_line(onboarding) {
+                    println!("  {}", line.yellow());
+                }
+                if let Some(line) = known_passing_line(onboarding) {
                     println!("  {}", line.yellow());
                 }
                 if intakes.is_empty() {

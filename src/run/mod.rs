@@ -13,6 +13,7 @@ pub mod feature_ops;
 pub mod git;
 pub mod guard;
 pub mod integrate;
+pub mod known_failures;
 pub mod ops;
 pub mod output;
 pub mod reconcile;

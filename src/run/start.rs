@@ -194,6 +194,8 @@ mod tests {
                 at,
                 candidate: "c".into(),
                 commit: commit.map(String::from),
+                tolerated: Vec::new(),
+                known_passing: Vec::new(),
             },
         ])
     }

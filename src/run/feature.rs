@@ -347,6 +347,8 @@ mod tests {
                 at,
                 candidate: "c".into(),
                 commit: Some(commit.into()),
+                tolerated: Vec::new(),
+                known_passing: Vec::new(),
             },
         ])
     }

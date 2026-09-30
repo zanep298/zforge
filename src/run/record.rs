@@ -158,6 +158,16 @@ pub enum RunEvent {
         candidate: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
+        /// Failing tests this pass tolerated because they were on the
+        /// handover's pinned known-failure list (ONBOARD TASK-011, business
+        /// rule 8). Empty when none were tolerated, or none were pinned.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tolerated: Vec<String>,
+        /// Known failures not among this pass's failures — they passed, or
+        /// no longer appear in the output. `zforge status` suggests
+        /// dropping these from the known list.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        known_passing: Vec<String>,
     },
     /// A review of the passing work started with `allotted_usd` of budget
     /// (`execution.review`). In flight like an attempt: killed mid-call, it
@@ -309,6 +319,13 @@ pub struct RunState {
     /// `<HANDOVER>/<RUN>` whose verified output this run reuses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reused_from: Option<String>,
+    /// Known failures the verified pass tolerated (ONBOARD TASK-011).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tolerated: Vec<String>,
+    /// Known failures the verified pass found not failing — `zforge status`
+    /// suggests dropping these from the known list.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub known_passing: Vec<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -329,6 +346,8 @@ impl Default for RunState {
             last_candidate: None,
             output: None,
             reused_from: None,
+            tolerated: Vec::new(),
+            known_passing: Vec::new(),
         }
     }
 }
@@ -402,7 +421,11 @@ impl RunState {
                 next.cost_usd += cost_usd.unwrap_or(*allotted_usd);
             }
             RunEvent::Verified {
-                candidate, commit, ..
+                candidate,
+                commit,
+                tolerated,
+                known_passing,
+                ..
             } => {
                 if self.status != Verifying {
                     return refuse();
@@ -411,6 +434,8 @@ impl RunState {
                 next.verifications += 1;
                 next.last_candidate = Some(candidate.clone());
                 next.output = commit.clone();
+                next.tolerated = tolerated.clone();
+                next.known_passing = known_passing.clone();
             }
             RunEvent::VerifyFailed { candidate, .. } => {
                 if self.status != Verifying {
@@ -669,6 +694,8 @@ pub(crate) mod tests {
                 at: now(),
                 candidate: "c2".into(),
                 commit: Some("k2".into()),
+                tolerated: Vec::new(),
+                known_passing: Vec::new(),
             },
         ];
         let mut s = RunState::default();
@@ -758,6 +785,8 @@ pub(crate) mod tests {
                 at: "2026-09-20T10:00:00Z".parse().unwrap(),
                 candidate: "c1".into(),
                 commit: None,
+                tolerated: Vec::new(),
+                known_passing: Vec::new(),
             }
         );
         let written = serde_json::to_string(&e).unwrap();
@@ -832,6 +861,8 @@ pub(crate) mod tests {
                     at: now(),
                     candidate: "c".into(),
                     commit: None,
+                    tolerated: Vec::new(),
+                    known_passing: Vec::new(),
                 })
                 .is_err(),
             "verified without verifying"
