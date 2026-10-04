@@ -136,7 +136,19 @@ fn onboard_probe_status_and_review_over_mcp() {
     // The probe pins knowledge to a commit and refuses an uncommitted tree;
     // `Project::new()`'s own commit is empty (`.zforge/` is left untracked),
     // so commit it here before probing.
-    for args in [&["add", "-A"][..], &["commit", "-q", "-m", "cfg"][..]] {
+    for args in [
+        &["add", "-A"][..],
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "cfg",
+        ],
+    ] {
         assert!(Command::new("git")
             .args(args)
             .current_dir(&p.root)
