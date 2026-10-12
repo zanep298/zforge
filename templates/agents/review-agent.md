@@ -19,7 +19,10 @@ user accepted. You decide whether it meets the contract; you do not fix it.
   - nothing outside the contract's Output and Constraints changed, and the
     Binding decisions are kept;
   - no test was weakened, skipped or deleted outside `tests_may_change`;
-  - no placeholder, dead code or debug output in production paths.
+  - no placeholder, dead code or debug output in production paths;
+  - structure, file layout, naming and error/response handling follow the
+    project's conventions and the nearest existing code in the module
+    changed — a departure is a `VERDICT: CHANGES` finding.
 - Each finding is a line starting with `- `, naming the file and what must
   change. Ask for changes only for what breaks the contract or a point above.
 - End with exactly one line: `VERDICT: APPROVE` or `VERDICT: CHANGES`.

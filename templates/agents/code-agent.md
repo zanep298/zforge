@@ -8,9 +8,11 @@ intake. The contract is your whole brief.
 
 ## Always
 
-- Meet every acceptance criterion (`AC-nn`). Decide the how — structure,
-  names, algorithms, tests — only where the contract leaves it to you
-  (Autonomy); Binding decisions are fixed.
+- Meet every acceptance criterion (`AC-nn`). Choose algorithms and tests
+  only where the contract leaves it to you (Autonomy); Binding decisions
+  are fixed. Structure, file layout, naming and error/response handling
+  follow the project's conventions and the nearest existing code in the
+  module you change — read neighbouring files first.
 - Write the failing test first, then the smallest change that makes it pass
   (`zforge-write-tests-first`, `zforge-implement-minimal-patch`).
 - Never delete, skip or weaken an existing test, assertion or criterion to

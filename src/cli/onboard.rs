@@ -68,7 +68,7 @@ pub fn run(cmd: Option<OnboardCmd>) -> Result<()> {
     let k = Knowledge::open(&config);
     match cmd {
         None => run_probe(&config),
-        Some(OnboardCmd::Status { json }) => status(&k, json),
+        Some(OnboardCmd::Status { json }) => status(&config, &k, json),
         Some(OnboardCmd::Review { file }) => send_for_review(&root, &k, &file),
         Some(OnboardCmd::Accept { file }) => decide(&k, &file, None),
         Some(OnboardCmd::Revise { file, note }) => decide(&k, &file, Some(&note)),
@@ -344,9 +344,12 @@ struct StatusView {
     files: Vec<FileView>,
     stale: Vec<crate::knowledge::stale::StaleItem>,
     moved: Vec<crate::knowledge::stale::Moved>,
+    /// The accepted conventions and rules exceed `knowledge.prompt_limit`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fit_warning: Option<String>,
 }
 
-fn status(k: &Knowledge, json: bool) -> Result<()> {
+fn status(config: &config::Config, k: &Knowledge, json: bool) -> Result<()> {
     let views: Vec<FileView> = knowledge::statuses(k)?
         .into_iter()
         .map(|status| {
@@ -359,11 +362,13 @@ fn status(k: &Knowledge, json: bool) -> Result<()> {
         })
         .collect();
     let stale_report = knowledge::stale::check(k)?;
+    let fit_warning = knowledge::fit_warning(config);
     if json {
         let view = StatusView {
             files: views,
             stale: stale_report.stale,
             moved: stale_report.moved,
+            fit_warning,
         };
         println!("{}", serde_json::to_string_pretty(&view)?);
         return Ok(());
@@ -421,6 +426,9 @@ fn status(k: &Knowledge, json: bool) -> Result<()> {
                 m.new_end
             );
         }
+    }
+    if let Some(w) = &fit_warning {
+        println!("{} {w}", "⚠".yellow());
     }
     Ok(())
 }

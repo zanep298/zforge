@@ -254,13 +254,23 @@ mod tests {
             assert!(code.contains(h.name), "code-agent lacks {h}");
             assert!(contract.contains(h.name), "contract.tmpl lacks {h}");
         }
-        for rule in ["tests_may_change", "push", "Binding decisions"] {
+        for rule in [
+            "tests_may_change",
+            "push",
+            "Binding decisions",
+            "nearest existing code",
+        ] {
             assert!(code.contains(rule) && contract.contains(rule), "{rule}");
         }
 
         let review = agent("review-agent.md");
         let prompt = include_str!("../templates/review_contract.tmpl");
-        for rule in ["VERDICT: APPROVE", "VERDICT: CHANGES", "Binding decisions"] {
+        for rule in [
+            "VERDICT: APPROVE",
+            "VERDICT: CHANGES",
+            "Binding decisions",
+            "nearest existing code",
+        ] {
             assert!(review.contains(rule) && prompt.contains(rule), "{rule}");
         }
     }

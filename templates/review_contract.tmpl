@@ -16,9 +16,13 @@ and `git status`.
   binding decisions ("Binding decisions") are kept.
 - No test was weakened, skipped or deleted to make the suite pass.
 - No placeholder, dead code or debugging left in production paths.
+- Structure, file layout, naming and error/response handling follow the
+  project's conventions (shown or linked under "Project knowledge") and the
+  nearest existing code in the module changed. A change that departs from
+  them is a `VERDICT: CHANGES` finding.
 
 Ask for changes only for what breaks the contract or one of the points
-above — not for style or preference.
+above — not for taste where the conventions and surrounding code are silent.
 
 ## Answer
 

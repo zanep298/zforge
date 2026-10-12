@@ -356,9 +356,13 @@ impl Readiness {
     /// A gap warns by default and does not affect [`Readiness::ready`];
     /// `onboarding.required: true` turns every gap into an ordinary
     /// failing check instead, so it blocks a handover like any other.
+    ///
+    /// Knowledge too large for `knowledge.prompt_limit` is always only a
+    /// warning ([`crate::knowledge::fit_warning`]): every task still gets
+    /// the part most relevant to it.
     pub fn with_project(self, config: &Config) -> Self {
         let gaps = crate::onboard::readiness_gaps(config);
-        if config.onboarding.required {
+        let mut r = if config.onboarding.required {
             let ok = gaps.is_empty();
             self.with(Check {
                 name: "project onboarding",
@@ -369,7 +373,9 @@ impl Readiness {
             let mut r = self;
             r.warnings.extend(gaps);
             r
-        }
+        };
+        r.warnings.extend(crate::knowledge::fit_warning(config));
+        r
     }
 }
 
@@ -681,5 +687,60 @@ mod tests {
             .unwrap();
         assert!(!project.ok, "{:?}", project.problems);
         assert!(!project.problems.is_empty());
+    }
+
+    /// Accepted conventions and rules over `knowledge.prompt_limit` are a
+    /// warning naming both sizes — never a failing check, even when
+    /// onboarding is required.
+    #[test]
+    fn with_project_warns_when_conventions_and_rules_exceed_the_prompt_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+        std::fs::create_dir_all(root.join("a/handler")).unwrap();
+        std::fs::write(root.join("a/handler/h.go"), "package handler\n").unwrap();
+        commit_all(root);
+        let sha = crate::run::git::head(root).unwrap();
+        let mut cfg = config_at(root, true);
+        let k = crate::knowledge::Knowledge::open(&cfg);
+        std::fs::create_dir_all(&k.dir).unwrap();
+        std::fs::write(
+            k.dir.join("conventions.md"),
+            format!(
+                "---\npinned: {sha}\n---\n## Structure\n\
+                 - CONV-001: handlers live in handler/. (a/handler/h.go:1)\n\n\
+                 ## Open questions\n"
+            ),
+        )
+        .unwrap();
+        crate::intake::review::review(&k, "conventions.md").unwrap();
+        crate::intake::review::accept(&k, "conventions.md", None).unwrap();
+        let i = accept_intake(root);
+
+        let fits = check(&i, root, &[], &cfg).unwrap().with_project(&cfg);
+        assert!(
+            !fits.warnings.iter().any(|w| w.contains("prompt_limit")),
+            "{:?}",
+            fits.warnings
+        );
+
+        cfg.knowledge.prompt_limit = 10;
+        let r = check(&i, root, &[], &cfg).unwrap().with_project(&cfg);
+        let w = r
+            .warnings
+            .iter()
+            .find(|w| w.contains("knowledge.prompt_limit"))
+            .unwrap_or_else(|| panic!("{:?}", r.warnings));
+        assert!(w.contains("(10)") && w.contains("bytes"), "{w}");
+        let project = r
+            .checks
+            .iter()
+            .find(|c| c.name == "project onboarding")
+            .unwrap();
+        assert!(
+            !project.problems.iter().any(|p| p.contains("prompt_limit")),
+            "{:?}",
+            project.problems
+        );
     }
 }

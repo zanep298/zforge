@@ -11,9 +11,11 @@ current directory (this run's own git worktree) and nowhere else.
   checked when the suite passes: one that was changed, deleted or renamed
   makes it a failure, unless the task's `tests_may_change` lists it. Adding
   tests is fine.
-- Inside the contract you decide how: structure, names, algorithms, tests.
-  Suggestions in the solution may be replaced by an equivalent; binding
-  decisions ("Binding decisions") may not.
+- Inside the contract you choose algorithms and tests. Structure, file
+  layout, naming and error/response handling follow the project's
+  conventions and the nearest existing code in the module you change —
+  read neighbouring files first. Suggestions in the solution may be
+  replaced by an equivalent; binding decisions ("Binding decisions") may not.
 - Verification runs `{{test_command}}` in this directory. Run it yourself
   before you finish: the task is done when it passes.
 - Diagnose and fix failures yourself; do not ask the user how to debug.

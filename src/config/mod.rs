@@ -48,10 +48,12 @@ pub struct RunnerConfig {
 /// committed with the code.
 ///
 /// `prompt_limit` bounds how many bytes of it a run's prompt carries
-/// (ONBOARD REQ-008, TASK-007): every accepted `rules.md` and
-/// `conventions.md` item, then the `domain.md` items the task's contract
-/// and stages name, up to this many bytes; what does not fit is named by
-/// ID with the accepted snapshot's path (`knowledge::select`).
+/// (ONBOARD REQ-008, TASK-007), default 40 000: accepted `conventions.md`
+/// and `rules.md` items and the `domain.md` items the task's contract and
+/// stages name, most relevant to the task first, up to this many bytes;
+/// what does not fit is indexed one line per item with the accepted
+/// snapshots' paths (`knowledge::select`). Conventions and rules larger
+/// than this are reported by readiness and `zforge onboard status`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KnowledgeConfig {
     #[serde(default = "default_baseline")]
@@ -87,7 +89,7 @@ fn default_knowledge_dir() -> PathBuf {
 }
 
 fn default_prompt_limit() -> usize {
-    24_000
+    40_000
 }
 
 fn default_draft_budget_usd() -> f64 {

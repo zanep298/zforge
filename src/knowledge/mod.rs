@@ -231,15 +231,42 @@ pub fn read_pinned(k: &Knowledge, pinned: &[Pinned]) -> Result<Vec<(String, Stri
 /// contributes nothing rather than erroring: an unonboarded project's
 /// intakes still lint, they just cite nothing yet.
 pub fn accepted_item_ids(k: &Knowledge) -> Result<BTreeSet<String>> {
-    let mut ids = BTreeSet::new();
+    Ok(accepted_texts(k)?
+        .iter()
+        .flat_map(|(_, text)| items::items(text))
+        .map(|it| it.id)
+        .collect())
+}
+
+/// `(file, text)` of each of [`FILES`]'s accepted revision, in
+/// [`FILES`]' order; a file never accepted is left out.
+pub fn accepted_texts(k: &Knowledge) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
     for file in FILES {
         let status = intake_review::file_status(k, file)?;
         if let Some(rev) = status.accepted {
-            let text = record::read_snapshot(k, file, rev.revision)?;
-            ids.extend(items::items(&text).into_iter().map(|it| it.id));
+            out.push((
+                file.to_string(),
+                record::read_snapshot(k, file, rev.revision)?,
+            ));
         }
     }
-    Ok(ids)
+    Ok(out)
+}
+
+/// A warning when the accepted `conventions.md` and `rules.md` together
+/// take more of a prompt than `knowledge.prompt_limit` allows
+/// ([`select::fit_warning`]); `None` when they fit or cannot be read.
+pub fn fit_warning(config: &Config) -> Option<String> {
+    let texts = accepted_texts(&Knowledge::open(config)).ok()?;
+    let refs: Vec<(&str, &str)> = texts
+        .iter()
+        .map(|(f, t)| (f.as_str(), t.as_str()))
+        .collect();
+    select::fit_warning(
+        select::always_on_bytes(&refs),
+        config.knowledge.prompt_limit,
+    )
 }
 
 /// Add the union-merge line for `<dir>/.records/decisions.jsonl` to

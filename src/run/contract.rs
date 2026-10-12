@@ -840,7 +840,7 @@ pub(crate) mod tests {
         assert_eq!(c.knowledge.len(), 3, "{:?}", c.knowledge);
 
         let s = c.knowledge_selection(10_000);
-        assert_eq!(s.items, ["RULE-001", "CONV-001", "DOM-001", "DOM-002"]);
+        assert_eq!(s.items, ["CONV-001", "RULE-001", "DOM-001", "DOM-002"]);
         assert!(s.omitted.is_empty());
         assert!(!s.items.contains(&"DOM-003".to_string()));
         assert!(!s.text.contains("DOM-003"), "{}", s.text);
