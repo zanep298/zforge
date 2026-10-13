@@ -288,6 +288,43 @@ fn rtk_hook_levels() {
 }
 
 #[test]
+fn caveman_installed_as_a_plugin_is_recognised() {
+    let env = Env::new();
+    let install = env
+        .dir("claude")
+        .join("plugins/cache/caveman/caveman/3.1.0");
+    std::fs::create_dir_all(install.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        install.join(".claude-plugin/plugin.json"),
+        r#"{"name":"caveman","hooks":{"SessionStart":[{"hooks":[{"type":"command",
+            "command":"HOOK_ROOT=$(printf %s \"${CLAUDE_PLUGIN_ROOT}\"); node \"$HOOK_ROOT/src/hooks/caveman-activate.js\""}]}]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        env.dir("claude").join("plugins/installed_plugins.json"),
+        format!(
+            r#"{{"version":2,"plugins":{{"caveman@caveman":[{{"scope":"user","installPath":"{}"}}]}}}}"#,
+            install.display()
+        ),
+    )
+    .unwrap();
+    env.user_settings(r#"{"enabledPlugins":{"caveman@caveman":true}}"#);
+
+    // Its script is not there yet.
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "caveman hook"), "broken");
+
+    std::fs::create_dir_all(install.join("src/hooks")).unwrap();
+    std::fs::write(install.join("src/hooks/caveman-activate.js"), "").unwrap();
+    let (_, c) = env.doctor();
+    assert_eq!(level(&c, "caveman hook"), "configured");
+    assert!(c["caveman hook"]["detail"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("plugin caveman@caveman"));
+}
+
+#[test]
 fn caveman_hook_with_a_missing_script_is_broken() {
     let env = Env::new();
     env.user_settings(

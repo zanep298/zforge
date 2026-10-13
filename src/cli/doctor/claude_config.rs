@@ -57,10 +57,7 @@ pub struct Hook {
 /// user's (`$CLAUDE_CONFIG_DIR` or `~/.claude`), then the project's shared
 /// and local files.
 pub fn settings_files(project_root: &Path) -> Vec<PathBuf> {
-    let user_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+    let user_dir = user_config_dir();
     let mut files = Vec::new();
     if let Some(d) = user_dir {
         files.push(d.join("settings.json"));
@@ -146,6 +143,106 @@ fn hooks_in(settings: &Value, source: &Path) -> Vec<Hook> {
     out
 }
 
+/// Claude's user configuration directory: `$CLAUDE_CONFIG_DIR`, else
+/// `~/.claude`.
+fn user_config_dir() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
+}
+
+/// Plugins enabled across `files` (`enabledPlugins: {"name@marketplace":
+/// true}`); a later file overrides an earlier one, so a project can turn a
+/// user's plugin off.
+pub fn enabled_plugins(files: &[PathBuf]) -> Vec<String> {
+    let mut state: Vec<(String, bool)> = Vec::new();
+    for f in files {
+        let Some(v) = std::fs::read_to_string(f)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        else {
+            continue;
+        };
+        for (id, on) in v
+            .get("enabledPlugins")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let on = on.as_bool().unwrap_or(false);
+            match state.iter_mut().find(|(i, _)| i == id) {
+                Some(entry) => entry.1 = on,
+                None => state.push((id.clone(), on)),
+            }
+        }
+    }
+    state
+        .into_iter()
+        .filter(|(_, on)| *on)
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Where Claude installed plugin `id`, from
+/// `<config dir>/plugins/installed_plugins.json` (the newest entry).
+pub fn plugin_install_path(id: &str) -> Option<PathBuf> {
+    let file = user_config_dir()?
+        .join("plugins")
+        .join("installed_plugins.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let entries = v.get("plugins").unwrap_or(&v).get(id)?.as_array()?;
+    entries
+        .iter()
+        .rev()
+        .find_map(|e| e.get("installPath").and_then(Value::as_str))
+        .map(PathBuf::from)
+}
+
+/// The hooks a plugin installed at `root` declares — in
+/// `.claude-plugin/plugin.json` or `hooks/hooks.json` — with
+/// `${CLAUDE_PLUGIN_ROOT}` resolved to `root`.
+pub fn plugin_hooks(root: &Path) -> Vec<Hook> {
+    let root_text = root.display().to_string();
+    [
+        root.join(".claude-plugin").join("plugin.json"),
+        root.join("hooks").join("hooks.json"),
+    ]
+    .iter()
+    .filter_map(|f| {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(f).ok()?).ok()?;
+        Some(hooks_in(&v, f))
+    })
+    .flatten()
+    .map(|mut h| {
+        h.command = h
+            .command
+            .replace("${CLAUDE_PLUGIN_ROOT}", &root_text)
+            .replace("$CLAUDE_PLUGIN_ROOT", &root_text);
+        h
+    })
+    .collect()
+}
+
+/// Scripts a plugin hook runs, resolved under the plugin's `root`: the
+/// absolute paths [`referenced_scripts`] finds, plus `$VAR/…` paths, since
+/// plugins commonly copy `CLAUDE_PLUGIN_ROOT` into a variable of their own
+/// first (caveman: `HOOK_ROOT=…; node "$HOOK_ROOT/src/hooks/…"`).
+pub fn plugin_scripts(command: &str, root: &Path) -> Vec<PathBuf> {
+    let mut out = referenced_scripts(command);
+    for token in shlex::split(command).unwrap_or_default() {
+        let is_script = [".js", ".sh", ".py", ".mjs"]
+            .iter()
+            .any(|e| token.ends_with(e));
+        if let (true, Some(rest)) = (is_script, token.strip_prefix('$')) {
+            if let Some((_, path)) = rest.split_once('/') {
+                out.push(root.join(path));
+            }
+        }
+    }
+    out
+}
+
 /// Script paths a hook command points at (quoted or bare absolute paths
 /// ending in `.js`/`.sh`/`.py`), so their existence can be checked.
 pub fn referenced_scripts(command: &str) -> Vec<PathBuf> {
@@ -182,6 +279,29 @@ pub fn parse_validate(output: &str) -> Vec<(String, Vec<String>)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_plugins_hook_scripts_resolve_under_its_root() {
+        let cmd = r#"HOOK_ROOT=$(printf %s "/p/caveman" | sed 's|x|y|'); node "$HOOK_ROOT/src/hooks/caveman-activate.js""#;
+        assert_eq!(
+            plugin_scripts(cmd, Path::new("/p/caveman")),
+            [PathBuf::from("/p/caveman/src/hooks/caveman-activate.js")]
+        );
+    }
+
+    #[test]
+    fn a_later_settings_file_turns_a_plugin_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user.json");
+        let project = dir.path().join("project.json");
+        std::fs::write(
+            &user,
+            r#"{"enabledPlugins":{"caveman@caveman":true,"x@m":true}}"#,
+        )
+        .unwrap();
+        std::fs::write(&project, r#"{"enabledPlugins":{"x@m":false}}"#).unwrap();
+        assert_eq!(enabled_plugins(&[user, project]), ["caveman@caveman"]);
+    }
 
     #[test]
     fn trust_is_found_on_the_project_or_its_nearest_trusted_parent() {

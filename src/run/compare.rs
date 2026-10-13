@@ -141,6 +141,12 @@ pub struct AgentFacts {
     /// commands were recorded have none.
     pub commands: BTreeMap<String, u32>,
     pub files_read: usize,
+    /// MCP tool calls by server (`mcp__<server>__<tool>`), e.g. `codegraph`.
+    pub mcp: BTreeMap<String, u32>,
+    /// Summed over the calls that reported it; `None` when none did
+    /// (traces written before usage was recorded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<crate::trace::schema::Usage>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -222,6 +228,16 @@ fn facts(project_root: &Path, id: &str, check: Option<&str>) -> Result<RunFacts>
         if let Some(o) = &t.observed {
             for (tool, n) in &o.tool_calls {
                 *agent.tool_calls.entry(tool.clone()).or_default() += n;
+                if let Some(server) = mcp_server(tool) {
+                    *agent.mcp.entry(server.to_string()).or_default() += n;
+                }
+            }
+            if let Some(u) = o.result.as_ref().and_then(|r| r.usage) {
+                let t = agent.tokens.get_or_insert_with(Default::default);
+                t.input_tokens += u.input_tokens;
+                t.output_tokens += u.output_tokens;
+                t.cache_read_input_tokens += u.cache_read_input_tokens;
+                t.cache_creation_input_tokens += u.cache_creation_input_tokens;
             }
             for c in &o.commands {
                 for kind in command_kinds(c) {
@@ -426,7 +442,28 @@ pub fn render(runs: &[RunFacts]) -> String {
         r.agent.model.clone().unwrap_or_else(|| "—".into())
     });
     row("knowledge in prompt", &|r| counts(&r.agent.knowledge));
-    row("tool calls", &|r| counts(&r.agent.tool_calls));
+    row("tool calls", &|r| {
+        let own: BTreeMap<String, u32> = r
+            .agent
+            .tool_calls
+            .iter()
+            .filter(|(t, _)| mcp_server(t).is_none())
+            .map(|(t, n)| (t.clone(), *n))
+            .collect();
+        counts(&own)
+    });
+    row("MCP calls", &|r| counts(&r.agent.mcp));
+    row("tokens", &|r| match r.agent.tokens {
+        Some(t) => format!(
+            "in {} (cache read {}, write {}), out {}",
+            thousands(t.input_tokens + t.cache_read_input_tokens + t.cache_creation_input_tokens),
+            thousands(t.cache_read_input_tokens),
+            thousands(t.cache_creation_input_tokens),
+            thousands(t.output_tokens)
+        ),
+        None if r.agent.calls > 0 => "not recorded (older trace)".into(),
+        None => "—".into(),
+    });
     // Traces written before commands and reads were recorded have the
     // tool counts but neither list.
     let calls = |r: &RunFacts, tool: &str| r.agent.tool_calls.get(tool).copied().unwrap_or(0);
@@ -569,6 +606,21 @@ fn counts<V: std::fmt::Display>(m: &BTreeMap<String, V>) -> String {
         .join(", ")
 }
 
+/// The server of an MCP tool name (`mcp__codegraph__codegraph_search` →
+/// `codegraph`).
+fn mcp_server(tool: &str) -> Option<&str> {
+    tool.strip_prefix("mcp__")?.split("__").next()
+}
+
+/// `1234567` → `1.2M`, `15400` → `15.4K`.
+fn thousands(n: u64) -> String {
+    match n {
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1e6),
+        n if n >= 1_000 => format!("{:.1}K", n as f64 / 1e3),
+        n => n.to_string(),
+    }
+}
+
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(8)]
 }
@@ -588,6 +640,22 @@ mod tests {
             ["knowledge"]
         );
         assert!(command_kinds("ls -la").is_empty());
+    }
+
+    #[test]
+    fn mcp_tools_are_counted_by_server() {
+        assert_eq!(
+            mcp_server("mcp__codegraph__codegraph_search"),
+            Some("codegraph")
+        );
+        assert_eq!(
+            mcp_server("mcp__claude_ai_Docs__read"),
+            Some("claude_ai_Docs")
+        );
+        assert_eq!(mcp_server("Bash"), None);
+        assert_eq!(thousands(610_458), "610.5K");
+        assert_eq!(thousands(1540), "1.5K");
+        assert_eq!(thousands(75), "75");
     }
 
     #[test]
