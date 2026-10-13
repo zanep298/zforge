@@ -1528,13 +1528,16 @@ fn an_amendment_reruns_only_what_it_touches() {
     assert_eq!(reused["from_run"], "RUN-001");
     assert_eq!(reused["from_handover"], "HANDOVER-001");
     assert_eq!(p.events("RUN-006").len(), 1, "no agent, no verification");
-    // TASK-003 starts from the output TASK-002 reuses.
+    // TASK-003 builds on the output TASK-002 reuses — and, that being what
+    // its own earlier run was built on, continues from that run's output.
     let task2_output = status_json(&p, "RUN-002")["state"]["output"].clone();
     assert_eq!(status_json(&p, "RUN-007")["state"]["output"], task2_output);
-    assert_eq!(
-        status_json(&p, "RUN-008")["meta"]["start"]["commit"],
-        task2_output
-    );
+    let start = status_json(&p, "RUN-008")["meta"]["start"].clone();
+    assert_eq!(start["from"][0]["commit"], task2_output);
+    let task3_output = status_json(&p, "RUN-003")["state"]["output"].clone();
+    assert_eq!(start["commit"], task3_output);
+    assert_eq!(start["previous"]["run"], "RUN-003");
+    assert_eq!(start["previous"]["handover"], "HANDOVER-001");
     assert_eq!(p.last("RUN-010")["event"], "verified", "integration ran");
     let text =
         String::from_utf8_lossy(&p.zforge(&["run", "status", "HANDOVER-002"]).stdout).into_owned();
@@ -1542,6 +1545,123 @@ fn an_amendment_reruns_only_what_it_touches() {
         text.contains("TASK-001     reused    RUN-006  reuses HANDOVER-001/RUN-001"),
         "{text}"
     );
+}
+
+/// D6 as amended 12/10/2026: a requirement only TASK-002 serves changes.
+/// Only what rests on it is confirmed again; TASK-001 is reused, and
+/// TASK-002 runs again from its own earlier output, told what changed.
+#[test]
+fn a_changed_requirement_reruns_only_its_task_from_its_earlier_output() {
+    let files = vec![
+        (
+            "01-outcome.md",
+            "# F — Outcome\n\n## Requirements\n\n- REQ-001: add returns the sum\n\
+             - REQ-002: add is fast\n\n## Open questions\n"
+                .to_string(),
+        ),
+        (
+            "02-behavior.md",
+            "# F — Behavior\n\n## Situations\n\n| # | Kind | When | Then | REQ |\n|---|---|---|---|---|\n\
+             | 1 | normal | add 2 3 | 5 | REQ-001 |\n| 2 | normal | add 1 1 | at once | REQ-002 |\n\n\
+             ## Open questions\n"
+                .to_string(),
+        ),
+        (
+            "03-solution.md",
+            "# F — Solution\n\n## Flow\n\nFix the arithmetic.\n\n## Binding decisions\n\nNone.\n\n\
+             ## Open questions\n"
+                .to_string(),
+        ),
+        (
+            "04-breakdown.md",
+            "# F — Breakdown\n\n## Tasks and dependencies\n\n| Task | Serves | Depends on | Output |\n\
+             |---|---|---|---|\n| TASK-001 Sum | REQ-001 | — | add |\n| TASK-002 Fast | REQ-002 | TASK-001 | add |\n\n\
+             ## Integration verification\n\nsh test.sh\n\n## Open questions\n"
+                .to_string(),
+        ),
+        ("tasks/TASK-001.md", task_for("TASK-001", "REQ-001", "")),
+        ("tasks/TASK-002.md", task_for("TASK-002", "REQ-002", "TASK-001")),
+    ];
+    let p = Project::with_files(3.0, 3, &files);
+    p.stub(&per_task(&p, ""));
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    p.amend(
+        "01-outcome.md",
+        "add is fast",
+        "add is fast, under a millisecond",
+    );
+    let i = zforge::intake::Intake::open(&p.root, "F").unwrap();
+    let stale: Vec<String> = zforge::intake::readiness::stale(&i)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        stale,
+        ["02-behavior.md", "04-breakdown.md", "tasks/TASK-002.md"]
+    );
+    p.hand_over_again();
+    let before = p.agent_calls();
+
+    let out = p.zforge(&["run", "HANDOVER-002"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        p.agent_calls(),
+        before + 1,
+        "only TASK-002 called the agent"
+    );
+    assert_eq!(
+        states(&p, "HANDOVER-002"),
+        expect(&[("TASK-001", "reused"), ("TASK-002", "verified")])
+    );
+    // RUN-004 reuses TASK-001; RUN-005 continues TASK-002 from RUN-002.
+    assert_eq!(p.last("RUN-004")["event"], "reused");
+    let start = status_json(&p, "RUN-005")["meta"]["start"].clone();
+    assert_eq!(start["previous"]["run"], "RUN-002");
+    assert_eq!(
+        start["commit"],
+        status_json(&p, "RUN-002")["state"]["output"]
+    );
+    assert_eq!(
+        start["from"][0]["commit"],
+        status_json(&p, "RUN-001")["state"]["output"]
+    );
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(prompt.contains("## Previous attempt"), "{prompt}");
+    assert!(
+        prompt.contains("output of RUN-002 — TASK-002 in HANDOVER-001"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("- REQ-002 of 01-outcome.md\n  before:\n    - REQ-002: add is fast\n  now:\n    - REQ-002: add is fast, under a millisecond"), "{prompt}");
+    assert_eq!(p.last("RUN-006")["event"], "verified", "integration ran");
+}
+
+/// `execution.continue_from_previous: false`: a task run again starts
+/// from the baseline, as before.
+#[test]
+fn continuing_from_previous_output_can_be_turned_off() {
+    let p = handed_over_twice(|p| {
+        p.amend(
+            "tasks/TASK-004.md",
+            "Chỉ sửa lib.sh.",
+            "Chỉ sửa lib.sh, cẩn thận.",
+        );
+        let config = p.root.join(".zforge/config.yaml");
+        let text = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(&config, text + "  continue_from_previous: false\n").unwrap();
+    });
+    assert!(p.zforge(&["run", "HANDOVER-002"]).status.success());
+    let runs: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "list", "--json"]).stdout).unwrap();
+    let run = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["meta"]["task"] == "TASK-004" && r["meta"]["handover"] == "HANDOVER-002")
+        .unwrap();
+    assert!(run["meta"].get("start").is_none(), "{run}");
+    assert_eq!(run["state"]["status"], "verified");
 }
 
 /// AC-04: amending a task reruns it and everything depending on it.
@@ -1608,6 +1728,19 @@ fn a_new_baseline_reruns_everything() {
     assert!(states(&p, "HANDOVER-002")
         .iter()
         .all(|(_, s)| s == "verified"));
+    // TASK-001 continues from its earlier output, with the new baseline
+    // merged in.
+    let runs: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "list", "--json"]).stdout).unwrap();
+    let run = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["meta"]["task"] == "TASK-001" && r["meta"]["handover"] == "HANDOVER-002")
+        .unwrap();
+    assert_eq!(run["meta"]["start"]["previous"]["run"], "RUN-001", "{run}");
+    let output = run["state"]["output"].as_str().unwrap();
+    assert_eq!(p.git(&["show", &format!("{output}:README")]), "moved on\n");
 }
 
 // ─── MOC-C TASK-007: three levels of implementation ─────────────────────────

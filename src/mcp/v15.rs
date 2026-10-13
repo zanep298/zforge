@@ -65,6 +65,7 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
     let handler = match name {
         "intake_new" => intake_new,
         "intake_task" => intake_task,
+        "intake_amend" => intake_amend,
         "intake_status" => intake_status,
         "intake_review" => intake_review,
         "intake_diff" => intake_diff,
@@ -94,6 +95,20 @@ fn intake_new(args: &Value) -> Result<String> {
         i.dir.display(),
         if small { " (small profile)" } else { "" }
     ))
+}
+
+/// A new intake amending an integrated one: drafts only, copied from the
+/// source's accepted revisions. Nothing is reviewed or accepted (D1).
+fn intake_amend(args: &Value) -> Result<String> {
+    let id = str_arg(args, "intake_id")?;
+    let from = str_arg(args, "from")?;
+    let a = intake::amend::amend(&root()?, &id, &from, opt_str(args, "handover").as_deref())?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "amended": a,
+        "next": format!(
+            "change only what changes and update brief.md, then intake_review each file; the user accepts them (`/accept {id} all`)"
+        ),
+    }))?)
 }
 
 fn intake_task(args: &Value) -> Result<String> {
@@ -155,6 +170,7 @@ fn intake_review(args: &Value) -> Result<String> {
     }
     let file = str_arg(args, "file")?;
     let r = review::review(&i, &file)?;
+    let stale_why = readiness::stale_reasons(&i)?.remove(&file);
     Ok(serde_json::to_string_pretty(&json!({
         "file": file,
         "revision": r.revision,
@@ -162,6 +178,7 @@ fn intake_review(args: &Value) -> Result<String> {
         "already_under_review": r.unchanged,
         "warnings": r.warnings,
         "diff": r.diff,
+        "rests_on_changed": stale_why,
         "next": format!(
             "tell the user what to look at, then they run: zforge intake accept {} {file}",
             i.id
@@ -416,6 +433,15 @@ pub fn definitions() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {
                 "intake_id": { "type": "string" }
             }, "required": ["intake_id"] }
+        }),
+        json!({
+            "name": "intake_amend",
+            "description": "v1.5: create a new intake amending one whose handover is already integrated or merged: its stages and tasks start as drafts copied from the source's accepted revisions, marked `amends`. Change only what changes, then intake_review each file; only the user accepts. When the source handover is not merged yet, prefer editing the source intake in place and handing over again — unchanged tasks are reused.",
+            "inputSchema": { "type": "object", "properties": {
+                "intake_id": { "type": "string", "description": "The new intake" },
+                "from": { "type": "string", "description": "The intake it amends" },
+                "handover": { "type": "string", "description": "The source handover to record (default: its latest)" }
+            }, "required": ["intake_id", "from"] }
         }),
         json!({
             "name": "intake_review",

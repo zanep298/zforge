@@ -6,6 +6,7 @@
 //! are complete or the design right, which is what the user's review of
 //! each file is for.
 
+use super::items;
 use super::lint::{self, Known, Severity, TaskMeta};
 use super::record;
 use super::review;
@@ -228,12 +229,12 @@ pub fn check(
         },
     );
 
-    // D6: a file accepted before something it builds on changed may rest
+    // D6: a file accepted before something it rests on changed may rest
     // on the old version; the user confirms it again before it is handed
-    // over.
+    // over. Only the items it rests on count (amended 12/10/2026).
     b.check(
         "up to date with upstream",
-        accepted_before_upstream(intake, &pinned, &metas)?
+        accepted_before_upstream(intake, &pinned, &metas, &texts)?
             .into_iter()
             .map(|(file, why)| {
                 format!(
@@ -256,91 +257,163 @@ pub fn check(
     })
 }
 
-/// Files accepted before a file they build on got a newer accepted
-/// revision: the later stages and tasks may rest on the old contract.
-/// Stages build on the stages before them; a task on every stage and on
-/// the tasks it depends on.
+/// Files resting on something that changed since they were accepted
+/// (D6, amended 12/10/2026), each with why: the upstream item, the file
+/// it is in and its newest accepted revision.
+///
+/// What a file rests on: a stage, the stages before it; a task, every
+/// stage and the tasks it depends on — but only the items of a stage it
+/// rests on (`items::view`): a later stage the requirements, rows and
+/// decisions it names, and the list of requirements; a task its
+/// requirements, their behavior rows, the decisions it cites and its row
+/// of the breakdown. The scope constraints bind everything; other text
+/// binds nothing. The upstream revision compared is the one in force when
+/// the file was accepted (the last accepted before it, in the decision
+/// log) against the newest accepted one. A stage that cannot be read as
+/// items is compared whole; a task depended on, always whole.
 fn accepted_before_upstream(
     intake: &Intake,
     pinned: &[Pinned],
     metas: &BTreeMap<String, TaskMeta>,
+    texts: &BTreeMap<String, String>,
 ) -> Result<Vec<(String, String)>> {
     let log = record::read(intake)?;
-    let accepted_at = |p: &Pinned| {
-        log.iter()
-            .rev()
-            .find(|d| {
-                d.file == p.file
-                    && d.revision == p.revision
-                    && d.decision == record::DecisionKind::Accepted
-            })
-            .map(|d| d.at)
-    };
+    let accepted = |d: &record::Decision| d.decision == record::DecisionKind::Accepted;
     let by_file: BTreeMap<&str, &Pinned> = pinned.iter().map(|p| (p.file.as_str(), p)).collect();
-    let mut warnings = Vec::new();
+    let mut out = Vec::new();
     for p in pinned {
-        let upstream: Vec<String> = match task_id(&p.file) {
-            Some(t) => STAGES
+        let Some(mine) = log
+            .iter()
+            .rposition(|d| d.file == p.file && d.revision == p.revision && accepted(d))
+        else {
+            continue;
+        };
+        let Some(text) = texts.get(&p.file) else {
+            continue;
+        };
+        // The revision of `up` in force when `p` was accepted.
+        let in_force = |up: &str| {
+            log[..mine]
                 .iter()
-                .map(|s| s.to_string())
-                .chain(
-                    metas
-                        .get(&t)
-                        .map(|m| m.depends_on.clone())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|d| format!("tasks/{d}.md")),
-                )
-                .collect(),
+                .rev()
+                .find(|d| d.file == up && accepted(d))
+                .map(|d| d.revision)
+        };
+        let task = task_id(&p.file);
+        let scope = match &task {
+            Some(t) => items::Scope::task(t, text),
+            None => items::Scope::stage(text),
+        };
+        let stages: Vec<&str> = match &task {
+            Some(_) => STAGES.to_vec(),
             None => STAGES
                 .iter()
-                .take_while(|s| **s != p.file)
-                .map(|s| s.to_string())
+                .copied()
+                .take_while(|s| *s != p.file)
                 .collect(),
         };
-        let Some(mine) = accepted_at(p) else { continue };
-        for up in upstream {
-            let Some(u) = by_file.get(up.as_str()) else {
+        let deps: Vec<String> = task
+            .as_ref()
+            .and_then(|t| metas.get(t))
+            .map(|m| {
+                m.depends_on
+                    .iter()
+                    .map(|d| format!("tasks/{d}.md"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for up in stages.iter().map(|s| s.to_string()).chain(deps) {
+            let (Some(u), Some(new)) = (by_file.get(up.as_str()), texts.get(&up)) else {
                 continue;
             };
-            if accepted_at(u).is_some_and(|t| t > mine) {
-                warnings.push((
+            let old_rev = in_force(&up);
+            if old_rev == Some(u.revision) {
+                continue;
+            }
+            let Some(old_rev) = old_rev else {
+                out.push((
                     p.file.clone(),
                     format!(
-                        "{} was accepted before {} revision {}",
-                        p.file, u.file, u.revision
+                        "{} was accepted before {} had an accepted revision (now revision {})",
+                        p.file, up, u.revision
+                    ),
+                ));
+                continue;
+            };
+            let old = record::read_snapshot(intake, &up, old_rev)?;
+            if up.starts_with("tasks/") {
+                if old != *new {
+                    out.push((
+                        p.file.clone(),
+                        format!(
+                            "{} rests on {up} (depends_on), changed in revision {}",
+                            p.file, u.revision
+                        ),
+                    ));
+                }
+                continue;
+            }
+            let changed = items::changed(
+                &items::view(&up, &old, &scope),
+                &items::view(&up, new, &scope),
+            );
+            if changed.iter().any(|k| k == items::WHOLE) {
+                out.push((
+                    p.file.clone(),
+                    format!(
+                        "{} rests on {up}, changed in revision {} (not readable as items, so compared whole)",
+                        p.file, u.revision
+                    ),
+                ));
+            } else if !changed.is_empty() {
+                out.push((
+                    p.file.clone(),
+                    format!(
+                        "{} rests on {} of {up}, changed in revision {}",
+                        p.file,
+                        items::describe(&changed),
+                        u.revision
                     ),
                 ));
             }
         }
     }
-    Ok(warnings)
+    Ok(out)
 }
 
-/// Accepted files of the intake accepted before something they build on
-/// got a newer accepted revision. A file here may be reviewed again even
-/// though it did not change (`review::review`).
-pub fn stale(intake: &Intake) -> Result<BTreeSet<String>> {
+/// Accepted files of the intake resting on something that changed since
+/// they were accepted, with why ([`accepted_before_upstream`]). A file
+/// here may be reviewed again even though it did not change
+/// (`review::review`).
+pub fn stale_reasons(intake: &Intake) -> Result<BTreeMap<String, Vec<String>>> {
     let mut pinned = Vec::new();
     let mut metas = BTreeMap::new();
+    let mut texts = BTreeMap::new();
     for s in review::statuses(intake)? {
         let Some(a) = &s.accepted else { continue };
+        let text = record::read_snapshot(intake, &s.file, a.revision)?;
         if let Some(t) = task_id(&s.file) {
-            let text = record::read_snapshot(intake, &s.file, a.revision)?;
             if let Ok(m) = lint::parse_task_meta(&text) {
                 metas.insert(t, m);
             }
         }
+        texts.insert(s.file.clone(), text);
         pinned.push(Pinned {
             file: s.file.clone(),
             revision: a.revision,
             sha256: a.sha256.clone(),
         });
     }
-    Ok(accepted_before_upstream(intake, &pinned, &metas)?
-        .into_iter()
-        .map(|(file, _)| file)
-        .collect())
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (file, why) in accepted_before_upstream(intake, &pinned, &metas, &texts)? {
+        out.entry(file).or_default().push(why);
+    }
+    Ok(out)
+}
+
+/// The files of [`stale_reasons`].
+pub fn stale(intake: &Intake) -> Result<BTreeSet<String>> {
+    Ok(stale_reasons(intake)?.into_keys().collect())
 }
 
 impl Readiness {
@@ -742,5 +815,186 @@ mod tests {
             "{:?}",
             project.problems
         );
+    }
+
+    // ─── D6 item by item (amended 12/10/2026) ───────────────────────────
+
+    const OUTCOME_ITEMS: &str = "# F — Outcome\n\n## Summary\nAdd and sub.\n\n## Requirements\n\n\
+        - REQ-001: add returns the sum\n  - negative numbers too\n\
+        - REQ-002: sub returns the difference\n\n## Must not change\n\n- the CLI flags\n\n\
+        ## Out of scope\n\n- floats\n\n## Open questions\n";
+    const BEHAVIOR_ITEMS: &str = "# F — Behavior\n\n## Situations\n\n| # | Kind | When | Then | REQ |\n\
+        |---|---|---|---|---|\n| 1 | normal | add 2 3 | 5 | REQ-001 |\n| 2 | normal | sub 3 2 | 1 | REQ-002 |\n\n\
+        ## Open questions\n";
+    const SOLUTION_ITEMS: &str = "# F — Solution\n\n## Flow\n\nShell arithmetic.\n\n## Binding decisions\n\n\
+        | # | Decision | Why | Rejected alternative |\n|---|---|---|---|\n\
+        | D-1 | `$(( ))` arithmetic | REQ-001: no dependency | bc |\n| D-2 | one file lib.sh | simple | two files |\n\n\
+        ## Open questions\n";
+    const BREAKDOWN_ITEMS: &str = "# F — Breakdown\n\n## Tasks and dependencies\n\n\
+        | Task | Serves | Depends on | Output |\n|---|---|---|---|\n\
+        | TASK-001 Add | REQ-001 | — | add |\n| TASK-002 Sub | REQ-002 | TASK-001 | sub |\n\n\
+        ## Integration verification\n\nsh test.sh\n\n## Open questions\n";
+
+    fn task_items(id: &str, req: &str, deps: &str, cites: &str) -> String {
+        format!(
+            "---\nid: {id}\nparent: F\nrequirements: [{req}]\ndepends_on: [{deps}]\n---\n\n\
+             # {id}\n\n## Goal\nDo it.\n\n## Input\nx.\n\n## Output\ny.\n\n\
+             ## Constraints\n{cites}\n\n## Autonomy\nw.\n\n\
+             ## Acceptance and verification\n- AC-01: ok\n\n## Delivery\nLocal.\n\n\
+             ## Amend the contract when\nNever.\n\n## Open questions\n"
+        )
+    }
+
+    /// Stages written as items; TASK-001 serves REQ-001 and keeps D-1,
+    /// TASK-002 serves REQ-002 and builds on TASK-001.
+    fn items_intake(root: &Path) -> Intake {
+        let i = crate::intake::review::create(root, "F").unwrap();
+        for (f, t) in [
+            ("01-outcome.md", OUTCOME_ITEMS.to_string()),
+            ("02-behavior.md", BEHAVIOR_ITEMS.to_string()),
+            ("03-solution.md", SOLUTION_ITEMS.to_string()),
+            ("04-breakdown.md", BREAKDOWN_ITEMS.to_string()),
+            (
+                "tasks/TASK-001.md",
+                task_items("TASK-001", "REQ-001", "", "Keeps D-1."),
+            ),
+            (
+                "tasks/TASK-002.md",
+                task_items("TASK-002", "REQ-002", "TASK-001", "None."),
+            ),
+        ] {
+            std::fs::write(i.dir.join(f), t).unwrap();
+        }
+        for f in i.files() {
+            crate::intake::review::review(&i, &f).unwrap();
+            crate::intake::review::accept(&i, &f, None).unwrap();
+        }
+        assert!(stale(&i).unwrap().is_empty());
+        i
+    }
+
+    fn change(i: &Intake, file: &str, from: &str, to: &str) {
+        let path = i.dir.join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{file} has no {from:?}");
+        std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        crate::intake::review::review(i, file).unwrap();
+        crate::intake::review::accept(i, file, None).unwrap();
+    }
+
+    fn stale_files(i: &Intake) -> Vec<String> {
+        stale(i).unwrap().into_iter().collect()
+    }
+
+    #[test]
+    fn a_changed_requirement_stales_only_what_rests_on_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = items_intake(tmp.path());
+        change(
+            &i,
+            "01-outcome.md",
+            "the difference",
+            "the difference, never negative",
+        );
+        // 03-solution names only REQ-001; TASK-001 serves REQ-001.
+        assert_eq!(
+            stale_files(&i),
+            ["02-behavior.md", "04-breakdown.md", "tasks/TASK-002.md"]
+        );
+        let why = stale_reasons(&i).unwrap();
+        assert_eq!(
+            why["tasks/TASK-002.md"],
+            ["tasks/TASK-002.md rests on REQ-002 of 01-outcome.md, changed in revision 2"]
+        );
+    }
+
+    #[test]
+    fn prose_binds_nothing_and_the_scope_binds_everything() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = items_intake(tmp.path());
+        change(&i, "01-outcome.md", "Add and sub.", "Add and subtract.");
+        change(
+            &i,
+            "03-solution.md",
+            "Shell arithmetic.",
+            "Plain shell arithmetic.",
+        );
+        assert!(stale_files(&i).is_empty());
+
+        change(&i, "01-outcome.md", "- floats", "- floats\n- big numbers");
+        assert_eq!(stale_files(&i).len(), 5, "{:?}", stale_files(&i));
+        let why = stale_reasons(&i).unwrap();
+        assert!(
+            why["tasks/TASK-001.md"][0].contains("rests on \"Out of scope\" of 01-outcome.md"),
+            "{why:?}"
+        );
+    }
+
+    #[test]
+    fn a_new_requirement_stales_the_stages_not_the_tasks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = items_intake(tmp.path());
+        change(
+            &i,
+            "01-outcome.md",
+            "- REQ-002:",
+            "- REQ-003: mul returns the product\n- REQ-002:",
+        );
+        assert_eq!(
+            stale_files(&i),
+            ["02-behavior.md", "03-solution.md", "04-breakdown.md"]
+        );
+    }
+
+    #[test]
+    fn decisions_rows_and_dependencies_stale_who_cites_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = items_intake(tmp.path());
+        // D-1 is cited by TASK-001 only; the breakdown names REQ-001.
+        change(&i, "03-solution.md", "| bc |", "| bc, awk |");
+        assert_eq!(stale_files(&i), ["04-breakdown.md", "tasks/TASK-001.md"]);
+        for f in stale_files(&i) {
+            crate::intake::review::review(&i, &f).unwrap();
+            crate::intake::review::accept(&i, &f, None).unwrap();
+        }
+        assert!(stale_files(&i).is_empty());
+
+        // A row of the breakdown: only its task.
+        change(&i, "04-breakdown.md", "| sub |", "| `sub` |");
+        assert_eq!(stale_files(&i), ["tasks/TASK-002.md"]);
+        crate::intake::review::review(&i, "tasks/TASK-002.md").unwrap();
+        crate::intake::review::accept(&i, "tasks/TASK-002.md", None).unwrap();
+
+        // A task depended on, whole.
+        change(&i, "tasks/TASK-001.md", "Do it.", "Do it well.");
+        assert_eq!(stale_files(&i), ["tasks/TASK-002.md"]);
+        assert_eq!(
+            stale_reasons(&i).unwrap()["tasks/TASK-002.md"],
+            ["tasks/TASK-002.md rests on tasks/TASK-001.md (depends_on), changed in revision 3"]
+        );
+    }
+
+    #[test]
+    fn a_stage_not_readable_as_items_is_compared_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let i = items_intake(tmp.path());
+        let path = i.dir.join("02-behavior.md");
+        std::fs::write(
+            &path,
+            "# F — Behavior\n\n## Situations\n\nREQ-001: add 2 3 = 5.\n\n## Open questions\n",
+        )
+        .unwrap();
+        crate::intake::review::review(&i, "02-behavior.md").unwrap();
+        crate::intake::review::accept(&i, "02-behavior.md", None).unwrap();
+        assert_eq!(
+            stale_files(&i),
+            [
+                "03-solution.md",
+                "04-breakdown.md",
+                "tasks/TASK-001.md",
+                "tasks/TASK-002.md"
+            ]
+        );
+        assert!(stale_reasons(&i).unwrap()["03-solution.md"][0].contains("not readable as items"));
     }
 }

@@ -221,7 +221,19 @@ pub fn summary(meta: &RunMeta, state: &RunState) -> String {
             .iter()
             .map(|s| format!("{} ({}, {})", s.task, s.run, short(&s.commit)))
             .collect();
-        let _ = writeln!(out, "  starts from {}", from.join(" + "));
+        if !from.is_empty() {
+            let _ = writeln!(out, "  starts from {}", from.join(" + "));
+        }
+        if let Some(p) = &start.previous {
+            let _ = writeln!(
+                out,
+                "  continues from {} ({} of {}, {})",
+                p.task,
+                p.run,
+                p.handover,
+                short(&p.commit)
+            );
+        }
     }
     if let Some(checks) = &meta.checks {
         let from = format!("{:?}", checks.from).to_lowercase();

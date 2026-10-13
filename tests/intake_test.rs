@@ -483,8 +483,9 @@ fn readiness_names_a_missing_runner() {
     );
 }
 
-/// D6: a file accepted before something it builds on changed is not handed
-/// over until the user confirms it again — which they can, unchanged.
+/// D6: a file accepted before something it rests on changed is not handed
+/// over until the user confirms it again — which they can, unchanged. This
+/// solution has no binding decisions section, so it is compared whole.
 #[test]
 fn a_file_resting_on_a_changed_upstream_is_confirmed_again() {
     let p = Project::new();
@@ -501,7 +502,7 @@ fn a_file_resting_on_a_changed_upstream_is_confirmed_again() {
     let problems = failing(&r);
     assert_eq!(problems.len(), 3, "{problems:?}");
     assert!(problems[0].starts_with(
-        "04-breakdown.md was accepted before 03-solution.md revision 2; review it again"
+        "04-breakdown.md rests on 03-solution.md, changed in revision 2 (not readable as items, so compared whole); review it again"
     ));
 
     // Unchanged, but stale: it may be reviewed and accepted again. Its
@@ -534,4 +535,69 @@ fn a_file_resting_on_a_changed_upstream_is_confirmed_again() {
         "{}",
         stderr(&out)
     );
+}
+
+/// `intake amend`: a new intake whose files are drafts copied from the
+/// source's accepted revisions — not its working files — marked with what
+/// they amend; nothing is accepted for the user.
+#[test]
+fn amend_starts_a_new_intake_from_the_accepted_revisions() {
+    let p = Project::new();
+    p.ready_intake();
+    // A draft on top of the accepted outcome is not what gets copied.
+    let outcome = p.intake_dir().join("01-outcome.md");
+    let accepted = std::fs::read_to_string(&outcome).unwrap();
+    std::fs::write(&outcome, accepted.replace("lọc theo", "DRAFT lọc theo")).unwrap();
+
+    let out = p.ok(&["intake", "amend", "G-1", "--from", "F-1"]);
+    assert!(out.contains("created G-1, amending F-1"), "{out}");
+    let g = p.root.join(".zforge/intakes/G-1");
+    let copy = std::fs::read_to_string(g.join("01-outcome.md")).unwrap();
+    assert!(
+        copy.starts_with("# G-1 — Outcome\n\n<!-- amends: F-1."),
+        "{copy}"
+    );
+    assert!(copy.contains("- REQ-001: lọc theo trạng thái") && !copy.contains("DRAFT"));
+    let task = std::fs::read_to_string(g.join("tasks/TASK-002.md")).unwrap();
+    assert!(task.contains("parent: G-1\namends: F-1\n"), "{task}");
+    assert!(task.contains("depends_on: [TASK-001]"));
+    let brief = std::fs::read_to_string(g.join("brief.md")).unwrap();
+    assert!(
+        brief.contains("Amends F-1: write only what changes."),
+        "{brief}"
+    );
+
+    // Drafts, every one: the user still accepts them.
+    let status: serde_json::Value =
+        serde_json::from_str(&p.ok(&["intake", "status", "G-1", "--json"])).unwrap();
+    let states: Vec<&str> = status
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["state"].as_str().unwrap())
+        .collect();
+    assert_eq!(states.len(), 6);
+    assert!(states.iter().all(|s| *s == "draft"), "{states:?}");
+    // And they pass review as they are (the parent is the new intake).
+    for f in [
+        "01-outcome.md",
+        "02-behavior.md",
+        "03-solution.md",
+        "04-breakdown.md",
+        "tasks/TASK-001.md",
+        "tasks/TASK-002.md",
+    ] {
+        p.ok(&["intake", "review", "G-1", f]);
+    }
+
+    // Amending into an existing intake, or from one with nothing accepted,
+    // is refused.
+    assert!(!p
+        .zforge(&["intake", "amend", "G-1", "--from", "F-1"])
+        .status
+        .success());
+    assert!(!p
+        .zforge(&["intake", "amend", "H-1", "--from", "G-1"])
+        .status
+        .success());
 }

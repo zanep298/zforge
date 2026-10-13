@@ -160,6 +160,10 @@ pub struct IntakeStatus {
     /// revision (D6): they must be confirmed again before a handover.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stale: Vec<String>,
+    /// Why each stale file is stale: the upstream item that changed, the
+    /// file it is in and its revision.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stale_why: BTreeMap<String, String>,
     pub handovers: Vec<HandoverStatus>,
     /// The next command to run, in words a user can follow.
     pub next: String,
@@ -203,7 +207,11 @@ pub(crate) fn intake_ids(project_root: &Path) -> Vec<String> {
 
 fn intake_status(project_root: &Path, intake: &Intake) -> Result<IntakeStatus> {
     let docs = review::statuses(intake)?;
-    let stale: Vec<String> = readiness::stale(intake)?.into_iter().collect();
+    let stale_why: BTreeMap<String, String> = readiness::stale_reasons(intake)?
+        .into_iter()
+        .map(|(f, why)| (f, why.join("; ")))
+        .collect();
+    let stale: Vec<String> = stale_why.keys().cloned().collect();
     let mut handovers = Vec::new();
     let mut latest: Option<(FeatureState, String)> = None;
     for m in handover::list(intake)? {
@@ -236,6 +244,7 @@ fn intake_status(project_root: &Path, intake: &Intake) -> Result<IntakeStatus> {
         id: intake.id.clone(),
         files,
         stale,
+        stale_why,
         handovers,
         next,
     })

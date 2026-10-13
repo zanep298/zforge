@@ -31,6 +31,7 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__zforge__status",
       "mcp__zforge__intake_new",
       "mcp__zforge__intake_task",
+      "mcp__zforge__intake_amend",
       "mcp__zforge__intake_status",
       "mcp__zforge__intake_diff",
       "mcp__zforge__intake_review",

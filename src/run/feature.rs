@@ -311,6 +311,7 @@ mod tests {
                         commit: (*c).into(),
                     })
                     .collect(),
+                previous: None,
             }),
             kind,
             checks: None,

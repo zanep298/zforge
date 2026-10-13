@@ -12,7 +12,7 @@
 //! the agent: which outputs to keep is a contract question, not the agent's.
 
 use super::git;
-use super::record::{self, RunKind, RunMeta, RunState, RunStatus, Source, Start};
+use super::record::{self, Previous, RunKind, RunMeta, RunState, RunStatus, Source, Start};
 use anyhow::{bail, Result};
 use std::path::Path;
 
@@ -46,7 +46,122 @@ pub fn plan(
     Ok(Some(Start {
         commit: from[0].commit.clone(),
         from,
+        previous: None,
     }))
+}
+
+/// Where a run of `task` in `handover` continues from instead of `start`
+/// (the plan above): the newest verified output of the same task in
+/// another handover of the intake, when that run started from exactly the
+/// dependency outputs `start` names — so the task's own earlier work is
+/// adapted to its changed contract rather than redone. The handover's
+/// `baseline` is merged in when that output does not contain it; when the
+/// merge would conflict, or git cannot tell, there is nothing to continue
+/// from and the run starts as planned. `None` when nothing qualifies.
+pub fn previous(
+    project_root: &Path,
+    intake: &str,
+    handover: &str,
+    task: &str,
+    baseline: &str,
+    start: Option<&Start>,
+) -> Result<Option<Start>> {
+    let expected: Vec<(String, String)> = start
+        .map(|s| {
+            s.from
+                .iter()
+                .map(|f| (f.task.clone(), f.commit.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut runs = record::list(project_root)?;
+    runs.reverse();
+    for run in runs {
+        let meta = run.meta()?;
+        if meta.intake != intake
+            || meta.handover == handover
+            || meta.kind != RunKind::Task
+            || meta.task != task
+        {
+            continue;
+        }
+        let state = run.state()?;
+        let (RunStatus::Verified, Some(output)) = (state.status, state.output.clone()) else {
+            continue;
+        };
+        let started_from: Vec<(String, String)> = meta
+            .start
+            .iter()
+            .flat_map(|s| s.from.iter())
+            .map(|f| (f.task.clone(), f.commit.clone()))
+            .collect();
+        if started_from != expected {
+            continue;
+        }
+        if !merges_cleanly(project_root, &output, baseline) {
+            return Ok(None);
+        }
+        let previous = Previous {
+            task: task.to_string(),
+            run: meta.id.clone(),
+            handover: meta.handover.clone(),
+            commit: output.clone(),
+        };
+        return Ok(Some(Start {
+            commit: output,
+            from: start.map(|s| s.from.clone()).unwrap_or_default(),
+            previous: Some(previous),
+        }));
+    }
+    Ok(None)
+}
+
+/// Whether `baseline` is in `output` already, or merges into it without a
+/// conflict (`git merge-tree`, which touches no work tree).
+fn merges_cleanly(project_root: &Path, output: &str, baseline: &str) -> bool {
+    let ok = |args: &[&str]| git::run(project_root, args).is_ok_and(|o| o.status.success());
+    if !ok(&["cat-file", "-e", &format!("{output}^{{commit}}")]) {
+        return false;
+    }
+    ok(&["merge-base", "--is-ancestor", baseline, output])
+        || ok(&[
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            output,
+            baseline,
+        ])
+}
+
+/// Merge `baseline` into a run continuing from an earlier output
+/// (`previous`), when that output does not contain it yet.
+pub fn bring_baseline(work_dir: &Path, run_id: &str, baseline: &str) -> Result<()> {
+    let contained = git::run(work_dir, &["merge-base", "--is-ancestor", baseline, "HEAD"])?
+        .status
+        .success();
+    if contained {
+        return Ok(());
+    }
+    let message = format!("zforge: merge the handover's baseline into {run_id}");
+    let merged = git::ok(
+        work_dir,
+        &[
+            "-c",
+            "user.name=zforge",
+            "-c",
+            "user.email=zforge@localhost",
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            "-m",
+            &message,
+            baseline,
+        ],
+    );
+    if merged.is_err() {
+        let _ = git::run(work_dir, &["merge", "--abort"]);
+    }
+    merged.map(|_| ())
 }
 
 /// The output of `task` among `runs` (all of one handover): its newest
@@ -318,6 +433,7 @@ mod tests {
             &Start {
                 commit: b.clone(),
                 from: vec![src("B", &b), src("D", &d)],
+                previous: None,
             },
         )
         .unwrap();
@@ -345,6 +461,7 @@ mod tests {
             &Start {
                 commit: b.clone(),
                 from: vec![src("B", &b), src("D", &d)],
+                previous: None,
             },
         )
         .unwrap_err();
@@ -354,6 +471,33 @@ mod tests {
             "dependency outputs conflict: B, D in shared.txt"
         );
         assert_eq!(r.git(&["rev-parse", "HEAD"]), b);
+        assert!(git::is_clean(&r.root).unwrap());
+    }
+
+    /// A run continues from an earlier output only when the handover's
+    /// baseline is in it or merges into it cleanly; otherwise it starts
+    /// as planned.
+    #[test]
+    fn an_earlier_output_is_continued_only_when_the_baseline_merges() {
+        let r = Repo::new();
+        let out = r.output("earlier", "shared.txt", "earlier work\n");
+        let base = r.git(&["rev-parse", "main"]);
+        assert!(merges_cleanly(&r.root, &out, &base), "contained");
+        r.write("other.txt", "x\n");
+        let moved = r.commit("moved");
+        assert!(merges_cleanly(&r.root, &out, &moved), "clean merge");
+        r.write("shared.txt", "baseline's line\n");
+        let conflicting = r.commit("conflict");
+        assert!(!merges_cleanly(&r.root, &out, &conflicting));
+        assert!(!merges_cleanly(
+            &r.root,
+            "0000000000000000000000000000000000000000",
+            &moved
+        ));
+
+        r.git(&["checkout", "-q", "-b", "run", &out]);
+        bring_baseline(&r.root, "RUN-009", &moved).unwrap();
+        assert!(r.root.join("other.txt").is_file());
         assert!(git::is_clean(&r.root).unwrap());
     }
 }
