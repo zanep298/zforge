@@ -203,6 +203,11 @@ fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, Age
                 &contract,
                 previous,
             )?);
+            contract.review_scope = Some(super::start::review_scope(
+                project_root,
+                previous,
+                &meta.baseline_commit,
+            )?);
         }
     }
     report_claude_config(

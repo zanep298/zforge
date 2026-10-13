@@ -156,6 +156,8 @@ at minimum `zforge status`, `zforge intake …`, `zforge readiness`,
 
 - **Tests first** — write the failing test before any production code
 - **Minimal patch** — only change what the task contract requires
+- **Fit the codebase** — the project's conventions and the nearest existing code decide structure, naming and error handling; general checklists only fill gaps
+- **Generated code** — regenerate with the project's command; never hand-edit `DO NOT EDIT` files
 - **No scope creep** — work outside the contract's scope needs an amendment first
 - **Never weaken a test** — protected tests stay as they were; add new ones instead
 - **No silent errors** — propagate errors explicitly; never swallow them

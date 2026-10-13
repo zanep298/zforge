@@ -19,7 +19,10 @@ suite is green, not that the contract is met; check both.
   `tests_may_change` if the user allowed a test to change
 - The Binding decisions of the accepted solution
 - The diff from the commit the task started from (`git diff <start>`) and
-  `git status`
+  `git status`; for a run that continues an earlier output, the whole
+  task's diff from the base the prompt names
+- The project's conventions and rules (a run's prompt shows the ones that
+  apply) and the code around the change
 - The test command and its result
 
 ## Expected Outputs
@@ -41,18 +44,25 @@ VERDICT: CHANGES
 
 - [ ] Every `AC-nn` is met by the code — trace each one to where it happens
 - [ ] Every `AC-nn` is proven by a test that would fail without the change
+      and that the test command actually runs (not skipped by an env var,
+      build tag or skip marker)
 - [ ] Nothing changed outside the contract's Output and constraints
 - [ ] Every binding decision is kept; choices under Autonomy are the implementer's
 - [ ] No test was weakened, skipped or deleted (outside `tests_may_change`)
 - [ ] No placeholder, dead code, debug output or silenced error in production paths
+- [ ] Structure, file layout, naming and error/response handling follow the
+      project's conventions and the nearest existing code in the module
+      changed — a departure is a `VERDICT: CHANGES` finding
+- [ ] Generated files regenerated with the project's command, not hand-edited
 - [ ] Regression risk named with the specific behavior or file that could break
 
 ## Constraints
 
 - Base every finding on evidence — cite the file, function, test or `AC-nn`
-- Read and run read-only commands only; do not change any file
+- Read, and run only commands that change no tracked file (the test
+  command included); do not change any file
 - Ask for changes only for what breaks the contract or a checklist item — not
-  for style or preference
+  for taste where the conventions and surrounding code are silent
 - When the contract itself looks wrong, say so as a finding; the fix is an
   amendment to the intake, not a change the implementer can make alone
 

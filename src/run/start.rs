@@ -135,6 +135,33 @@ fn merges_cleanly(project_root: &Path, output: &str, baseline: &str) -> bool {
 
 /// Merge `baseline` into a run continuing from an earlier output
 /// (`previous`), when that output does not contain it yet.
+/// For the reviewer of a run that continues `previous`: where the whole
+/// task's change starts. Follows the chain of continued runs back to the
+/// first, whose start commit holds none of the task's work, and names the
+/// baseline change merged in since when the baseline moved.
+pub fn review_scope(project_root: &Path, previous: &Previous, baseline: &str) -> Result<String> {
+    let mut meta = record::Run::open(project_root, &previous.run)?.meta()?;
+    while let Some(p) = meta.start.as_ref().and_then(|s| s.previous.clone()) {
+        meta = record::Run::open(project_root, &p.run)?.meta()?;
+    }
+    let base = meta.start_commit().to_string();
+    let mut text = format!(
+        "This run continues {}'s verified output, so `git diff {{{{start}}}}` shows only what \
+         changed in this run. Review the whole task — everything the contract asks for — with \
+         `git diff {base}`",
+        previous.run
+    );
+    if meta.baseline_commit != baseline {
+        text.push_str(&format!(
+            "; that diff also holds the baseline's own changes merged in since \
+             (`git diff {} {baseline}`), which are not the task's",
+            meta.baseline_commit
+        ));
+    }
+    text.push_str(".\n");
+    Ok(text)
+}
+
 pub fn bring_baseline(work_dir: &Path, run_id: &str, baseline: &str) -> Result<()> {
     let contained = git::run(work_dir, &["merge-base", "--is-ancestor", baseline, "HEAD"])?
         .status

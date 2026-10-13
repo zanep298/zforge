@@ -1,5 +1,10 @@
 # Skill: backend-observability
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Add useful logs, metrics, and traces without noisy or sensitive output. Use this
 when a task changes request handling, background work, external calls, or failure

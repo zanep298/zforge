@@ -1,5 +1,10 @@
 # Skill: ios-snapshot-accessibility
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Add iOS snapshot and accessibility checks where they provide real regression
 coverage. Use this for SwiftUI screens, reusable components, and visual states.
