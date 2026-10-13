@@ -7,13 +7,14 @@
 //! `not_checked` rather than assumed.
 
 use super::claude_config::{
-    hooks, parse_mcp_get, referenced_scripts, settings_files, state_file, trusted_by, McpStatus,
+    enabled_plugins, hooks, parse_mcp_get, plugin_hooks, plugin_install_path, plugin_scripts,
+    referenced_scripts, settings_files, state_file, trusted_by, McpStatus,
 };
 use super::report::{Check, Level};
 use crate::config::Config;
 use crate::fs::reader::MarkdownFile;
 use crate::process::run_bounded;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -431,13 +432,7 @@ pub fn caveman_hook(ctx: &Ctx<'_>) -> Check {
         .filter(|h| h.command.contains("caveman"))
         .collect();
     if cave.is_empty() {
-        return Check::new(
-            "caveman hook",
-            false,
-            Level::Missing,
-            "no caveman hook registered",
-        )
-        .fix("see https://github.com/JuliusBrussee/caveman");
+        return caveman_plugin(&ctx.root);
     }
     let missing: Vec<PathBuf> = cave
         .iter()
@@ -458,6 +453,74 @@ pub fn caveman_hook(ctx: &Ctx<'_>) -> Check {
         false,
         Level::Configured,
         format!("registered on {} with scripts present", events.join(", ")),
+    )
+    .not_checked("hook invocation (its effect is on the model's output)")
+}
+
+/// Caveman installed as a Claude plugin: enabled in a settings file,
+/// installed, and its hook scripts present.
+fn caveman_plugin(root: &Path) -> Check {
+    let name = "caveman hook";
+    let Some(id) = enabled_plugins(&settings_files(root))
+        .into_iter()
+        .find(|id| id.split('@').next() == Some("caveman"))
+    else {
+        return Check::new(
+            name,
+            false,
+            Level::Missing,
+            "no caveman hook or plugin enabled",
+        )
+        .fix("see https://github.com/JuliusBrussee/caveman");
+    };
+    let Some(install) = plugin_install_path(&id).filter(|p| p.is_dir()) else {
+        return Check::new(
+            name,
+            false,
+            Level::Broken,
+            format!("plugin {id} enabled but not installed"),
+        )
+        .fix(format!("claude plugin install {id}"));
+    };
+    let cave: Vec<_> = plugin_hooks(&install)
+        .into_iter()
+        .filter(|h| h.command.contains("caveman"))
+        .collect();
+    if cave.is_empty() {
+        return Check::new(
+            name,
+            false,
+            Level::Broken,
+            format!(
+                "plugin {id} declares no caveman hook ({})",
+                install.display()
+            ),
+        );
+    }
+    let missing: Vec<PathBuf> = cave
+        .iter()
+        .flat_map(|h| plugin_scripts(&h.command, &install))
+        .filter(|p| !p.is_file())
+        .collect();
+    if !missing.is_empty() {
+        return Check::new(
+            name,
+            false,
+            Level::Broken,
+            format!("plugin {id} hook script missing: {missing:?}"),
+        )
+        .fix(format!("claude plugin install {id}"));
+    }
+    let mut events: Vec<&str> = cave.iter().map(|h| h.event.as_str()).collect();
+    events.dedup();
+    Check::new(
+        name,
+        false,
+        Level::Configured,
+        format!(
+            "plugin {id} enabled; hooks on {} with scripts present",
+            events.join(", ")
+        ),
     )
     .not_checked("hook invocation (its effect is on the model's output)")
 }

@@ -203,6 +203,9 @@ fn read_result(event: &Value) -> RunResult {
         duration_ms: event.get("duration_ms").and_then(Value::as_u64),
         terminal_reason: str_at(event, "terminal_reason").map(str::to_string),
         cost_usd: event.get("total_cost_usd").and_then(Value::as_f64),
+        usage: event
+            .get("usage")
+            .and_then(|u| serde_json::from_value(u.clone()).ok()),
     }
 }
 
@@ -409,6 +412,15 @@ mod tests {
         let r = o.result.expect("result");
         assert_eq!(r.subtype, "success");
         assert_eq!(r.num_turns, Some(9));
+        assert_eq!(
+            r.usage,
+            Some(crate::trace::schema::Usage {
+                input_tokens: 75,
+                output_tokens: 1540,
+                cache_read_input_tokens: 541183,
+                cache_creation_input_tokens: 69200,
+            })
+        );
     }
 
     #[test]
