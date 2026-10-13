@@ -571,9 +571,10 @@ pub fn runs(ctx: &Ctx<'_>) -> Check {
     }
     if dead.is_empty() {
         let check = Check::new(NAME, false, Level::Working, detail);
-        return match worktrees.first() {
-            None => check,
-            Some(id) => check.fix(format!("free the disk with `zforge run clean {id}`")),
+        return match worktrees.as_slice() {
+            [] => check,
+            [id] => check.fix(format!("free the disk with `zforge run clean {id}`")),
+            _ => check.fix("free the disk with `zforge run clean --all`"),
         };
     }
     Check::new(

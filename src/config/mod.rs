@@ -118,6 +118,13 @@ pub struct ExecutionConfig {
     /// counts its whole allotment.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// Keep a verified run's worktree. Off by default: a verified run's
+    /// output is a sealed commit on its branch — what dependent tasks,
+    /// reuse and the integration start from — so its worktree is removed
+    /// once the run is verified (the branch stays). Failed, blocked and
+    /// cancelled runs always keep theirs for inspection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_worktrees: bool,
 }
 
 impl Default for ExecutionConfig {
@@ -128,6 +135,7 @@ impl Default for ExecutionConfig {
             protected_tests: None,
             review: false,
             agent_timeout_secs: default_agent_timeout_secs(),
+            keep_worktrees: false,
         }
     }
 }
@@ -497,6 +505,7 @@ mod tests {
         assert_eq!(cfg.execution.max_iterations, 3);
         assert_eq!(cfg.execution.budget_usd, None);
         assert_eq!(cfg.execution.agent_timeout_secs, 3600);
+        assert!(!cfg.execution.keep_worktrees);
         assert_eq!(cfg.knowledge.draft_budget_usd, 2.0);
     }
 

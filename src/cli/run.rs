@@ -8,7 +8,8 @@
 //! <HANDOVER>` does all of it: every task in order, then the integration,
 //! continuing where an earlier invocation stopped (TASK-005). `status`,
 //! `cancel`, `log` and `wait` take a handover as well as a run.
-//! `status`, `list`, `cancel`, `retry` and `clean` operate existing runs.
+//! `status`, `list`, `cancel`, `retry`, `clean` (one run or `--all`) and
+//! `prune-branches` operate existing runs.
 
 use crate::config;
 use crate::run::record::{Run, RunState, RunStatus};
@@ -64,8 +65,27 @@ pub enum RunCmd {
         background: bool,
     },
     /// Remove a finished run's worktree; its branch is kept, with any
-    /// uncommitted work committed to it first.
-    Clean { run: String },
+    /// uncommitted work committed to it first. A verified run's worktree
+    /// is already removed unless `execution.keep_worktrees` is set.
+    Clean {
+        /// The run to clean; or `--all`.
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        run: Option<String>,
+        /// Every finished run (verified, failed, blocked, cancelled) that
+        /// still holds a worktree; a run in progress is never touched.
+        #[arg(long)]
+        all: bool,
+        /// With `--all`: only verified runs.
+        #[arg(long, requires = "all")]
+        verified: bool,
+    },
+    /// Delete local `zforge/*` branches already merged into
+    /// `knowledge.baseline` whose runs are finished and hold no worktree.
+    PruneBranches {
+        /// Only say what would be deleted.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Print (or follow) a background run's log.
     Log {
         run: String,
@@ -115,7 +135,13 @@ pub fn run(args: RunArgs) -> Result<()> {
             eprintln!("{} {} retries {}", "▶".cyan(), new.id, old.id);
             start(&root, &new, background)
         }
-        Some(RunCmd::Clean { run }) => {
+        Some(RunCmd::Clean {
+            run: None,
+            verified,
+            ..
+        }) => clean_all(&root, verified),
+        Some(RunCmd::PruneBranches { dry_run }) => prune_branches(&root, dry_run),
+        Some(RunCmd::Clean { run: Some(run), .. }) => {
             let r = Run::open(&root, &run)?;
             let saved = ops::clean(&root, &r)?;
             let meta = r.meta()?;
@@ -305,6 +331,89 @@ fn wait_feature(root: &Path, handover: &str, timeout_secs: u64, poll_ms: u64) ->
             bail!("{} is still running after {timeout_secs}s", h.manifest.id);
         }
         std::thread::sleep(std::time::Duration::from_millis(poll_ms));
+    }
+}
+
+/// `zforge run clean --all [--verified]`.
+fn clean_all(root: &Path, verified_only: bool) -> Result<()> {
+    let done = ops::clean_all(root, verified_only)?;
+    for c in &done.cleaned {
+        match &c.saved {
+            Some(commit) => println!(
+                "{} {} worktree removed; uncommitted work saved to {} as {}",
+                "✓".green(),
+                c.run,
+                c.branch,
+                &commit[..commit.len().min(12)]
+            ),
+            None => println!(
+                "{} {} worktree removed; branch {} kept",
+                "✓".green(),
+                c.run,
+                c.branch
+            ),
+        }
+    }
+    for (run, why) in &done.failed {
+        eprintln!("{} {run} not cleaned: {why}", "✗".red());
+    }
+    let freed: u64 = done.cleaned.iter().map(|c| c.bytes).sum();
+    println!(
+        "{} worktree(s) removed, {} freed{}",
+        done.cleaned.len(),
+        human_bytes(freed),
+        match done.failed.len() {
+            0 => String::new(),
+            n => format!(", {n} could not be"),
+        }
+    );
+    match done.failed.is_empty() {
+        true => Ok(()),
+        false => Err(anyhow!("{} worktree(s) not cleaned", done.failed.len())),
+    }
+}
+
+/// `zforge run prune-branches [--dry-run]`.
+fn prune_branches(root: &Path, dry_run: bool) -> Result<()> {
+    let p = ops::prune_branches(root, dry_run)?;
+    let verb = if dry_run { "would delete" } else { "deleted" };
+    for b in &p.deleted {
+        println!(
+            "{} {verb} {} ({}; runs {})",
+            "✓".green(),
+            b.branch,
+            &b.tip[..b.tip.len().min(12)],
+            b.runs.join(", ")
+        );
+    }
+    for (branch, why) in &p.kept {
+        println!("  kept {branch}: {why}");
+    }
+    println!(
+        "{} branch(es) {}, already in {}; {} kept",
+        p.deleted.len(),
+        if dry_run {
+            "would be deleted"
+        } else {
+            "deleted"
+        },
+        p.baseline,
+        p.kept.len()
+    );
+    Ok(())
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut v = n as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    match unit {
+        0 => format!("{n} B"),
+        _ => format!("{v:.1} {}", UNITS[unit]),
     }
 }
 
