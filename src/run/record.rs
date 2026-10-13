@@ -108,6 +108,22 @@ impl RunMeta {
 pub struct Start {
     pub commit: String,
     pub from: Vec<Source>,
+    /// The verified output of this task in an earlier handover of the
+    /// intake, which the run continues from (`start::previous`): `commit`
+    /// is then that output, the handover's baseline merged in when it moved.
+    /// Absent — every run before it — means `commit` is the baseline or the
+    /// first dependency's output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<Previous>,
+}
+
+/// The earlier verified run a run continues from.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Previous {
+    pub task: String,
+    pub run: String,
+    pub handover: String,
+    pub commit: String,
 }
 
 /// The sealed output of `task`'s run `run`.

@@ -19,6 +19,17 @@ use std::io::{BufRead, IsTerminal, Write};
 pub enum IntakeCmd {
     /// Create `.zforge/intakes/<ID>/` with templates for every stage.
     New { id: String },
+    /// A new intake amending one already integrated: its stages and tasks
+    /// start as drafts copied from the source's accepted revisions.
+    Amend {
+        id: String,
+        /// The intake it amends.
+        #[arg(long)]
+        from: String,
+        /// The source handover to record (default: its latest).
+        #[arg(long)]
+        handover: Option<String>,
+    },
     /// Add a leaf task contract `tasks/<TASK_ID>.md` from the template.
     Task { id: String, task_id: String },
     /// Every file's review state, open questions and structural issues.
@@ -59,6 +70,22 @@ pub fn run(cmd: IntakeCmd) -> Result<()> {
             let i = review::create(&root, &id)?;
             println!("{} created {}", "✓".green(), i.dir.display());
             println!("Next: fill 01-outcome.md, then `zforge intake review {id} 01-outcome.md`");
+            Ok(())
+        }
+        IntakeCmd::Amend { id, from, handover } => {
+            let a = crate::intake::amend::amend(&root, &id, &from, handover.as_deref())?;
+            println!("{} created {id}, amending {}", "✓".green(), a.origin.intake);
+            for (file, rev) in &a.copied {
+                println!("  {file:<28} draft, from {from} rev {rev}");
+            }
+            for file in &a.skipped {
+                println!("  {file:<28} not copied: {from} has no accepted revision");
+            }
+            println!(
+                "Next: change only what changes and update brief.md, then send every file for \
+                 review (`zforge intake review {id} <file>`); the user accepts them — \
+                 `/accept {id} all` in Claude Code."
+            );
             Ok(())
         }
         IntakeCmd::Task { id, task_id } => {
@@ -103,7 +130,16 @@ fn send_for_review(i: &Intake, rel: &str) -> Result<()> {
             Some(d) if !d.trim().is_empty() => {
                 println!("\nChanges since the accepted revision:\n{d}")
             }
-            Some(_) => {}
+            Some(_) => {
+                // Unchanged: sent again because something it rests on
+                // changed (D6). Say what.
+                if let Some(why) = crate::intake::readiness::stale_reasons(i)
+                    .ok()
+                    .and_then(|r| r.get(rel).cloned())
+                {
+                    println!("Unchanged; to confirm again because {}", why.join("; "));
+                }
+            }
             None => println!("No accepted revision yet to compare with."),
         }
     }

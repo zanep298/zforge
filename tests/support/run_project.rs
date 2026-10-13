@@ -27,6 +27,11 @@ pub fn task(id: &str, deps: &str) -> String {
     )
 }
 
+/// A task contract serving `req`.
+pub fn task_for(id: &str, req: &str, deps: &str) -> String {
+    task(id, deps).replace("requirements: [REQ-001]", &format!("requirements: [{req}]"))
+}
+
 pub struct Project {
     _dir: tempfile::TempDir,
     pub root: PathBuf,
@@ -50,6 +55,33 @@ impl Project {
     /// `tasks` as (id, depends_on); `integration` is the body of the
     /// breakdown's "Kiểm chứng tích hợp".
     pub fn with(budget: f64, iterations: u32, tasks: &[(&str, &str)], integration: &str) -> Self {
+        let p = Self::bare(budget, iterations);
+        p.hand_over(tasks, integration);
+        p
+    }
+
+    /// The project with intake F written from `files` (intake-relative
+    /// path, text), accepted and handed over.
+    pub fn with_files(budget: f64, iterations: u32, files: &[(&str, String)]) -> Self {
+        let p = Self::bare(budget, iterations);
+        use zforge::intake::{handover, readiness, review};
+        let i = review::create(&p.root, "F").unwrap();
+        for (f, text) in files {
+            std::fs::write(i.dir.join(f), text).unwrap();
+        }
+        for f in i.files() {
+            review::review(&i, &f).unwrap();
+            review::accept(&i, &f, None).unwrap();
+        }
+        let config = zforge::config::load_from(&p.root.join(".zforge/config.yaml")).unwrap();
+        let r = readiness::check(&i, &p.root, &[], &config).unwrap();
+        assert!(r.ready, "{:?}", r.checks);
+        handover::create(&i, &p.root, &[], &config, &r.files, None).unwrap();
+        p
+    }
+
+    /// The repository and config, without an intake.
+    pub fn bare(budget: f64, iterations: u32) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap().join("proj");
         let home = dir.path().canonicalize().unwrap().join("zf");
@@ -90,7 +122,6 @@ impl Project {
             "-qm",
             "base",
         ]);
-        p.hand_over(tasks, integration);
         p
     }
 

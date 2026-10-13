@@ -31,7 +31,7 @@ Tóm tắt:
 | D3 | Khôi phục run, evidence, cách ly | Một git worktree cho mỗi run; nhật ký sự kiện là nguồn sự thật; run bị ngắt → `failed(interrupted)`, chạy lại là run mới |
 | D4 | CLI/MCP tối thiểu, review qua editor/chat | Cả hai: sửa trong editor, trao đổi qua chat; MCP không có lệnh chốt |
 | D5 | Tái sử dụng v1, tương thích | Dùng lại toàn bộ hạ tầng; module `intake/` và `run/` mới; lệnh v1 giữ nguyên |
-| D6 | Semantic drift, hiệu lực knowledge | Drift cơ học qua reference pin + git ancestry; drift ngữ nghĩa là đề xuất của agent, người dùng review |
+| D6 | Semantic drift, hiệu lực knowledge | Drift cơ học qua reference pin + git ancestry (sửa đổi 12/10/2026: theo từng mục mà file dựa vào); drift ngữ nghĩa là đề xuất của agent, người dùng review |
 
 ---
 
@@ -281,6 +281,49 @@ lại nội dung (§9.2). Embedding hay tìm kiếm ngữ nghĩa để sau, khi 
 
 > **Đã chọn: baseline trong config, ghi vào manifest.** Câu hỏi ban đầu (D6): "integrated" so với nhánh nào — một baseline cố định trong
 > config (ví dụ `main`), hay baseline ghi riêng trong từng manifest?
+
+### Sửa đổi 12/10/2026 — drift cơ học theo từng mục, không theo cả file
+
+**Vì sao.** Đổi một yêu cầu sau khi task đã xong buộc làm lại từ đầu: mọi
+stage và task bên dưới thành stale (một intake: 42 lần review, 32 lần chốt),
+khoá tái sử dụng băm cả 4 stage nên bàn giao lại chạy lại mọi task (một lần
+~$4), và người dùng phải tạo intake "-A1" chép lại cả 4 stage.
+
+**Quy tắc.** Một file chỉ stale khi một *mục* nó dựa vào đổi giữa revision
+cấp trên còn hiệu lực lúc nó được chốt (lần chốt cuối trước nó trong
+`decisions.jsonl`) và revision cấp trên được chốt mới nhất (`intake/items.rs`):
+
+- Mục: `REQ-nnn` (kèm sub-item) ở 01; mỗi dòng bảng Situations ở 02 (khoá
+  theo `#`, gắn REQ theo cột REQ) và "Business rules" là một mục; mỗi `D-n`
+  ở "Binding decisions" của 03; mỗi dòng `TASK-nnn` ở 04.
+- Stage sau dựa vào: mục có ID hoặc REQ mà nó nhắc tới, mục không gắn REQ
+  nào, và danh sách REQ (thêm/bớt REQ → stage sau stale, task thì không).
+- Task dựa vào: REQ trong `requirements` (và REQ nó nhắc), các dòng 02 của
+  những REQ đó (hoặc không gắn REQ), các `D-n` nó trích, dòng 04 của chính
+  nó, và nguyên văn file của các task trong `depends_on`.
+- "Must not change", "Out of scope" (01) và "Existing behavior to preserve"
+  (02) ràng buộc mọi thứ bên dưới: đổi là tất cả stale. Văn xuôi khác
+  (Summary, Problem, Flow, Detail…) tự nó không làm gì stale.
+- Stage không đọc được thành mục (không có bảng Situations, không có mục
+  "Binding decisions", 01 không có REQ, 04 không có dòng task) → so cả file,
+  như quy tắc cũ.
+
+Readiness, `zforge status` và `intake review` nêu mục đã đổi ("tasks/TASK-003.md
+rests on REQ-005 of 01-outcome.md, changed in revision 7").
+
+**Tái sử dụng.** `contract_key` (phiên bản `v2: items`) = baseline + file task
++ file task phụ thuộc (bắc cầu) + nguyên văn các mục stage task đó dựa vào
+(cùng định nghĩa, từ snapshot đã pin) + các mục ràng buộc phạm vi. Task không
+tái sử dụng được nhưng đã có run verified ở một handover khác của cùng intake,
+với output phụ thuộc không đổi, chạy tiếp từ output đó (merge baseline nếu đã
+đổi; conflict → bắt đầu như thường), prompt có mục "Previous attempt" nêu
+những gì đổi (`execution.continue_from_previous`, mặc định bật; `run.yaml`
+`start.previous`).
+
+**Sửa intake đã tích hợp.** Chưa merge → sửa tại chỗ rồi bàn giao lại; đã
+tích hợp/merge vào baseline → `zforge intake amend <NEW> --from <ID>` (MCP
+`intake_amend`): bản nháp chép từ các revision đã chốt, ghi `amends`. D1 không
+đổi: chỉ người dùng chốt, kể cả bản chép không sửa.
 
 ---
 

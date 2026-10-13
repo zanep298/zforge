@@ -59,6 +59,9 @@ pub struct Contract {
     /// The handover's pinned knowledge (ONBOARD TASK-007), verified; empty
     /// when the handover pinned none (AC-05).
     pub knowledge: Vec<KnowledgeFile>,
+    /// What changed since the earlier output this run continues from
+    /// ([`previous_attempt`]); `None` for a run that starts afresh.
+    pub previous_attempt: Option<String>,
 }
 
 /// The intake that holds `handover_id`. Handover ids are numbered per
@@ -145,7 +148,86 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         tests_may_change: meta.tests_may_change,
         files: h.files,
         knowledge: h.knowledge,
+        previous_attempt: None,
     })
+}
+
+/// The prompt section for a run continuing from `previous`, the verified
+/// output of the same task in an earlier handover: what changed in the
+/// task's contract since — the task file as a diff, and each stage item it
+/// rests on that differs (`reuse::rests_on`).
+pub fn previous_attempt(
+    project_root: &Path,
+    c: &Contract,
+    previous: &super::record::Previous,
+) -> Result<String> {
+    let old = load_handover(project_root, &format!("{}/{}", c.intake, previous.handover))?;
+    let file = format!("tasks/{}.md", c.task);
+    let mut out = format!(
+        "## Previous attempt\n\nThis worktree does not start from the baseline: it holds the verified \
+         output of {run} — {task} in {handover} — built on the contract as it was then. The \
+         contract has changed since. Adapt the work that is here to the contract below: keep \
+         what still holds, change what the changes require, and do not start over. The \
+         acceptance criteria are those below, not the old ones.\n\n",
+        run = previous.run,
+        task = c.task,
+        handover = previous.handover,
+    );
+    let old_task = old.files.iter().find(|f| f.file == file);
+    let new_task = c.task_file();
+    match old_task {
+        Some(o) if o.sha256 == new_task.sha256 => {
+            out.push_str("The task file itself did not change.\n\n");
+        }
+        Some(o) => {
+            let intake = Intake::open(project_root, &c.intake)?;
+            let diff =
+                crate::intake::review::diff_against(&intake, &file, o.revision, new_task.revision);
+            out.push_str(&format!(
+                "### {file}, revision {} → {}\n\n```diff\n{}\n```\n\n",
+                o.revision,
+                new_task.revision,
+                diff.trim_end()
+            ));
+        }
+        None => out.push_str(&format!("{} did not pin {file}.\n\n", previous.handover)),
+    }
+    let before = super::reuse::rests_on_files(&old.files, &old.manifest.id, &c.task)?;
+    let now = super::reuse::rests_on_files(&c.files, &c.manifest.id, &c.task)?;
+    let mut items = String::new();
+    for ((stage, b), (_, n)) in before.iter().zip(&now) {
+        for key in crate::intake::items::changed(b, n) {
+            let show = |v: &std::collections::BTreeMap<String, String>| {
+                v.get(&key)
+                    .map(|t| {
+                        t.lines()
+                            .map(|l| format!("    {l}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_else(|| "    (absent)".into())
+            };
+            if key == crate::intake::items::WHOLE {
+                items.push_str(&format!(
+                    "- {stage} changed; it is not readable as items, so compare it whole with the stage below\n"
+                ));
+                continue;
+            }
+            items.push_str(&format!(
+                "- {key} of {stage}\n  before:\n{}\n  now:\n{}\n",
+                show(b),
+                show(n)
+            ));
+        }
+    }
+    if items.is_empty() {
+        out.push_str("No stage item this task rests on changed.\n\n");
+    } else {
+        out.push_str(&format!(
+            "### Stage items this task rests on that changed\n\n{items}\n"
+        ));
+    }
+    Ok(out)
 }
 
 /// Load handover `handover_id` and verify every snapshot it pins.
@@ -385,6 +467,10 @@ impl Contract {
             .replace("{{handover_id}}", &self.manifest.id)
             .replace("{{change_request_path}}", change_request_path)
             .replace("{{verifier_feedback}}\n", &feedback)
+            .replace(
+                "{{previous_attempt}}\n",
+                self.previous_attempt.as_deref().unwrap_or(""),
+            )
             .replace("{{project_knowledge}}\n", &Self::knowledge_block(knowledge))
             .replace("{{task_contract}}", self.task_file().text.trim_end())
             .replace("{{stage_context}}", &self.stage_context())

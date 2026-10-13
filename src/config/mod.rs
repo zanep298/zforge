@@ -118,6 +118,12 @@ pub struct ExecutionConfig {
     /// counts its whole allotment.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// A task run again in a later handover of the same intake starts from
+    /// its last verified output, with what changed in its contract, rather
+    /// than from the baseline (`run::start::previous`) — when its
+    /// dependencies' outputs are the ones that output was built on.
+    #[serde(default = "default_true")]
+    pub continue_from_previous: bool,
 }
 
 impl Default for ExecutionConfig {
@@ -128,12 +134,17 @@ impl Default for ExecutionConfig {
             protected_tests: None,
             review: false,
             agent_timeout_secs: default_agent_timeout_secs(),
+            continue_from_previous: true,
         }
     }
 }
 
 /// One hour. A coding call on a real task routinely passes the ten minutes
 /// that once applied to every spawn.
+fn default_true() -> bool {
+    true
+}
+
 fn default_agent_timeout_secs() -> u64 {
     3600
 }

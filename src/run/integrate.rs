@@ -67,6 +67,7 @@ pub fn create(project_root: &Path, handover_id: &str, retry_of: Option<&str>) ->
         start: Some(Start {
             commit: from[0].commit.clone(),
             from: from.clone(),
+            previous: None,
         }),
         kind: RunKind::Integration,
         checks: Some(checks.clone()),

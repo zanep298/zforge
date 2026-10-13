@@ -154,6 +154,22 @@ fn task_ref() -> &'static Regex {
     re(r"\bTASK-\d{3,}\b", &R)
 }
 
+/// Requirement IDs named in `text`.
+pub fn requirement_refs(text: &str) -> BTreeSet<String> {
+    req_ref()
+        .find_iter(text)
+        .map(|m| m.as_str().to_string())
+        .collect()
+}
+
+/// Task IDs named in `text`.
+pub fn task_refs(text: &str) -> BTreeSet<String> {
+    task_ref()
+        .find_iter(text)
+        .map(|m| m.as_str().to_string())
+        .collect()
+}
+
 /// A citation of a knowledge item (`DOM-004`, `CONV-002`, `RULE-001`, …).
 fn knowledge_ref() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();

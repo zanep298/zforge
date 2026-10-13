@@ -135,7 +135,12 @@ pub fn intake_text(i: &IntakeStatus) -> String {
             _ => state.yellow(),
         };
         let stale = if i.stale.contains(file) {
-            format!(" {}", "(confirm again)".yellow())
+            let why = i
+                .stale_why
+                .get(file)
+                .map(|w| format!(": {w}"))
+                .unwrap_or_default();
+            format!(" {}", format!("(confirm again{why})").yellow())
         } else {
             String::new()
         };

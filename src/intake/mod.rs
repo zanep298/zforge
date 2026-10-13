@@ -9,9 +9,11 @@
 //! reviewed revision and an append-only decision log. A file's status is
 //! derived from the log and the file's current hash ([`status`]).
 
+pub mod amend;
 pub mod graph;
 pub mod handover;
 pub mod hash;
+pub mod items;
 pub mod lint;
 pub mod readability;
 pub mod readiness;

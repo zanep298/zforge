@@ -5,9 +5,12 @@
 //! earlier handover of the same intake stands, provided nothing it was built
 //! from differs. "Nothing" is exact — there is no "close enough":
 //!
-//! - its [`contract_key`] is equal: the baseline commit, the four stages, the
-//!   task file and the task file of every dependency, direct or not, all
-//!   pinned with the same SHA-256; and
+//! - its [`contract_key`] is equal: the baseline commit, the task file and
+//!   the task file of every dependency, direct or not, pinned with the same
+//!   SHA-256, and the exact text of every stage item the task rests on
+//!   (D6 as amended 12/10/2026: its requirements, their behavior rows, the
+//!   decisions it cites, its breakdown row, the scope constraints; a stage
+//!   that cannot be read as items, whole); and
 //! - it started from exactly the outputs its dependencies have now in the new
 //!   handover (so a dependency that ran again, even to the same contract,
 //!   means running this task again).
@@ -20,13 +23,21 @@
 use super::contract::{self, Handover};
 use super::record::{self, Run, RunEvent, RunKind, RunMeta, RunState, RunStatus};
 use super::{start, worktree};
-use crate::intake::STAGES;
+use crate::intake::{items, STAGES};
 use anyhow::Result;
 use chrono::Utc;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// Everything `task`'s work in handover `h` depended on, as one hash.
+/// The definition of [`contract_key`]: a key made under another one
+/// never equals a key made under this one.
+const KEY_VERSION: &str = "contract-key v2: items";
+
+/// Everything `task`'s work in handover `h` depended on, as one hash: the
+/// baseline commit, the task file and those of every task it depends on,
+/// directly or not, and of each stage only what the task rests on
+/// ([`rests_on`]) — so an edit to a requirement another task serves leaves
+/// this key, and this task's reuse, alone.
 pub fn contract_key(h: &Handover, task: &str) -> Result<String> {
     let pinned = |file: &str| -> Result<String> {
         h.files
@@ -35,9 +46,13 @@ pub fn contract_key(h: &Handover, task: &str) -> Result<String> {
             .map(|f| f.sha256.clone())
             .ok_or_else(|| anyhow::anyhow!("{} does not pin {file}", h.manifest.id))
     };
-    let mut lines = vec![format!("baseline {}", h.manifest.baseline.commit)];
-    for stage in STAGES {
-        lines.push(format!("stage {stage} {}", pinned(stage)?));
+    let mut lines = vec![
+        KEY_VERSION.to_string(),
+        format!("baseline {}", h.manifest.baseline.commit),
+    ];
+    for (stage, view) in rests_on(h, task)? {
+        let digest = crate::intake::hash::sha256(&items::digest(&view));
+        lines.push(format!("stage {stage} {digest}"));
     }
     let own = format!("tasks/{task}.md");
     lines.push(format!("task {own} {}", pinned(&own)?));
@@ -46,6 +61,34 @@ pub fn contract_key(h: &Handover, task: &str) -> Result<String> {
         lines.push(format!("dep {file} {}", pinned(&file)?));
     }
     Ok(crate::intake::hash::sha256(&lines.join("\n")))
+}
+
+/// What `task` rests on in each pinned stage (`intake::items::view`): its
+/// requirements, their behavior rows, the decisions it cites, its row of
+/// the breakdown and the scope constraints — or a whole stage that cannot
+/// be read as items.
+pub fn rests_on(h: &Handover, task: &str) -> Result<Vec<(&'static str, BTreeMap<String, String>)>> {
+    rests_on_files(&h.files, &h.manifest.id, task)
+}
+
+/// [`rests_on`] over the files handover `id` pins.
+pub fn rests_on_files(
+    files: &[contract::ContractFile],
+    id: &str,
+    task: &str,
+) -> Result<Vec<(&'static str, BTreeMap<String, String>)>> {
+    let text = |file: &str| -> Result<&str> {
+        files
+            .iter()
+            .find(|f| f.file == file)
+            .map(|f| f.text.as_str())
+            .ok_or_else(|| anyhow::anyhow!("{id} does not pin {file}"))
+    };
+    let scope = items::Scope::task(task, text(&format!("tasks/{task}.md"))?);
+    STAGES
+        .iter()
+        .map(|stage| Ok((*stage, items::view(stage, text(stage)?, &scope))))
+        .collect()
 }
 
 /// Every task `task` depends on, directly or not, sorted.
@@ -165,7 +208,7 @@ mod tests {
     use crate::intake::readiness::Pinned;
     use crate::run::contract::ContractFile;
 
-    fn handover(files: &[(&str, &str, &str)], baseline: &str) -> Handover {
+    fn handover(files: &[(&str, String)], baseline: &str) -> Handover {
         let tasks = vec!["A".to_string(), "B".into(), "C".into(), "D".into()];
         Handover {
             intake: "F".into(),
@@ -195,45 +238,57 @@ mod tests {
             knowledge: Vec::new(),
             files: files
                 .iter()
-                .map(|(file, sha, deps)| ContractFile {
+                .map(|(file, text)| ContractFile {
                     file: (*file).into(),
                     revision: 1,
-                    sha256: (*sha).into(),
-                    text: format!("---\nid: X\nparent: F\nrequirements: [REQ-001]\ndepends_on: [{deps}]\n---\n"),
+                    sha256: crate::intake::hash::sha256(text),
+                    text: text.clone(),
                 })
                 .collect(),
         }
     }
 
-    /// A ← B ← C, D alone; every file's hash is its name unless changed.
-    fn files(change: &str) -> Vec<(&'static str, String, &'static str)> {
+    const OUTCOME: &str = "# F\n\n## Requirements\n\n- REQ-001: add\n- REQ-002: sub\n\n\
+        ## Out of scope\n\n- floats\n";
+
+    /// A ← B ← C, D alone; A and C serve REQ-001, B and D REQ-002. The
+    /// outcome is readable as items, the other stages are not. `edit`
+    /// changes one file's text.
+    fn files(edit: &dyn Fn(&str, String) -> String) -> Vec<(&'static str, String)> {
+        let task = |req: &str, deps: &str| {
+            format!("---\nid: X\nparent: F\nrequirements: [{req}]\ndepends_on: [{deps}]\n---\n")
+        };
         [
-            ("01-outcome.md", ""),
-            ("02-behavior.md", ""),
-            ("03-solution.md", ""),
-            ("04-breakdown.md", ""),
-            ("tasks/A.md", ""),
-            ("tasks/B.md", "A"),
-            ("tasks/C.md", "B"),
-            ("tasks/D.md", ""),
+            ("01-outcome.md", OUTCOME.to_string()),
+            ("02-behavior.md", "prose".into()),
+            ("03-solution.md", "prose".into()),
+            ("04-breakdown.md", "prose".into()),
+            ("tasks/A.md", task("REQ-001", "")),
+            ("tasks/B.md", task("REQ-002", "A")),
+            ("tasks/C.md", task("REQ-001", "B")),
+            ("tasks/D.md", task("REQ-002", "")),
         ]
         .into_iter()
-        .map(|(f, deps)| {
-            let sha = if f == change {
-                format!("{f}-changed")
-            } else {
-                f.to_string()
-            };
-            (f, sha, deps)
-        })
+        .map(|(f, t)| (f, edit(f, t)))
         .collect()
     }
 
+    fn key_with(edit: &dyn Fn(&str, String) -> String, baseline: &str, task: &str) -> String {
+        contract_key(&handover(&files(edit), baseline), task).unwrap()
+    }
+
     fn key(change: &str, baseline: &str, task: &str) -> String {
-        let f = files(change);
-        let refs: Vec<(&str, &str, &str)> =
-            f.iter().map(|(a, b, c)| (*a, b.as_str(), *c)).collect();
-        contract_key(&handover(&refs, baseline), task).unwrap()
+        key_with(
+            &|f, t| {
+                if f == change {
+                    format!("{t}\nchanged")
+                } else {
+                    t
+                }
+            },
+            baseline,
+            task,
+        )
     }
 
     #[test]
@@ -246,10 +301,42 @@ mod tests {
         // Not those of tasks it does not depend on.
         assert!(same("tasks/D.md", "C"));
         assert!(same("tasks/C.md", "A"));
-        // Every stage and the baseline, for every task.
-        for stage in STAGES {
+        // A stage that cannot be read as items, whole, for every task; and
+        // the baseline.
+        for stage in &STAGES[1..] {
             assert!(!same(stage, "D"), "{stage}");
         }
         assert_ne!(key("", "base", "D"), key("", "other", "D"));
+    }
+
+    /// D6 as amended 12/10/2026: of a readable stage, only the items a
+    /// task rests on.
+    #[test]
+    fn the_key_covers_only_the_items_a_task_rests_on() {
+        let edit = |from: &'static str, to: &'static str| {
+            move |f: &str, t: String| {
+                if f == "01-outcome.md" {
+                    t.replace(from, to)
+                } else {
+                    t
+                }
+            }
+        };
+        let base = |task: &str| key("", "base", task);
+        let req2 = edit("- REQ-002: sub", "- REQ-002: subtract");
+        assert_eq!(key_with(&req2, "base", "A"), base("A"));
+        assert_eq!(key_with(&req2, "base", "C"), base("C"));
+        assert_ne!(key_with(&req2, "base", "B"), base("B"));
+        assert_ne!(key_with(&req2, "base", "D"), base("D"));
+        // A new requirement is no task's yet; prose binds nothing; the
+        // scope binds every task.
+        let added = edit("- REQ-002: sub", "- REQ-003: mul\n- REQ-002: sub");
+        assert_eq!(key_with(&added, "base", "A"), base("A"));
+        let prose = edit("# F", "# F, the calculator");
+        assert_eq!(key_with(&prose, "base", "B"), base("B"));
+        let scope = edit("- floats", "- floats\n- big numbers");
+        for t in ["A", "B", "C", "D"] {
+            assert_ne!(key_with(&scope, "base", t), base(t), "{t}");
+        }
     }
 }

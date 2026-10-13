@@ -90,6 +90,23 @@ pub fn create(
     // A dependency without an output refuses the task before anything is
     // created (MOC-C REQ-003).
     let start = super::start::plan(project_root, &c.intake, &c.manifest.id, task, &c.depends_on)?;
+    // A task run before in another handover of the intake continues from
+    // its own verified output, when its dependencies' outputs are the same.
+    let continue_from_previous = load_config(project_root)
+        .map(|c| c.execution.continue_from_previous)
+        .unwrap_or(true);
+    let start = match continue_from_previous {
+        true => super::start::previous(
+            project_root,
+            &c.intake,
+            &c.manifest.id,
+            task,
+            &c.manifest.baseline.commit,
+            start.as_ref(),
+        )?
+        .or(start),
+        false => start,
+    };
     let spent = spent_before(project_root, &c.intake, &c.manifest.id, task)?;
     let left = c.manifest.policy.budget_usd - spent;
     if left < MIN_ALLOTMENT_USD {
@@ -147,7 +164,7 @@ pub fn execute(project_root: &Path, run: &Run) -> Result<RunState> {
 
 /// Everything checked before the first agent call; any error fails the run.
 fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, AgentSpec, u64)> {
-    let contract = contract::load(
+    let mut contract = contract::load(
         project_root,
         &format!("{}/{}", meta.intake, meta.handover),
         &meta.task,
@@ -169,6 +186,14 @@ fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, Age
     let wt = worktree::create(project_root, &meta.id, &meta.task, meta.start_commit())?;
     if let Some(start) = &meta.start {
         super::start::apply(&wt.path, &meta.id, start)?;
+        if let Some(previous) = &start.previous {
+            super::start::bring_baseline(&wt.path, &meta.id, &meta.baseline_commit)?;
+            contract.previous_attempt = Some(contract::previous_attempt(
+                project_root,
+                &contract,
+                previous,
+            )?);
+        }
     }
     report_claude_config(
         &meta.id,
