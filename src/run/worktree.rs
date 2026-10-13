@@ -3,9 +3,12 @@
 //! Each run works in `.zforge/worktrees/<RUN>` on its own branch
 //! `zforge/<task>/<run>`, created from the commit it starts at — the
 //! handover's baseline, or its dependencies' output (`start`). The
-//! user's branch and working tree are never touched. A failed run keeps its
-//! worktree for inspection; removing a worktree keeps its branch, so the
-//! work stays reachable until the user deletes it.
+//! user's branch and working tree are never touched. A verified run's
+//! worktree is removed once its output is sealed (unless
+//! `execution.keep_worktrees`); a run that stops otherwise keeps its
+//! worktree for inspection. Removing a worktree keeps its branch, so the
+//! work stays reachable until the user deletes it (`zforge run
+//! prune-branches` drops the merged ones).
 //!
 //! Git goes through [`super::git`], which strips the caller's
 //! repository-binding variables.
@@ -137,6 +140,12 @@ pub fn remove(project_root: &Path, worktree: &Worktree, force: bool) -> Result<(
         bail!("could not remove {}: {why}", worktree.path.display());
     }
     Ok(())
+}
+
+/// Forget worktrees whose directory is gone (`git worktree prune`), so git
+/// no longer counts their branches as checked out. Best-effort.
+pub fn prune(project_root: &Path) {
+    let _ = git(project_root, &["worktree", "prune"]);
 }
 
 /// Run worktrees git knows about, with their branches.

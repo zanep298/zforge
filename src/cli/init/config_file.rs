@@ -33,6 +33,9 @@ pub(crate) const EXECUTION_BLOCK: &str = "execution:
   # Safety net for a hung agent call, in seconds; the budget should stop a
   # working one first.
   # agent_timeout_secs: 3600
+  # Keep a verified run's worktree; by default it is removed once the run's
+  # output is sealed on its branch (failed runs always keep theirs).
+  # keep_worktrees: true
 ";
 
 /// Template for a fresh config. Placeholders are filled by [`render_fresh`].

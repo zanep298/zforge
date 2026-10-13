@@ -57,7 +57,7 @@ impl std::fmt::Display for Halt {
 
 impl std::error::Error for Halt {}
 
-fn load_config(project_root: &Path) -> Result<Config> {
+pub(crate) fn load_config(project_root: &Path) -> Result<Config> {
     crate::config::load_from(&project_root.join(".zforge").join("config.yaml"))
 }
 
@@ -124,18 +124,28 @@ pub fn create(
 
 /// Carry out a created run to its end. Returns the final state; a run that
 /// could not start (worktree, contract changed) ends `failed` like any other.
+/// A verified run's worktree is then removed, its branch kept
+/// (`ops::release_verified`); any other end keeps it for inspection.
 pub fn execute(project_root: &Path, run: &Run) -> Result<RunState> {
     let meta = run.meta()?;
-    if meta.kind == RunKind::Integration {
-        return super::integrate::execute(project_root, run);
+    let state = match meta.kind {
+        RunKind::Integration => super::integrate::execute(project_root, run)?,
+        RunKind::Task => execute_task(project_root, run, &meta)?,
+    };
+    if state.status == RunStatus::Verified {
+        super::ops::release_verified(project_root, run);
     }
+    Ok(state)
+}
+
+fn execute_task(project_root: &Path, run: &Run, meta: &RunMeta) -> Result<RunState> {
     run.append(&RunEvent::Started {
         at: Utc::now(),
         pid: std::process::id(),
     })?;
-    match prepare(project_root, &meta) {
+    match prepare(project_root, meta) {
         Ok((contract, config, spec, timeout)) => {
-            let outcome = work(project_root, run, &meta, &contract, &config, &spec, timeout);
+            let outcome = work(project_root, run, meta, &contract, &config, &spec, timeout);
             finish(run, outcome)
         }
         Err(e) => run.append(&RunEvent::Failed {

@@ -229,6 +229,31 @@ impl Project {
         self.cmd(args).output().unwrap()
     }
 
+    /// `execution.keep_worktrees: true`: verified runs keep their worktree,
+    /// for tests that look inside it afterwards.
+    pub fn keep_worktrees(&self) {
+        let path = self.root.join(".zforge/config.yaml");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("  keep_worktrees: true\n");
+        std::fs::write(&path, text).unwrap();
+    }
+
+    pub fn worktree(&self, run: &str) -> PathBuf {
+        self.root.join(".zforge/worktrees").join(run)
+    }
+
+    /// Local `zforge/*` branches.
+    pub fn run_branches(&self) -> Vec<String> {
+        self.git(&[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/zforge/",
+        ])
+        .lines()
+        .map(str::to_string)
+        .collect()
+    }
+
     pub fn run_dir(&self, id: &str) -> PathBuf {
         self.root.join(".zforge/runs").join(id)
     }

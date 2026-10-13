@@ -205,7 +205,16 @@ pub fn summary(meta: &RunMeta, state: &RunState) -> String {
             .unwrap_or_default()
     );
     let _ = writeln!(out, "  branch {}", meta.branch);
-    let _ = writeln!(out, "  worktree {}", meta.worktree.display());
+    let _ = writeln!(
+        out,
+        "  worktree {}{}",
+        meta.worktree.display(),
+        if meta.worktree.exists() {
+            ""
+        } else {
+            " (removed; the branch keeps the work)"
+        }
+    );
     if let Some(start) = &meta.start {
         let from: Vec<String> = start
             .from

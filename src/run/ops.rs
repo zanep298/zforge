@@ -1,5 +1,8 @@
 //! Operating runs (MOC-B TASK-005; REQ-007, REQ-008): background runs,
-//! status with recovery, cancel, retry and clean.
+//! status with recovery, cancel, retry and clean — one run, every final
+//! run (`clean_all`), and the merged branches of finished runs
+//! (`prune_branches`). A verified run's worktree is released as soon as it
+//! is verified (`release_verified`).
 //!
 //! A background run is a detached `zforge run-worker <RUN>` in its own
 //! process group, logging to the run's `log`. Its launch pid is recorded in
@@ -193,7 +196,216 @@ pub fn clean(project_root: &Path, run: &Run) -> Result<Option<String>> {
         },
         false,
     )?;
+    worktree::prune(project_root);
     Ok(saved)
+}
+
+/// After a run is verified: remove its worktree, keeping its branch — the
+/// sealed output (`verified.commit`) is what dependent tasks, reuse and the
+/// integration start from, so nothing needs the worktree any more. Kept
+/// when `execution.keep_worktrees` is set, or when the config cannot be
+/// read. Never fails the run: a removal that goes wrong is a warning, and
+/// the worktree stays for `zforge run clean`.
+pub fn release_verified(project_root: &Path, run: &Run) {
+    let keep = match super::execute::load_config(project_root) {
+        Ok(c) => c.execution.keep_worktrees,
+        Err(e) => {
+            eprintln!(
+                "warning: {}: worktree kept, the config could not be read: {e:#}",
+                run.id
+            );
+            true
+        }
+    };
+    if keep {
+        return;
+    }
+    let meta = match run.meta() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("warning: {}: worktree kept: {e:#}", run.id);
+            return;
+        }
+    };
+    if !meta.worktree.exists() {
+        return;
+    }
+    let wt = worktree::Worktree {
+        path: meta.worktree.clone(),
+        branch: meta.branch.clone(),
+    };
+    // The seal left it clean; anything else is not ours to throw away.
+    if let Err(e) = worktree::remove(project_root, &wt, false) {
+        eprintln!(
+            "warning: {}: the verified run's worktree was kept: {e:#}; \
+             remove it with `zforge run clean {}`",
+            run.id, run.id
+        );
+    }
+    worktree::prune(project_root);
+}
+
+/// One worktree removed by [`clean_all`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cleaned {
+    pub run: String,
+    pub branch: String,
+    /// The commit holding work that was uncommitted in the worktree.
+    pub saved: Option<String>,
+    /// Disk the worktree took.
+    pub bytes: u64,
+}
+
+/// What [`clean_all`] did.
+#[derive(Debug, Default)]
+pub struct CleanAll {
+    pub cleaned: Vec<Cleaned>,
+    /// Runs whose worktree could not be removed, with why.
+    pub failed: Vec<(String, String)>,
+}
+
+/// [`clean`] every final run that still holds a worktree — only verified
+/// ones with `verified_only`. A run still in progress is never touched; one
+/// that cannot be cleaned is reported and the rest go on.
+pub fn clean_all(project_root: &Path, verified_only: bool) -> Result<CleanAll> {
+    let mut out = CleanAll::default();
+    for (run, meta, state) in list(project_root, None)? {
+        if !state.status.is_final() || !meta.worktree.exists() {
+            continue;
+        }
+        if verified_only && state.status != RunStatus::Verified {
+            continue;
+        }
+        let bytes = disk_usage(&meta.worktree);
+        match clean(project_root, &run) {
+            Ok(saved) => out.cleaned.push(Cleaned {
+                run: run.id.clone(),
+                branch: meta.branch.clone(),
+                saved,
+                bytes,
+            }),
+            Err(e) => out.failed.push((run.id.clone(), format!("{e:#}"))),
+        }
+    }
+    worktree::prune(project_root);
+    Ok(out)
+}
+
+/// Bytes under `path`, symlinks not followed. Unreadable entries count 0.
+fn disk_usage(path: &Path) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if !meta.is_dir() {
+        return meta.len();
+    }
+    std::fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| disk_usage(&e.path()))
+                .sum::<u64>()
+        })
+        .unwrap_or(0)
+}
+
+/// A run branch [`prune_branches`] deleted, or would delete.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PrunedBranch {
+    pub branch: String,
+    pub tip: String,
+    /// The runs recorded on it (a reused run shares the branch it reused).
+    pub runs: Vec<String>,
+}
+
+/// What [`prune_branches`] found.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Prune {
+    pub baseline: String,
+    pub deleted: Vec<PrunedBranch>,
+    /// `zforge/*` branches left alone, with why.
+    pub kept: Vec<(String, String)>,
+}
+
+/// Delete local `zforge/*` branches that are done with: every run recorded
+/// on the branch is final and holds no worktree, git has no worktree on it,
+/// and its tip is already in `knowledge.baseline`. A branch no run records
+/// is left alone — zforge did not make it, as far as it knows. With
+/// `dry_run`, only report.
+pub fn prune_branches(project_root: &Path, dry_run: bool) -> Result<Prune> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let config = super::execute::load_config(project_root)?;
+    let baseline = config.knowledge.baseline.clone();
+    let git_dir = project_root;
+    super::git::ok(
+        git_dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{baseline}"),
+        ],
+    )
+    .with_context(|| format!("baseline branch {baseline} (`knowledge.baseline`) not found"))?;
+    worktree::prune(project_root);
+
+    let mut by_branch: BTreeMap<String, Vec<(String, RunState, bool)>> = BTreeMap::new();
+    for (run, meta, state) in list(project_root, None)? {
+        by_branch.entry(meta.branch.clone()).or_default().push((
+            run.id.clone(),
+            state,
+            meta.worktree.exists(),
+        ));
+    }
+    let checked_out: BTreeSet<String> = worktree::list(project_root)?
+        .into_iter()
+        .map(|w| w.branch)
+        .collect();
+    let refs = super::git::ok(
+        git_dir,
+        &["for-each-ref", "--format=%(refname)", "refs/heads/zforge/"],
+    )?;
+
+    let mut out = Prune {
+        baseline: baseline.clone(),
+        ..Default::default()
+    };
+    for branch in refs.lines().filter_map(|r| r.strip_prefix("refs/heads/")) {
+        let keep = |out: &mut Prune, why: String| out.kept.push((branch.to_string(), why));
+        let Some(runs) = by_branch.get(branch) else {
+            keep(&mut out, "no run records it".into());
+            continue;
+        };
+        if let Some((id, s, _)) = runs.iter().find(|(_, s, _)| !s.status.is_final()) {
+            keep(&mut out, format!("{id} is still {}", s.status.as_str()));
+            continue;
+        }
+        if let Some((id, _, _)) = runs.iter().find(|(_, _, wt)| *wt) {
+            keep(&mut out, format!("{id} still has its worktree"));
+            continue;
+        }
+        if checked_out.contains(branch) {
+            keep(&mut out, "checked out in a worktree".into());
+            continue;
+        }
+        let tip = super::git::ok(git_dir, &["rev-parse", &format!("refs/heads/{branch}")])?;
+        if !super::git::in_branch(git_dir, &tip, &baseline) {
+            keep(&mut out, format!("not merged into {baseline}"));
+            continue;
+        }
+        if !dry_run {
+            if let Err(e) = super::git::ok(git_dir, &["branch", "-D", "--", branch]) {
+                keep(&mut out, format!("{e:#}"));
+                continue;
+            }
+        }
+        out.deleted.push(PrunedBranch {
+            branch: branch.to_string(),
+            tip,
+            runs: runs.iter().map(|(id, _, _)| id.clone()).collect(),
+        });
+    }
+    Ok(out)
 }
 
 /// Commit anything uncommitted in the worktree to the run's branch. Returns
