@@ -83,6 +83,11 @@ enum Commands {
         /// already installed are still configured.
         #[arg(long)]
         no_install: bool,
+        /// Keep what init writes out of git through the repository's
+        /// .git/info/exclude (never committed, no tracked file touched).
+        /// Later inits refresh the list; delete its block to stop.
+        #[arg(long)]
+        git_exclude: bool,
     },
     /// Populate the global ~/.zforge/ store with embedded templates,
     /// agents, and skills. Run once per machine; rerun after upgrading
@@ -263,6 +268,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
             switch,
             default_runner,
             no_install,
+            git_exclude,
         } => cli::init::run(cli::init::InitOptions {
             agent: cli::mcp_register::Agent::parse(&agent)?,
             force,
@@ -272,6 +278,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
             switch,
             default_runner,
             install_missing: !no_install,
+            git_exclude,
         }),
         Commands::Install { force } => cli::install::run(force),
         Commands::Update => cli::update::run(),

@@ -670,3 +670,62 @@ fn real_clients_load_the_codegraph_registration() {
         "{opencode}"
     );
 }
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn git_exclude_keeps_everything_init_writes_out_of_git() {
+    let env = Env::new(&CLIENTS);
+    git(&env.project, &["init", "-q", "-b", "main"]);
+    git(&env.project, &["add", "-A"]);
+    git(&env.project, &["commit", "-qm", "base"]);
+    // The user's own agent beside zforge's stays visible to git.
+    std::fs::create_dir_all(env.project.join(".claude/agents")).unwrap();
+    std::fs::write(env.project.join(".claude/agents/mine.md"), "mine").unwrap();
+
+    let out = env.init(&["--agent", "all", "--git-exclude"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("excluded from git"));
+
+    assert_eq!(
+        git(
+            &env.project,
+            &["status", "--porcelain", "--untracked-files=all"]
+        ),
+        "?? .claude/agents/mine.md\n"
+    );
+    let exclude = env.read(".git/info/exclude");
+    for line in [
+        "/.zforge/",
+        "/CLAUDE.md",
+        "/AGENTS.md",
+        "/.claude/skills/zforge-*/",
+    ] {
+        assert!(exclude.lines().any(|l| l == line), "{line} in:\n{exclude}");
+    }
+
+    // A later init without the flag refreshes the block, never drops it.
+    std::fs::remove_file(env.project.join("AGENTS.md")).unwrap();
+    env.init(&["--agent", "claude"]);
+    let refreshed = env.read(".git/info/exclude");
+    assert_eq!(
+        refreshed.matches("zforge init --git-exclude <<<").count(),
+        1
+    );
+    assert!(refreshed.lines().any(|l| l == "/.zforge/"));
+}

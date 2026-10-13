@@ -12,10 +12,10 @@
 //! 2. [`bring_claude_config`]: Claude's `.claude/agents`, `.claude/skills`
 //!    and `.claude/settings.json` from the main checkout, so `--agent
 //!    code-agent` resolves, its skills are preloaded, and the project's
-//!    permission rules and hooks apply. Brought only where git ignores them:
-//!    then sealing the output cannot commit them. One that is neither
-//!    committed nor ignored is left out, with a warning, since the output
-//!    would carry it.
+//!    permission rules and hooks apply. Brought file by file, only where git
+//!    ignores the file: then sealing the output cannot commit it. One that is
+//!    neither committed nor ignored is left out, with a warning, since the
+//!    output would carry it.
 
 use super::git;
 use crate::config::Config;
@@ -42,53 +42,91 @@ pub fn checklists(config: &Config) -> Vec<PathBuf> {
         .collect()
 }
 
-/// What [`bring_claude_config`] did for each path.
+/// What [`bring_claude_config`] did for each path. A directory may report
+/// both `Copied` and `NotIgnored` when git ignores only some of its files
+/// (`zforge init --git-exclude` ignores zforge's files, not the user's).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Brought {
-    /// Copied from the main checkout.
+    /// Copied from the main checkout (for a directory: its ignored files
+    /// the worktree lacked).
     Copied(String),
     /// Committed, so the worktree already has it.
     Present(String),
-    /// Neither committed nor ignored: not copied.
+    /// Neither committed nor ignored (for a directory: some of its files):
+    /// not copied.
     NotIgnored(String),
 }
 
-/// Bring [`CLAUDE_CONFIG`] into `work_dir` from `project_root` where the
-/// worktree lacks it and git ignores it. What the main checkout does not
-/// have is skipped.
+/// Bring [`CLAUDE_CONFIG`] into `work_dir` from `project_root`, file by
+/// file: each file the worktree lacks and git ignores is copied. What the
+/// main checkout does not have is skipped.
 pub fn bring_claude_config(project_root: &Path, work_dir: &Path) -> Result<Vec<Brought>> {
     let mut out = Vec::new();
     for rel in CLAUDE_CONFIG {
         let src = project_root.join(rel);
-        let is_dir = src.is_dir();
-        if !is_dir && !src.is_file() {
+        let mut files = Vec::new();
+        if src.is_dir() {
+            list_files(&src, Path::new(rel), &mut files)?;
+        } else if src.is_file() {
+            files.push(PathBuf::from(rel));
+        } else {
             continue;
         }
-        let dst = work_dir.join(rel);
-        if dst.exists() {
+        let missing: Vec<&PathBuf> = files
+            .iter()
+            .filter(|f| !work_dir.join(f).exists())
+            .collect();
+        if missing.is_empty() {
             out.push(Brought::Present(rel.to_string()));
             continue;
         }
-        // A directory is ignored when what would go in it is.
-        let probe = match is_dir {
-            true => format!("{rel}/zforge-probe"),
-            false => rel.to_string(),
-        };
-        let ignored = git::run(work_dir, &["check-ignore", "-q", &probe])?
-            .status
-            .success();
-        if !ignored {
-            out.push(Brought::NotIgnored(rel.to_string()));
-            continue;
+        let ignored = ignored_among(work_dir, &missing)?;
+        for f in missing.iter().filter(|f| ignored.contains(**f)) {
+            copy_file(&project_root.join(f), &work_dir.join(f))
+                .with_context(|| format!("bring {} into the worktree", f.display()))?;
         }
-        let copied = match is_dir {
-            true => copy_dir(&src, &dst),
-            false => copy_file(&src, &dst),
-        };
-        copied.with_context(|| format!("bring {rel} into the worktree"))?;
-        out.push(Brought::Copied(rel.to_string()));
+        if !ignored.is_empty() {
+            out.push(Brought::Copied(rel.to_string()));
+        }
+        if ignored.len() < missing.len() {
+            out.push(Brought::NotIgnored(rel.to_string()));
+        }
     }
     Ok(out)
+}
+
+/// Which of `paths` (relative to `work_dir`) git ignores there.
+fn ignored_among(work_dir: &Path, paths: &[&PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut args = vec!["check-ignore".to_string(), "--".to_string()];
+    args.extend(paths.iter().map(|p| p.display().to_string()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Exit 1 = none ignored; anything else but 0 is an error.
+    let output = git::run(work_dir, &args)?;
+    match output.status.code() {
+        Some(0) | Some(1) => Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(PathBuf::from)
+            .collect()),
+        _ => anyhow::bail!(
+            "git check-ignore failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
+}
+
+/// Every file under `dir`, following symlinks, as `rel/...`.
+fn list_files(dir: &Path, rel: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = rel.join(entry.file_name());
+        if path.is_dir() {
+            list_files(&path, &rel, out)?;
+        } else if path.is_file() {
+            out.push(rel);
+        }
+    }
+    Ok(())
 }
 
 fn copy_file(src: &Path, dst: &Path) -> Result<()> {
@@ -96,22 +134,6 @@ fn copy_file(src: &Path, dst: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::copy(src, dst)?;
-    Ok(())
-}
-
-/// Copy a directory tree, following symlinks to what they point at.
-fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if from.is_dir() {
-            copy_dir(&from, &to)?;
-        } else if from.is_file() {
-            copy_file(&from, &to)?;
-        }
-    }
     Ok(())
 }
 
@@ -204,6 +226,32 @@ mod tests {
             ]
         );
         assert!(!work.join(".claude").exists());
+    }
+
+    #[test]
+    fn only_the_ignored_files_of_a_directory_are_brought() {
+        // What `zforge init --git-exclude` writes: zforge's files, not the
+        // user's own agent beside them.
+        let (_d, root, work) = repo(
+            "/.claude/agents/code-agent.md\n/.claude/skills/zforge-*/\n/.claude/settings.json\n",
+        );
+        std::fs::write(root.join(".claude/agents/mine.md"), "mine").unwrap();
+
+        let brought = bring_claude_config(&root, &work).unwrap();
+
+        assert_eq!(
+            brought,
+            [
+                Brought::Copied(".claude/agents".into()),
+                Brought::NotIgnored(".claude/agents".into()),
+                Brought::Copied(".claude/skills".into()),
+                Brought::Copied(".claude/settings.json".into())
+            ]
+        );
+        assert!(work.join(".claude/agents/code-agent.md").is_file());
+        assert!(!work.join(".claude/agents/mine.md").exists());
+        assert!(work.join(".claude/skills/zforge-debug/SKILL.md").is_file());
+        assert!(git::is_clean(&work).unwrap(), "ignored, so nothing to seal");
     }
 
     #[test]
