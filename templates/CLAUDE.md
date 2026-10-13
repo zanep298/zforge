@@ -13,16 +13,17 @@ Work is agreed before it is built. zforge keeps the agreement in an **intake**
 worktree, so the user's checkout is never touched.
 
 ```
-intake new → write 01-outcome … 04-breakdown + tasks/ → review → [USER accepts]
+intake new → write 01-outcome … 04-breakdown + tasks/ → review --all → pack → [USER: /accept all]
           → readiness → [USER hands over] → run (code → verify, per task)
           → integration check → merge → knowledge index
 ```
 
 | Stage | Command | Who |
 |-------|---------|-----|
-| Start an intake | `zforge intake new <ID>`, `zforge intake task <ID> <TASK>` | agent or user |
-| Send a file for review | `zforge intake review <ID> <file>` | agent or user |
-| Accept or ask for changes | type `/accept all`, `/accept <file>…`, `/revise <file>: <note>` here — or `zforge intake accept\|revise <ID> <file>` in a terminal | **user** |
+| Start an intake | `zforge intake new <ID> [--small]`, `zforge intake task <ID> <TASK>` | agent or user |
+| Send the whole intake for review | `zforge intake review <ID> --all` (or one `<file>`) | agent or user |
+| Show what is to be decided | `zforge intake pack <ID>` — brief, summaries, diffs, warnings | agent or user |
+| Accept or ask for changes | type `/accept all` once for the whole intake (accepted in dependency order), `/accept <file>…` or `/revise <file>: <note>` here — or `zforge intake accept <ID> --all` / `zforge intake accept\|revise <ID> <file>` in a terminal | **user** |
 | Check it can be handed over | `zforge readiness <ID>` | agent or user |
 | Hand over | type `/handover` here — or `zforge handover <ID>` in a terminal | **user** |
 | Build every task, then check integration | `zforge run <HANDOVER> [--async]` | agent or user |
@@ -106,7 +107,8 @@ tools prepare and observe; none of them accepts, revises or hands over.
 | `status` | Every intake, its handovers and runs, and the next step (`global` for all projects) |
 | `intake_new`, `intake_task` | Start an intake or a task contract |
 | `intake_status`, `intake_diff` | Files, their review state, open questions, lint issues; what changed |
-| `intake_review` | Send a file for the user's review |
+| `intake_review` | Send a file — or `all: true`, the whole intake in dependency order — for the user's review |
+| `intake_pack` | The review pack to show the user: brief, each file's summary and diff, warnings, how to decide |
 | `change_new` | Start a change request for an intake |
 | `readiness` | Can the accepted files be handed over, and why not |
 | `run_start`, `run_status`, `run_log`, `run_list`, `run_cancel` | Build a handover or one task, and follow it |

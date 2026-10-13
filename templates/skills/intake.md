@@ -24,10 +24,35 @@ You prepare, explain and send files for review. **The user decides.**
 - `.zforge/knowledge/index.md` — accepted requirements and decisions still in force
 - The code and tests the change touches (read them; CodeGraph when available)
 
+## One pass, one decision
+
+By default the user reviews the whole intake once:
+
+1. Ask every question that would change the files **before** drafting.
+2. Draft 01 → 04 and every task in one pass — each stage still builds on
+   the one before it, as drafted.
+3. `zforge intake review <ID> --all` (MCP `intake_review` with `all: true`)
+   sends every file that needs the user, in dependency order. It sends
+   nothing while any file has a structural error and lists them all: fix
+   every one, then send again.
+4. Show `zforge intake pack <ID>` (MCP `intake_pack`) — brief, each file's
+   summary and changes, warnings, how to decide — not each file apart.
+5. The user types `/accept all` once; zforge records it in dependency order,
+   so nothing accepted in it goes stale. A `/revise` note: revise, send
+   `--all` again, show the new pack.
+
+**Staged** instead — stop after a stage and wait for its acceptance — when
+the user asks for it, or when 01-outcome has open questions whose answers
+would change everything below it: stop after 01 and ask.
+
+**Small profile** (`zforge intake new <ID> --small`, MCP `small: true`) for
+at most two tasks in one module with no new interface: 02-behavior is one
+table and 03-solution only its binding decisions, with no summary. The
+files all still exist and are accepted and pinned like any others.
+
 ## Stages and files
 
-Work in order; each stage builds on the accepted one before it. Section
-titles are English; intakes written with the earlier Vietnamese titles
+Each stage builds on the one before it. Section titles are English; intakes written with the earlier Vietnamese titles
 (Câu hỏi còn mở, Kiểm chứng tích hợp, …) are still read — keep one language
 per intake.
 
@@ -111,7 +136,7 @@ words:
 
 Write it as soon as 01-outcome exists, and rewrite it every time a stage or
 a task is written, revised or accepted, so it always describes the files as
-they are. Show it in chat when you present a stage.
+they are. The review pack opens with it.
 
 ## Workflow
 
@@ -124,17 +149,17 @@ they are. Show it in chat when you present a stage.
 3. Put every question that needs the user under **Open questions** as
    `- [ ] question — stage where it will be settled`. Tick it `[x]` only
    when the answer is written into the file.
-4. `zforge intake review <ID> <file>` — fix every structural error and
-   readability warning it reports, then present the file in chat, in the
-   user's language: the summary, the diagram rendered (for tasks, the
-   graph from `zforge intake graph <ID>`), and the points to decide. For a
-   later revision, present only what changed (`intake_diff`). Do not paste
-   the whole file. Present a stage, or a batch of tasks, then stop and
-   wait.
+4. `zforge intake review <ID> --all` — fix every structural error and
+   readability warning it reports, then present the pack
+   (`zforge intake pack <ID>`) in chat, in the user's language: the
+   summaries, the diagrams rendered (for tasks, the graph from
+   `zforge intake graph <ID>`), the changes, and the points to decide. Do
+   not paste whole files. Then stop and wait.
 5. The user decides — in Claude Code, by typing `/accept all`,
    `/accept <file>…` or `/revise <file>: <what to change>` (zforge's prompt
    hook records it and tells you what it recorded); at a terminal, with
-   `zforge intake accept|revise`. Read a revision note and revise.
+   `zforge intake accept <ID> --all` or `zforge intake accept|revise <ID>
+   <file>`. Read a revision note and revise.
 6. When all files are accepted, `zforge readiness <ID>`; fix what it lists
    by revising files (each goes through review again).
 7. Show the user what the handover would pin (readiness lists it) and ask
@@ -142,10 +167,9 @@ they are. Show it in chat when you present a stage.
    reports the handover recorded, start it with `run_start` and follow it.
 
 Revising a file after the ones below it were accepted leaves them resting
-on the old version, and readiness refuses them. Send each of them for
-review again — `zforge intake review` accepts an unchanged file in that
-case — and tell the user what to confirm. Work top-down: confirming the
-breakdown again makes the tasks stale in turn.
+on the old version, and readiness refuses them. `zforge intake review <ID>
+--all` sends them again with it, unchanged, so the user confirms the lot
+with one `/accept all`.
 
 ## Change requests
 
@@ -169,6 +193,7 @@ yourself, `change_new` (MCP) creates the file with the required sections.
 - [ ] Diagrams are mermaid, one question each; no hand-drawn dependency graph
 - [ ] `brief.md` describes the files as they are now, in the user's language
 - [ ] No open question left unchecked in a file offered for acceptance
+- [ ] Sent with `review --all` and shown as one pack, unless the user asked for stages
 - [ ] Conflicts with accepted knowledge are listed for the user, not resolved silently
 
 ## Never

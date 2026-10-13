@@ -121,6 +121,7 @@ fn the_transport_offers_no_way_to_decide() {
         "intake_new",
         "intake_status",
         "intake_review",
+        "intake_pack",
         "readiness",
         "knowledge_index",
         "run_start",
@@ -208,6 +209,86 @@ fn an_agent_prepares_an_intake_and_stops_at_the_decision() {
     assert_eq!(readiness["ready"], false);
     let problems = readiness["checks"].to_string();
     assert!(problems.contains("has no accepted revision"), "{problems}");
+}
+
+/// The whole intake over MCP: a small intake, sent with `all: true`, shown
+/// as one pack — and still nothing accepted: the pack only says how the
+/// user decides.
+#[test]
+fn an_agent_sends_the_whole_intake_and_shows_the_pack() {
+    let p = Project::new();
+    let frames = p.mcp(&[
+        call(1, "intake_new", json!({"intake_id": "F", "small": true})),
+        call(
+            2,
+            "intake_task",
+            json!({"intake_id": "F", "task_id": "TASK-001"}),
+        ),
+    ]);
+    assert!(
+        text(&frames[0]).contains("small profile"),
+        "{:?}",
+        frames[0]
+    );
+    let d = p.root.join(".zforge/intakes/F");
+    let outcome = std::fs::read_to_string(d.join("01-outcome.md")).unwrap();
+    assert!(outcome.starts_with("---\nprofile: small\n---"), "{outcome}");
+    for (f, text) in [
+        (
+            "01-outcome.md",
+            "---\nprofile: small\n---\n# F\n\n## Summary\nFilter.\n\n## Requirements\n\n- REQ-001: filter\n\n## Open questions\n".to_string(),
+        ),
+        (
+            "02-behavior.md",
+            "# B\n\n## Situations\n| 1 | normal | x | y | REQ-001 |\n".to_string(),
+        ),
+        (
+            "03-solution.md",
+            "# S\n\n## Binding decisions\nNone.\n".to_string(),
+        ),
+        (
+            "04-breakdown.md",
+            "# K\n\n## Summary\nOne task.\n\n## Tasks\nTASK-001\n\n## Integration verification\ntrue\n\n## Open questions\n".to_string(),
+        ),
+        (
+            "tasks/TASK-001.md",
+            "---\nid: TASK-001\nparent: F\nrequirements: [REQ-001]\ndepends_on: []\n---\n\n# TASK-001\n\n\
+             ## Goal\nFilter.\n## Input\nCode.\n## Output\nRight.\n## Constraints\nShape.\n## Autonomy\nAny.\n\
+             ## Acceptance and verification\n- AC-01: test pass\n## Delivery\nLocal.\n## Amend the contract when\nShape.\n## Open questions\n".to_string(),
+        ),
+    ] {
+        std::fs::write(d.join(f), text).unwrap();
+    }
+
+    let frames = p.mcp(&[
+        call(1, "intake_review", json!({"intake_id": "F", "all": true})),
+        call(2, "intake_pack", json!({"intake_id": "F"})),
+    ]);
+    let review = json_result(&frames[0]);
+    let sent: Vec<&str> = review["sent"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            "01-outcome.md",
+            "02-behavior.md",
+            "03-solution.md",
+            "04-breakdown.md",
+            "tasks/TASK-001.md"
+        ]
+    );
+    assert!(review["next"].as_str().unwrap().contains("/accept F all"));
+
+    let pack = text(&frames[1]);
+    assert!(pack.contains("### 01-outcome.md — revision 1"), "{pack}");
+    assert!(pack.contains("Filter."), "{pack}");
+    assert!(pack.contains("/accept F all"), "{pack}");
+    let decisions = std::fs::read_to_string(d.join(".records/decisions.jsonl")).unwrap_or_default();
+    assert!(!decisions.contains("\"accepted\""), "{decisions}");
 }
 
 /// Runs over MCP: start in the background, watch, cancel.

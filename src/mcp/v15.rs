@@ -68,6 +68,7 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
         "intake_status" => intake_status,
         "intake_review" => intake_review,
         "intake_diff" => intake_diff,
+        "intake_pack" => intake_pack,
         "change_new" => change_new,
         "readiness" => readiness_report,
         "knowledge_index" => knowledge_index,
@@ -86,10 +87,12 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
 
 fn intake_new(args: &Value) -> Result<String> {
     let id = str_arg(args, "intake_id")?;
-    let i = review::create(&root()?, &id)?;
+    let small = args.get("small").and_then(Value::as_bool).unwrap_or(false);
+    let i = review::create_with(&root()?, &id, small)?;
     Ok(format!(
-        "created {}; fill 01-outcome.md, then call intake_review",
-        i.dir.display()
+        "created {}{}; draft every stage and task, then call intake_review with all: true and show the user intake_pack",
+        i.dir.display(),
+        if small { " (small profile)" } else { "" }
     ))
 }
 
@@ -122,9 +125,34 @@ fn intake_status(args: &Value) -> Result<String> {
     }))?)
 }
 
-/// Send a file for the user's review (this is not acceptance).
+/// Send a file — or, with `all`, every file that needs the user — for the
+/// user's review (this is not acceptance).
 fn intake_review(args: &Value) -> Result<String> {
     let i = Intake::open(&root()?, &str_arg(args, "intake_id")?)?;
+    if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        let r = intake::batch::review_all(&i)?;
+        let sent: Vec<Value> = r
+            .sent
+            .iter()
+            .map(|(f, rev)| {
+                json!({
+                    "file": f,
+                    "revision": rev.revision,
+                    "sha256": rev.sha256,
+                    "already_under_review": rev.unchanged,
+                    "warnings": rev.warnings,
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&json!({
+            "sent": sent,
+            "kept": r.kept,
+            "next": format!(
+                "show the user intake_pack; they decide by typing /accept {} all or /revise {} <file>: <note>",
+                i.id, i.id
+            ),
+        }))?);
+    }
     let file = str_arg(args, "file")?;
     let r = review::review(&i, &file)?;
     Ok(serde_json::to_string_pretty(&json!({
@@ -139,6 +167,13 @@ fn intake_review(args: &Value) -> Result<String> {
             i.id
         ),
     }))?)
+}
+
+/// The review pack: brief, each file under review with summary and diff,
+/// warnings, and how the user decides. Read-only.
+fn intake_pack(args: &Value) -> Result<String> {
+    let i = Intake::open(&root()?, &str_arg(args, "intake_id")?)?;
+    intake::pack::render(&i)
 }
 
 fn intake_diff(args: &Value) -> Result<String> {
@@ -363,7 +398,8 @@ pub fn definitions() -> Vec<Value> {
             "name": "intake_new",
             "description": "v1.5: create an intake — outcome, behavior, solution, breakdown and a tasks/ folder — for a request that should be clarified before implementation. You fill the files; the user accepts them at a terminal.",
             "inputSchema": { "type": "object", "properties": {
-                "intake_id": { "type": "string", "description": "e.g. FEATURE-001" }
+                "intake_id": { "type": "string", "description": "e.g. FEATURE-001" },
+                "small": { "type": "boolean", "description": "Small profile: compact 02-behavior and 03-solution, for at most two tasks in one module with no new interface" }
             }, "required": ["intake_id"] }
         }),
         json!({
@@ -383,11 +419,19 @@ pub fn definitions() -> Vec<Value> {
         }),
         json!({
             "name": "intake_review",
-            "description": "v1.5: send a file's current content for the user's review as a new revision. Refuses while structural errors remain. This is not acceptance: only the user accepts, at a terminal. Editing the file afterwards voids the review.",
+            "description": "v1.5: send a file's current content for the user's review as a new revision — or, with all: true, every stage and task that needs the user, in dependency order (nothing is sent while any file has a structural error; all problems are listed). This is not acceptance: only the user accepts, by typing /accept or at a terminal. Editing a file afterwards voids its review.",
             "inputSchema": { "type": "object", "properties": {
                 "intake_id": { "type": "string" },
-                "file": { "type": "string", "description": "01-outcome.md … 04-breakdown.md, tasks/TASK-001.md, changes/CHANGE-x.md" }
-            }, "required": ["intake_id", "file"] }
+                "file": { "type": "string", "description": "01-outcome.md … 04-breakdown.md, tasks/TASK-001.md, changes/CHANGE-x.md" },
+                "all": { "type": "boolean", "description": "Every file that needs the user's decision, instead of `file`" }
+            }, "required": ["intake_id"] }
+        }),
+        json!({
+            "name": "intake_pack",
+            "description": "v1.5: the review pack, read-only — the brief, then each file under review with its revision, summary and changes since the accepted revision, the warnings, and the exact words the user types to decide. Show it to the user instead of each file.",
+            "inputSchema": { "type": "object", "properties": {
+                "intake_id": { "type": "string" }
+            }, "required": ["intake_id"] }
         }),
         json!({
             "name": "intake_diff",

@@ -11,13 +11,21 @@ use super::record::{self, Decider, Decision, DecisionKind, CHANNEL_CLI};
 use super::status::{self, DocStatus, Rev};
 use super::{hash, templates, validate_id, Intake, CHANGES_DIR, STAGES, TASKS_DIR};
 use crate::knowledge::docs::DocSet;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Create `.zforge/intakes/<id>/` with a template for every stage.
 pub fn create(project_root: &Path, id: &str) -> Result<Intake> {
+    create_with(project_root, id, false)
+}
+
+/// [`create`], with the small profile when `small`: 01-outcome carries
+/// `profile: small` and 02-behavior / 03-solution start from the compact
+/// templates (one table each). Every stage file still exists, so readiness,
+/// handovers and runs treat the intake like any other.
+pub fn create_with(project_root: &Path, id: &str, small: bool) -> Result<Intake> {
     validate_id(id)?;
     let dir = super::intakes_dir(project_root).join(id);
     if dir.exists() {
@@ -27,7 +35,12 @@ pub fn create(project_root: &Path, id: &str) -> Result<Intake> {
         std::fs::create_dir_all(dir.join(sub))?;
     }
     for stage in STAGES {
-        let body = templates::stage(stage, id).expect("template for every stage");
+        let body = if small {
+            templates::small_stage(stage, id)
+        } else {
+            templates::stage(stage, id)
+        }
+        .expect("template for every stage");
         crate::fs::write_atomic(&dir.join(stage), body.as_bytes())?;
     }
     crate::fs::write_atomic(
@@ -70,6 +83,7 @@ pub fn known(intake: &Intake) -> Known {
             })
             .collect(),
         knowledge_ids: knowledge_ids(intake),
+        small: lint::is_small(&outcome),
     }
 }
 
@@ -138,27 +152,51 @@ pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
     let _lock = lock(doc)?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let warnings = lint_for_review(doc, rel, &text)
+        .map_err(|errors| anyhow!("{rel} is not ready for review:\n{}", errors.join("\n")))?;
+    review_locked(doc, rel, &text, warnings, false)
+}
 
-    let issues = doc.lint(rel, &text);
-    let (errors, warnings): (Vec<Issue>, Vec<Issue>) = issues
+/// Lint `text` as `rel` would be sent for review: its warnings, or every
+/// error as a `  - message` line.
+pub(crate) fn lint_for_review<D: DocSet>(
+    doc: &D,
+    rel: &str,
+    text: &str,
+) -> std::result::Result<Vec<Issue>, Vec<String>> {
+    let (errors, warnings): (Vec<Issue>, Vec<Issue>) = doc
+        .lint(rel, text)
         .into_iter()
         .partition(|i| i.severity == Severity::Error);
-    if !errors.is_empty() {
-        let list: Vec<String> = errors
+    if errors.is_empty() {
+        Ok(warnings)
+    } else {
+        Err(errors
             .iter()
             .map(|i| format!("  - {}", i.message))
-            .collect();
-        bail!("{rel} is not ready for review:\n{}", list.join("\n"));
+            .collect())
     }
+}
 
+/// [`review`] with the lock held and `text` linted. `reconfirm` sends an
+/// accepted, unchanged file again even though nothing it builds on has
+/// been accepted since: a batch ([`super::batch::review_all`]) is sending
+/// something it builds on, so the user confirms both in the same pass.
+pub(crate) fn review_locked<D: DocSet>(
+    doc: &D,
+    rel: &str,
+    text: &str,
+    warnings: Vec<Issue>,
+    reconfirm: bool,
+) -> Result<Reviewed> {
     let log = record::read(doc)?;
-    let st = status::derive(rel, &log, Some(&text));
-    let current = hash::sha256(&text);
+    let st = status::derive(rel, &log, Some(text));
+    let current = hash::sha256(text);
     // Unchanged since it was accepted: nothing to review — unless something
     // it builds on was accepted since (D6), when the user confirms it again
     // as a new revision with the same text.
     if let Some(a) = st.accepted.as_ref().filter(|a| a.sha256 == current) {
-        if !doc.reconfirm_needed(rel)? {
+        if !reconfirm && !doc.reconfirm_needed(rel)? {
             bail!(
                 "{rel} is already accepted as revision {}; edit it first",
                 a.revision
@@ -176,7 +214,7 @@ pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
     }
 
     let revision = st.last_revision + 1;
-    record::write_snapshot(doc, rel, revision, &hash::normalize(&text))?;
+    record::write_snapshot(doc, rel, revision, &hash::normalize(text))?;
     record::append(
         doc,
         &Decision {
@@ -285,6 +323,18 @@ fn decide<D: DocSet>(
     note: String,
 ) -> Result<Rev> {
     let _lock = lock(doc)?;
+    decide_locked(doc, rel, kind, who, note, Utc::now())
+}
+
+/// [`decide`] with the lock held, recorded at `at`.
+pub(crate) fn decide_locked<D: DocSet>(
+    doc: &D,
+    rel: &str,
+    kind: DecisionKind,
+    who: &Decider,
+    note: String,
+    at: chrono::DateTime<Utc>,
+) -> Result<Rev> {
     let pending = pending_review(doc, rel)?;
     if kind == DecisionKind::Accepted {
         // Checked here, under the lock, on the exact revision this call is
@@ -297,7 +347,7 @@ fn decide<D: DocSet>(
     record::append(
         doc,
         &Decision {
-            at: Utc::now(),
+            at,
             file: rel.to_string(),
             revision: pending.revision,
             sha256: pending.sha256.clone(),

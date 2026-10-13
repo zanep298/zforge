@@ -117,6 +117,26 @@ pub struct Known {
     /// citing an ID then always gets the warning, which is correct: there
     /// is nothing accepted to cite.
     pub knowledge_ids: BTreeSet<String>,
+    /// The intake uses the small profile ([`is_small`]): 02-behavior and
+    /// 03-solution may be a single table, without a summary or open
+    /// questions of their own.
+    pub small: bool,
+}
+
+/// Stages a small intake keeps short (`zforge intake new --small`).
+pub const SMALL_STAGES: [&str; 2] = ["02-behavior.md", "03-solution.md"];
+
+/// Whether `01-outcome.md`'s text marks the intake small: frontmatter
+/// `profile: small`. The marker lives in the accepted outcome, so the user
+/// accepts the profile with it.
+pub fn is_small(outcome: &str) -> bool {
+    let (Some(fm), _) = split_frontmatter(outcome) else {
+        return false;
+    };
+    serde_yaml::from_str::<serde_yaml::Value>(fm)
+        .ok()
+        .and_then(|v| v.get("profile").and_then(|p| p.as_str()).map(str::to_owned))
+        .is_some_and(|p| p.trim().eq_ignore_ascii_case("small"))
 }
 
 /// Leaf task frontmatter.
@@ -385,7 +405,8 @@ pub fn lint(rel: &str, text: &str, intake_id: &str, known: &Known) -> Vec<Issue>
         lint_task(rel, stem, text, &clean, intake_id, known, &mut issues);
     }
 
-    if section(&sections(&clean), OPEN_QUESTIONS).is_none() {
+    let relaxed = known.small && SMALL_STAGES.contains(&rel);
+    if !relaxed && section(&sections(&clean), OPEN_QUESTIONS).is_none() {
         issues.push(Issue::warning(
             rel,
             format!("has no \"{OPEN_QUESTIONS}\" section"),

@@ -9,8 +9,10 @@ above. You did not record it. Never run `zforge intake accept|revise`,
 `zforge onboard accept|revise`, `zforge handover` or `zforge hook`
 yourself.
 
-- Recorded: carry on — draft the next stage, or run `readiness` once every
-  file is accepted and tell the user they can type `/handover`.
+- Recorded: carry on — run `readiness` once every file is accepted and
+  tell the user they can type `/handover` (in a staged intake, draft the
+  next stage). Files are accepted in dependency order, stages before
+  tasks; one that builds on a refused file is refused with it.
 - Refused: say why in one sentence and what the user can do.
 - No zforge hook context above: the hook is not installed. Record nothing;
   tell the user to run `zforge init --force` in this project.
