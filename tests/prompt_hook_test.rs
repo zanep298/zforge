@@ -265,7 +265,7 @@ fn accept_and_revise_name_files_the_short_way() {
 }
 
 /// What was shown for review is what gets accepted: a file edited since is
-/// refused, the others are still recorded.
+/// refused, and so is what builds on it; the files before it are recorded.
 #[test]
 fn a_file_changed_after_review_is_not_accepted() {
     let p = Project::new();
@@ -279,8 +279,53 @@ fn a_file_changed_after_review_is_not_accepted() {
         user_sees(&v).contains("✗ 03-solution.md: 03-solution.md changed after revision 1"),
         "{v}"
     );
+    assert!(
+        user_sees(&v).contains("✗ 04-breakdown.md: not recorded: it builds on 03-solution.md"),
+        "{v}"
+    );
     assert_eq!(p.state("F", "01-outcome.md"), "accepted");
-    assert_ne!(p.state("F", "03-solution.md"), "accepted");
+    assert_eq!(p.state("F", "02-behavior.md"), "accepted");
+    for f in ["03-solution.md", "04-breakdown.md", "tasks/TASK-001.md"] {
+        assert_ne!(p.state("F", f), "accepted", "{f}");
+    }
+}
+
+/// `/accept all` on a fresh intake whose tasks are named against their
+/// dependency order: each task is recorded after what it depends on, and
+/// the intake is ready — nothing of the batch rests on a later acceptance.
+#[test]
+fn accept_all_on_a_fresh_intake_leaves_nothing_stale() {
+    let p = Project::new();
+    let d = p.dir("F");
+    let task2 = TASK
+        .replace("TASK-001", "TASK-002")
+        .replace("depends_on: []", "depends_on: [TASK-003]");
+    let task3 = TASK.replace("TASK-001", "TASK-003");
+    std::fs::write(d.join("tasks/TASK-002.md"), task2).unwrap();
+    std::fs::write(d.join("tasks/TASK-003.md"), task3).unwrap();
+    p.zforge(&["intake", "review", "F", "--all"]);
+
+    let v = p.say("/accept all").unwrap();
+    assert!(!user_sees(&v).contains('✗'), "{v}");
+    let accepted: Vec<String> = p
+        .decisions("F")
+        .into_iter()
+        .filter(|d| d["decision"] == "accepted")
+        .map(|d| d["file"].as_str().unwrap().to_string())
+        .collect();
+    let at = |f: &str| accepted.iter().position(|a| a == f).unwrap();
+    assert!(at("04-breakdown.md") < at("tasks/TASK-001.md"));
+    assert!(
+        at("tasks/TASK-003.md") < at("tasks/TASK-002.md"),
+        "{accepted:?}"
+    );
+
+    let intake = zforge::intake::Intake::open(&p.root, "F").unwrap();
+    assert!(zforge::intake::readiness::stale(&intake)
+        .unwrap()
+        .is_empty());
+    let r: Value = serde_json::from_str(&p.zforge(&["readiness", "F", "--json"])).unwrap();
+    assert_eq!(r["ready"], true, "{r}");
 }
 
 #[test]

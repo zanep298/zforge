@@ -21,6 +21,23 @@ pub fn stage(file: &str, intake_id: &str) -> Option<String> {
     Some(body.replace("{{intake_id}}", intake_id))
 }
 
+const BEHAVIOR_SMALL: &str = include_str!("../../templates/intake/02-behavior-small.md");
+const SOLUTION_SMALL: &str = include_str!("../../templates/intake/03-solution-small.md");
+
+/// Template for a stage file of a small intake (`zforge intake new
+/// --small`): 01-outcome marked `profile: small`, compact 02 and 03.
+pub fn small_stage(file: &str, intake_id: &str) -> Option<String> {
+    let body = match file {
+        "01-outcome.md" => {
+            return stage(file, intake_id).map(|t| format!("---\nprofile: small\n---\n\n{t}"))
+        }
+        "02-behavior.md" => BEHAVIOR_SMALL,
+        "03-solution.md" => SOLUTION_SMALL,
+        _ => return stage(file, intake_id),
+    };
+    Some(body.replace("{{intake_id}}", intake_id))
+}
+
 pub fn task(intake_id: &str, task_id: &str) -> String {
     TASK.replace("{{intake_id}}", intake_id)
         .replace("{{task_id}}", task_id)
