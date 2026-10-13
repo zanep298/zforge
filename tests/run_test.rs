@@ -2136,3 +2136,54 @@ fn a_reviewer_that_changes_files_is_not_an_approval() {
     );
     assert_eq!(p.count("RUN-001", "verified"), 0);
 }
+
+/// `run compare` lays two runs side by side from their records, traces and
+/// git — and `--check` runs a command on each output in a worktree it
+/// removes again.
+#[test]
+fn compare_shows_two_runs_side_by_side() {
+    let p = housekeeping_project();
+    p.stub(&fix_and_report());
+    let output = verify_task(&p, "TASK-001");
+    p.stub(&format!("cat {FIXTURE}"));
+    p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert_eq!(p.last("RUN-002")["event"], "failed");
+
+    let out = p.zforge(&[
+        "run",
+        "compare",
+        "RUN-001",
+        "RUN-002",
+        "--check",
+        "grep -q . lib.sh",
+        "--json",
+    ]);
+    assert!(out.status.success(), "{}", err(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let (a, b) = (&v[0], &v[1]);
+    assert_eq!(a["status"], "verified");
+    assert_eq!(a["diff"]["commit"], output.as_str());
+    assert!(a["diff"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == "lib.sh" && f["status"] == "M"));
+    assert_eq!(a["check"]["exit_code"], 0);
+    assert!(a["agent"]["calls"].as_u64().unwrap() >= 1);
+    assert!(
+        a["agent"]["commands"]["test"].as_u64().unwrap_or(0) >= 1,
+        "{a}"
+    );
+    assert_eq!(b["status"], "failed");
+    assert!(b.get("diff").is_none() && b.get("check").is_none());
+    assert!(!p.worktree("compare-RUN-001").exists());
+
+    let text = p.zforge(&["run", "compare", "RUN-001", "RUN-002"]);
+    let text = String::from_utf8_lossy(&text.stdout);
+    for want in ["run ", "RUN-001", "RUN-002", "verify failed", "M lib.sh"] {
+        assert!(text.contains(want), "{want}:\n{text}");
+    }
+
+    let one = p.zforge(&["run", "compare", "RUN-001"]);
+    assert!(!one.status.success(), "one run is not a comparison");
+}

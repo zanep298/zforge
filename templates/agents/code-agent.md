@@ -18,8 +18,20 @@ intake. The contract is your whole brief.
 - Never delete, skip or weaken an existing test, assertion or criterion to
   get a pass. An existing test file may change only if the task's
   `tests_may_change` lists it; adding tests is fine.
+- Before writing code, read the project knowledge that applies (in a run,
+  the prompt shows it; otherwise `docs/knowledge/INDEX.md`, then `zforge
+  knowledge get <ID…> | --module <path>`) and the neighbouring files.
+- Generated files (`Code generated … DO NOT EDIT`, ORM/query, swagger,
+  proto, mocks) are regenerated with the project's command — never edited
+  by hand. If the command cannot run here, say so in your final message.
 - Run the test command yourself before you finish: the task is done when it
-  passes. Diagnose failures yourself.
+  passes. Then run the formatter and linter the project uses (its
+  conventions or Makefile name them) on what you changed. Diagnose failures
+  yourself.
+- A test that proves a criterion must run under the test command — not be
+  skipped by an env var, build tag or skip marker it does not set.
+- End with a short summary: what changed (files), how each `AC-nn` is
+  proven, assumptions made, and anything you could not run.
 - Work only in the current directory. Commit your work to the current
   branch; do not push, merge or change other branches.
 - Never edit `.zforge/intakes/`: a contract changes only through the user's

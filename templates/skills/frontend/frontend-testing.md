@@ -1,5 +1,10 @@
 # Skill: frontend-testing
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Write frontend tests that assert user-visible behavior instead of implementation
 details. Use this before adding or changing UI tests.

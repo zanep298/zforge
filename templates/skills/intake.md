@@ -33,32 +33,6 @@ You prepare, explain and send files for review. **The user decides.**
 - `docs/knowledge/commitments.md` — accepted requirements and decisions still in force
 - The code and tests the change touches (read them; CodeGraph when available)
 
-## One pass, one decision
-
-By default the user reviews the whole intake once:
-
-1. Ask every question that would change the files **before** drafting.
-2. Draft 01 → 04 and every task in one pass — each stage still builds on
-   the one before it, as drafted.
-3. `zforge intake review <ID> --all` (MCP `intake_review` with `all: true`)
-   sends every file that needs the user, in dependency order. It sends
-   nothing while any file has a structural error and lists them all: fix
-   every one, then send again.
-4. Show `zforge intake pack <ID>` (MCP `intake_pack`) — brief, each file's
-   summary and changes, warnings, how to decide — not each file apart.
-5. The user types `/accept all` once; zforge records it in dependency order,
-   so nothing accepted in it goes stale. A `/revise` note: revise, send
-   `--all` again, show the new pack.
-
-**Staged** instead — stop after a stage and wait for its acceptance — when
-the user asks for it, or when 01-outcome has open questions whose answers
-would change everything below it: stop after 01 and ask.
-
-**Small profile** (`zforge intake new <ID> --small`, MCP `small: true`) for
-at most two tasks in one module with no new interface: 02-behavior is one
-table and 03-solution only its binding decisions, with no summary. The
-files all still exist and are accepted and pinned like any others.
-
 ## Stages and files
 
 Each stage builds on the one before it. Section titles are English; intakes written with the earlier Vietnamese titles
@@ -99,115 +73,56 @@ per intake.
      intake review` warns, naming the ID, on a citation that is not in the
      accepted knowledge — fix the ID or note the departure, don't ignore it.
 
-## Writing for the person who decides
-
-The user accepts what they read, so every word above `## Detail` costs
-them. `zforge intake review` warns when a file goes past these:
-
-- **Summary first.** Each stage opens with `## Summary`, at most 150 words:
-  what this file decides, the main points, what the user must decide, and
-  — from the second revision — what changed.
-- **Budgets** for what is above `## Detail`: 01 — 500 words, 02 — 700,
-  03 — 800, 04 — 400, a task — 300. Code blocks do not count.
-- **`## Detail` is for the implementing agent**: paths, signatures,
-  formats, full example outputs, evidence. The user may skip it; nothing
-  they must decide goes there.
-- **Tables and lists, not paragraphs.** One situation, decision or task
-  per row; one line per output and per acceptance criterion.
-- **Refer, do not retell.** A lower stage names `REQ-003`, `situation 4`,
-  `D-2`; it does not explain them again.
-- **Diagrams are `mermaid`**, never drawn in text. One question per
-  diagram — who calls whom (`sequenceDiagram`), or which states exist
-  (`stateDiagram-v2`), or what contains what (`graph`) — about eight
-  nodes, a verb on every arrow. A second question gets a second diagram.
-
-## The brief
-
-`brief.md` is one page for the person who decides — the whole intake in
-their language and in plain words: no IDs, no paths, no code. It is a
-reading view, never the contract: zforge does not review, pin or lint it,
-and accepting is still done on the files. Keep to this shape, about 400
-words:
-
-- **Goal** in one sentence, then **one concrete example** from the user's
-  world.
-- **Behavior** as a mermaid flowchart of what the user and the system do —
-  plain-language nodes, at most eight.
-- **Solution** in two or three sentences.
-- **Choices to understand before accepting**: a table `Choice |
-  Consequence`.
-- **Work split**: a mermaid flowchart of the phases, not every task.
-- **Done when**: what will have been proven.
-- **Still unclear**: open points, and any place where the files disagree
-  with each other — writing the brief is when you notice them.
-- A last line: "Reading copy, not the contract. Describes: 01-outcome rev
-  n, …".
-
-Write it as soon as 01-outcome exists, and rewrite it every time a stage or
-a task is written, revised or accepted, so it always describes the files as
-they are. The review pack opens with it.
-
 ## Workflow
 
-1. Read `INDEX.md`, the items it points you to, and the code before asking anything you
-   could find out yourself. Every stage you draft cites the knowledge item
-   IDs it relies on (`Keeps RULE-001: …`); where the stage departs from an
-   accepted item, say so in the stage, with the item's ID and why, for the
-   user to accept or not — never depart silently.
-2. Write or revise the file; keep conclusions in the file, not only in chat.
-3. Put every question that needs the user under **Open questions** as
-   `- [ ] question — stage where it will be settled`. Tick it `[x]` only
+By default the user reviews the whole intake once.
+
+1. Read `INDEX.md`, the items it points you to, and the code before asking
+   anything you could find out yourself. Every stage you draft cites the
+   knowledge item IDs it relies on (`Keeps RULE-001: …`); where it departs
+   from an accepted item, say so with the ID and why — never silently.
+2. Ask every question that would change the files **before** drafting. What
+   the user must still settle goes under **Open questions** as
+   `- [ ] question — stage where it will be settled`; tick it `[x]` only
    when the answer is written into the file.
-4. `zforge intake review <ID> --all` — fix every structural error and
-   readability warning it reports, then present the pack
-   (`zforge intake pack <ID>`) in chat, in the user's language: the
-   summaries, the diagrams rendered (for tasks, the graph from
-   `zforge intake graph <ID>`), the changes, and the points to decide. Do
-   not paste whole files. Then stop and wait.
-5. The user decides — in Claude Code, by typing `/accept all`,
-   `/accept <file>…` or `/revise <file>: <what to change>` (zforge's prompt
-   hook records it and tells you what it recorded); at a terminal, with
-   `zforge intake accept <ID> --all` or `zforge intake accept|revise <ID>
-   <file>`. Read a revision note and revise.
-6. When all files are accepted, `zforge readiness <ID>`; fix what it lists
+3. Draft 01 → 04 and every task in one pass, each stage building on the one
+   before it, following `zforge-intake-writing` (`intake-writing.md`
+   beside this file in the skills store). Keep conclusions in the files,
+   not only in chat.
+4. `zforge intake review <ID> --all` (MCP `intake_review`, `all: true`)
+   sends every file that needs the user, in dependency order — nothing
+   while any file has a structural error: fix them all and send again.
+   Fix every readability warning too.
+5. Present `zforge intake pack <ID>` (MCP `intake_pack`) in chat, in the
+   user's language: the summaries, the diagrams rendered (for tasks, the
+   graph from `zforge intake graph <ID>`), the changes, the points to
+   decide. Do not paste whole files. Then stop and wait.
+6. The user decides — `/accept all` once (recorded in dependency order, so
+   nothing in it goes stale), `/accept <file>…` or `/revise <file>: <what
+   to change>`; zforge's prompt hook records it and tells you. At a
+   terminal: `zforge intake accept <ID> --all` or `zforge intake
+   accept|revise <ID> <file>`. On a revision note: revise, `review --all`
+   again, show the new pack.
+7. When all files are accepted, `zforge readiness <ID>`; fix what it lists
    by revising files (each goes through review again).
-7. Show the user what the handover would pin (readiness lists it) and ask
-   them to type `/handover` (or run `zforge handover <ID>`). Once the hook
-   reports the handover recorded, start it with `run_start` and follow it.
+8. Show what the handover would pin (readiness lists it) and ask the user
+   to type `/handover` (or run `zforge handover <ID>`). Once the hook
+   reports it recorded, start it with `run_start` and follow it.
 
-Revising a file after the ones below it were accepted leaves them resting
-on the old version, and readiness refuses them. `zforge intake review <ID>
---all` sends them again with it, unchanged, so the user confirms the lot
-with one `/accept all`.
+**Staged** instead — stop after a stage and wait for its acceptance — when
+the user asks, or when 01-outcome has open questions whose answers would
+change everything below it: stop after 01 and ask.
 
-## Change requests
+**Small profile** (`zforge intake new <ID> --small`, MCP `small: true`) for
+at most two tasks in one module with no new interface: 02-behavior is one
+table and 03-solution only its binding decisions, with no summary. The
+files all still exist and are accepted and pinned like any others.
 
-During a run, an agent that finds the contract must change writes
-`changes/CHANGE-RUN-nnn.md` and the run stops `blocked`. Read it, explain it
-to the user, and — if they agree — revise the contract files it concerns and
-send them for review. Once accepted, the user hands over again; tasks whose
-contract did not change are reused, not run again. To propose a change
-yourself, `change_new` (MCP) creates the file with the required sections.
-
-## Changing an accepted intake
-
-Only what rests on a changed item is confirmed again and run again: a
-task's requirements, their behavior rows, the decisions (`D-n`) it cites,
-its breakdown row and the tasks it depends on; "Must not change" / "Out of
-scope" bind everything; prose binds nothing. Keep stages in the template's
-shape (REQ lines, the situations table, the decisions table, the tasks
-table) — a stage that is not is compared whole.
-
-- **Not merged yet** (`zforge status` does not say the handover is
-  merged): edit the intake in place, send the changed files for review,
-  confirm what readiness lists as resting on them, hand over again. Tasks
-  whose items did not change are reused; a changed task continues from its
-  earlier output, told what changed.
-- **Already integrated or merged into the baseline**: `zforge intake amend
-  <NEW> --from <ID>` (MCP `intake_amend`). Every file starts as a draft
-  copied from the accepted revisions; change only what changes, rewrite
-  `brief.md` around the change, `zforge intake review <NEW> --all`, show
-  the pack, and ask the user to type `/accept <NEW> all`. Never accept for them.
+Revising a file after the ones below it were accepted leaves those that
+rest on what changed out of date, and readiness refuses them; `review
+--all` sends them again with it, so one `/accept all` settles the lot.
+Changing an intake after a handover, or answering a change request: follow
+`zforge-intake-change` (`intake-change.md` beside this file).
 
 ## Checklist
 

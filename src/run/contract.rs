@@ -62,6 +62,9 @@ pub struct Contract {
     /// What changed since the earlier output this run continues from
     /// ([`previous_attempt`]); `None` for a run that starts afresh.
     pub previous_attempt: Option<String>,
+    /// For the reviewer of a continued run: where the whole task's change
+    /// starts (`start::review_scope`); `None` for a run that starts afresh.
+    pub review_scope: Option<String>,
     /// `knowledge.extra` directories that exist, absolute: reference docs
     /// the code prompt names (not pinned, not part of the contract).
     pub reference_docs: Vec<std::path::PathBuf>,
@@ -154,6 +157,7 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         files: h.files,
         knowledge: h.knowledge,
         previous_attempt: None,
+        review_scope: None,
         reference_docs: h.reference_docs,
     })
 }
@@ -462,8 +466,9 @@ impl Contract {
         let checklists = match checklists {
             [] => String::new(),
             files => format!(
-                "## Checklists\n\nRead these before writing code or tests; they are how this project \
-                 does both:\n\n{}\n\n",
+                "## Checklists\n\nRead these before writing code or tests. They are general: where \
+                 the project knowledge below or the code around your change does it differently, \
+                 the project wins.\n\n{}\n\n",
                 files
                     .iter()
                     .map(|f| format!("- `{}`", f.display()))
@@ -499,6 +504,10 @@ impl Contract {
         knowledge: &select::Selection,
     ) -> String {
         REVIEW_TEMPLATE
+            .replace(
+                "{{review_scope}}\n",
+                self.review_scope.as_deref().unwrap_or(""),
+            )
             .replace("{{test_command}}", test_command)
             .replace("{{start}}", start)
             .replace("{{task_id}}", &self.task)
@@ -1051,5 +1060,26 @@ pub(crate) mod tests {
         assert!(!p.contains("## Project knowledge"), "{p}");
         let rp = c.review_prompt("abc123", "cargo test", &s);
         assert!(!rp.contains("## Project knowledge"), "{rp}");
+    }
+
+    /// A continued run's reviewer is told where the whole task's change
+    /// starts; a fresh run's prompt carries no trace of the slot.
+    #[test]
+    fn a_continued_runs_review_names_the_whole_task_diff() {
+        let f = handed_over();
+        let mut c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let s = select::Selection::default();
+        let fresh = c.review_prompt("abc123", "cargo test", &s);
+        assert!(!fresh.contains("review_scope"), "{fresh}");
+        assert!(!fresh.contains("continues"), "{fresh}");
+
+        c.review_scope = Some(
+            "This run continues RUN-001's verified output, so `git diff {{start}}` shows only \
+             this run. Review the whole task with `git diff base0`.\n"
+                .into(),
+        );
+        let rp = c.review_prompt("abc123", "cargo test", &s);
+        assert!(rp.contains("`git diff abc123` shows only this run"), "{rp}");
+        assert!(rp.contains("`git diff base0`"), "{rp}");
     }
 }

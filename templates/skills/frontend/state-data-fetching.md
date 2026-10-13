@@ -1,5 +1,10 @@
 # Skill: frontend-state-data-fetching
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Keep frontend state and server data flows predictable. Use this when changing
 forms, caches, mutations, optimistic UI, or route data loading.

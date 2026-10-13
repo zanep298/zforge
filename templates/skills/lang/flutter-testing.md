@@ -1,5 +1,10 @@
 # Skill: flutter-testing
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Write TDD-first Flutter tests using unit, widget, and integration tests where each
 level covers the right behavior.

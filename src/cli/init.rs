@@ -64,6 +64,9 @@ pub struct InitOptions {
     /// Install missing tools (rtk, codegraph, caveman). `--no-install`
     /// clears it; tools already present are still configured.
     pub install_missing: bool,
+    /// List what init writes in the repository's `info/exclude`
+    /// (`git_exclude`). A block from an earlier init is refreshed anyway.
+    pub git_exclude: bool,
 }
 
 pub fn run(opts: InitOptions) -> Result<()> {
@@ -275,6 +278,7 @@ pub fn run_for(targets: &[&'static str], opts: InitOptions) -> Result<()> {
 
     setup_rtk(&targets, tool_opts);
     setup_codegraph(&cwd, &targets, tool_opts);
+    report_git_exclude(&cwd, opts.git_exclude);
 
     println!();
     println!(
@@ -686,6 +690,7 @@ mod claude_settings;
 pub(crate) mod claude_skills;
 pub(crate) mod config_file;
 mod detect;
+mod git_exclude;
 pub(crate) mod instructions;
 mod lang_skills;
 mod registry;
@@ -806,6 +811,46 @@ fn materialize_agents_for(
         extra_frontmatter,
     )?;
     Ok((count, label))
+}
+
+/// Write or refresh the `info/exclude` block and say what it did. Never
+/// fails init: the scaffold is done by now.
+fn report_git_exclude(cwd: &Path, enable: bool) {
+    match git_exclude::apply(cwd, enable) {
+        Ok(git_exclude::Outcome::Off) => {}
+        Ok(git_exclude::Outcome::NotRepo) => println!(
+            "{} --git-exclude: not a git repository — nothing excluded",
+            "⚠".yellow()
+        ),
+        Ok(git_exclude::Outcome::Written {
+            file,
+            entries,
+            tracked,
+        }) => {
+            println!(
+                "{} {} — {} zforge paths excluded from git",
+                "✓".green(),
+                file.display(),
+                entries.len()
+            );
+            if !tracked.is_empty() {
+                println!(
+                    "  {} already tracked, so still in git: {}",
+                    "⚠".yellow(),
+                    tracked.join(", ")
+                );
+                println!(
+                    "    to stop tracking them (keeps the files): git rm -r --cached -- {}",
+                    tracked
+                        .iter()
+                        .map(|t| t.trim_end_matches('/').replace('*', "\\*"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+            }
+        }
+        Err(e) => eprintln!("  {} --git-exclude: {e:#}", "⚠".yellow()),
+    }
 }
 
 fn install_rules_for_claude(rules_dir: &Path, force: bool, stats: &mut InitStats) -> Result<usize> {

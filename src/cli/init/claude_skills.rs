@@ -60,6 +60,16 @@ const BASE: &[BaseSkill] = &[
         phases: &[],
     },
     BaseSkill {
+        source: "intake-writing.md",
+        description: "How to write a zforge intake's stage files, task contracts and brief.md for the person who decides — summaries, word budgets, Detail sections, the brief. Use with zforge-intake whenever drafting or revising intake files.",
+        phases: &[],
+    },
+    BaseSkill {
+        source: "intake-change.md",
+        description: "Change an accepted zforge intake — answer a run's change request, edit in place before the handover is merged, or `zforge intake amend` after it is. Use when a requirement must change after acceptance or a run stopped on a change request.",
+        phases: &[],
+    },
+    BaseSkill {
         source: "onboard.md",
         description: "Draft the project's own knowledge from the code — domain.md, conventions.md, rules.md under docs/knowledge/ — every statement cited at path:line, what the code cannot show asked as an open question, sent for review but never accepted. Use for onboarding requests, or when `zforge onboard status` shows files in draft or stale.",
         phases: &[],

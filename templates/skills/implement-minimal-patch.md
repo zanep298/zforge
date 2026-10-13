@@ -30,6 +30,10 @@ A changeset that:
 ## Checklist
 
 - [ ] Every changed file is needed for the agreed output
+- [ ] New code follows the project's conventions and the nearest existing code
+      in the module: layout, naming, error/response handling, logging
+- [ ] Generated files regenerated with the project's command, not hand-edited
+- [ ] Formatter and linter the project uses pass on the changed files
 - [ ] No public function signatures changed without that being agreed
 - [ ] No error types renamed or removed without that being agreed
 - [ ] No unrelated files modified

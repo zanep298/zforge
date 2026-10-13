@@ -16,7 +16,9 @@ before implementation, not after.
 
 - The task contract's acceptance criteria (`AC-01` …) — what the tests must
   prove — and the behavior described in the accepted stages
-- The relevant source file(s) being modified
+- The relevant source file(s) being modified, and the tests next to them —
+  write new tests the way those are written (framework, helpers, mocks,
+  file names)
 
 ## Expected Outputs
 
@@ -30,8 +32,12 @@ For each case or acceptance criterion being implemented:
 ## Checklist
 
 - [ ] Test written and seen failing before the production code changes
+- [ ] Test runs under the project's test command — not skipped by an env var,
+      build tag or skip marker the command does not set
 - [ ] Test name is descriptive: `fn rejects_expired_token()` not `fn test1()`
-- [ ] Test fails with the expected reason (wrong behavior, not a compile error)
+- [ ] Test fails for the expected reason: wrong behavior, or — in a compiled
+      language — the missing function or type it calls (not a typo or an
+      unrelated break)
 - [ ] Production code change is minimal — only what is needed to pass this test
 - [ ] All existing tests still pass after the change
 - [ ] Each test traces to an acceptance criterion
@@ -39,7 +45,8 @@ For each case or acceptance criterion being implemented:
 
 ## Constraints
 
-- One failing test at a time — do not write a batch of tests before implementing any
+- Work one acceptance criterion at a time: its failing test(s), then the code
+  — do not write the tests for every criterion before implementing any
 - Run the tests with the project's test command (`project.test_command`; the prompt
   names it) — that is what verification runs, not a command of your own
 - Existing tests are part of what was agreed: add tests, do not rewrite old ones to fit

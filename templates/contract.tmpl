@@ -17,7 +17,15 @@ current directory (this run's own git worktree) and nowhere else.
   read neighbouring files first. Suggestions in the solution may be
   replaced by an equivalent; binding decisions ("Binding decisions") may not.
 - Verification runs `{{test_command}}` in this directory. Run it yourself
-  before you finish: the task is done when it passes.
+  before you finish: the task is done when it passes. A test that proves a
+  criterion must run under it — not be skipped by an env var, build tag or
+  skip marker it does not set. Then run the formatter and linter the
+  project uses on what you changed.
+- Generated files (`Code generated … DO NOT EDIT`, ORM/query, swagger,
+  proto, mocks) are regenerated with the project's command, never edited by
+  hand.
+- End with a short summary: what changed, how each acceptance criterion is
+  proven, assumptions made, anything you could not run.
 - Diagnose and fix failures yourself; do not ask the user how to debug.
 - CodeGraph tools, when you have them, index the main checkout, not this
   worktree: use them to find your way around, but read the files here for

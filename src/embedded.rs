@@ -31,6 +31,14 @@ pub const SKILLS: &[(&str, &str)] = &[
     ),
     ("debug.md", include_str!("../templates/skills/debug.md")),
     ("intake.md", include_str!("../templates/skills/intake.md")),
+    (
+        "intake-writing.md",
+        include_str!("../templates/skills/intake-writing.md"),
+    ),
+    (
+        "intake-change.md",
+        include_str!("../templates/skills/intake-change.md"),
+    ),
     ("onboard.md", include_str!("../templates/skills/onboard.md")),
     (
         "security-review.md",
@@ -272,6 +280,44 @@ mod tests {
             "nearest existing code",
         ] {
             assert!(review.contains(rule) && prompt.contains(rule), "{rule}");
+        }
+        // The checklist the reviewer preloads says the same, and so do the
+        // code phase's checklists.
+        let review_skill = include_str!("../templates/skills/review-patch.md");
+        for rule in [
+            "VERDICT: APPROVE",
+            "VERDICT: CHANGES",
+            "nearest existing code",
+            "actually runs",
+            "regenerated with the project's command",
+        ] {
+            assert!(review_skill.contains(rule), "review-patch lacks {rule}");
+        }
+        for rule in ["actually runs", "regenerated with the project's command"] {
+            assert!(prompt.contains(rule), "review_contract.tmpl lacks {rule}");
+        }
+        let minimal = include_str!("../templates/skills/implement-minimal-patch.md");
+        assert!(minimal.contains("nearest existing code"));
+        for rule in ["Generated files", "formatter and linter"] {
+            assert!(code.contains(rule) && contract.contains(rule), "{rule}");
+        }
+    }
+
+    /// Every general checklist yields to the project's conventions.
+    #[test]
+    fn general_checklists_yield_to_the_project() {
+        for lang in [
+            "rust",
+            "go",
+            "typescript",
+            "python",
+            "ios",
+            "android",
+            "flutter",
+        ] {
+            for (file, body) in lang_skill_templates(lang) {
+                assert!(body.contains("General checklist."), "{file}");
+            }
         }
     }
 

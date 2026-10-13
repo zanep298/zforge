@@ -1,5 +1,10 @@
 # Skill: android-testing
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Write reliable, idiomatic Kotlin tests for Android/KMP projects using Kotest and MockK.
 Read this before writing any test for this project.
