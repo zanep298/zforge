@@ -62,6 +62,9 @@ pub struct Contract {
     /// What changed since the earlier output this run continues from
     /// ([`previous_attempt`]); `None` for a run that starts afresh.
     pub previous_attempt: Option<String>,
+    /// `knowledge.extra` directories that exist, absolute: reference docs
+    /// the code prompt names (not pinned, not part of the contract).
+    pub reference_docs: Vec<std::path::PathBuf>,
 }
 
 /// The intake that holds `handover_id`. Handover ids are numbered per
@@ -119,6 +122,8 @@ pub struct Handover {
     /// on a handover that pinned none, including every manifest written
     /// before this field existed.
     pub knowledge: Vec<KnowledgeFile>,
+    /// See [`Contract::reference_docs`].
+    pub reference_docs: Vec<std::path::PathBuf>,
 }
 
 /// Load and verify the contract of `task` in handover `handover_id`
@@ -149,6 +154,7 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         files: h.files,
         knowledge: h.knowledge,
         previous_attempt: None,
+        reference_docs: h.reference_docs,
     })
 }
 
@@ -290,6 +296,11 @@ pub fn load_handover(project_root: &Path, handover_id: &str) -> Result<Handover>
             text,
         })
         .collect();
+    let reference_docs = config
+        .knowledge_extra()
+        .into_iter()
+        .filter_map(|(_, p)| std::fs::canonicalize(p).ok())
+        .collect();
 
     Ok(Handover {
         intake: intake.id,
@@ -297,6 +308,7 @@ pub fn load_handover(project_root: &Path, handover_id: &str) -> Result<Handover>
         manifest_sha256: hash::sha256(&raw),
         files,
         knowledge,
+        reference_docs,
     })
 }
 
@@ -472,6 +484,7 @@ impl Contract {
                 self.previous_attempt.as_deref().unwrap_or(""),
             )
             .replace("{{project_knowledge}}\n", &Self::knowledge_block(knowledge))
+            .replace("{{reference_docs}}\n", &self.reference_block())
             .replace("{{task_contract}}", self.task_file().text.trim_end())
             .replace("{{stage_context}}", &self.stage_context())
     }
@@ -527,6 +540,22 @@ impl Contract {
             return String::new();
         }
         format!("## Project knowledge\n\n{}\n\n", knowledge.text.trim_end())
+    }
+
+    /// `knowledge.extra` named for the agent; empty (the line disappears)
+    /// when none is configured or none exists.
+    fn reference_block(&self) -> String {
+        if self.reference_docs.is_empty() {
+            return String::new();
+        }
+        format!(
+            "Reference docs (read only what applies; not part of the contract): {}\n\n",
+            self.reference_docs
+                .iter()
+                .map(|p| format!("`{}`", p.display()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     /// The accepted stages, as pinned, in order.
@@ -804,6 +833,31 @@ pub(crate) mod tests {
             .prompt(None, "CR.md", &[], "cargo test", &empty)
             .contains("## Checklists"));
         assert!(!p.contains("{{checklists}}"));
+    }
+
+    #[test]
+    fn prompt_names_existing_reference_docs_only_when_configured() {
+        let f = handed_over();
+        let empty = select::Selection::default();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        assert!(!p.contains("Reference docs") && !p.contains("{{"), "{p}");
+
+        std::fs::create_dir_all(f.root.join("team-docs")).unwrap();
+        std::fs::write(
+            f.root.join(".zforge/config.yaml"),
+            "project:\n  name: t\n  test_command: \"true\"\nexecution:\n  budget_usd: 2.0\n\
+             knowledge:\n  extra: [team-docs, gone-docs]\n",
+        )
+        .unwrap();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        let want = format!(
+            "Reference docs (read only what applies; not part of the contract): `{}`\n",
+            f.root.join("team-docs").display()
+        );
+        assert!(p.contains(&want), "{p}");
+        assert!(!p.contains("gone-docs"), "{p}");
     }
 
     #[test]

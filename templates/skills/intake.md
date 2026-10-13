@@ -17,11 +17,20 @@ You prepare, explain and send files for review. **The user decides.**
 ## Required Inputs
 
 - The user's request, in their words
-- The project's accepted knowledge — `domain.md`, `conventions.md`, `rules.md`
-  under `docs/knowledge/` (`zforge onboard status` shows what is accepted; a
-  project that has not onboarded has none, and that is fine — proceed
-  without it). Read whichever files are accepted before drafting any stage.
-- `.zforge/knowledge/index.md` — accepted requirements and decisions still in force
+- The project's accepted knowledge, read through its index — never whole
+  files (`domain.md` alone can run to hundreds of KB). Read
+  `docs/knowledge/INDEX.md` (one line per accepted item, by file and
+  module) before drafting any stage, then fetch only the items for the
+  modules or IDs the change touches: `zforge knowledge get DOM-004
+  RULE-001`, `--module <section|path>`, `--grep <text>` (MCP
+  `knowledge_get`). Rules are few and apply everywhere — fetch those that
+  apply. A project that has not onboarded has no index; proceed without it.
+- Reference docs (`knowledge.extra`, listed under "Reference docs" in
+  `INDEX.md`), when the change crosses services: start from their README,
+  search with `zforge knowledge get --grep <text> --extra`, read only the
+  sections that apply. They are background, not accepted knowledge — don't
+  cite them as `DOM-`/`RULE-` items.
+- `docs/knowledge/commitments.md` — accepted requirements and decisions still in force
 - The code and tests the change touches (read them; CodeGraph when available)
 
 ## One pass, one decision
@@ -140,7 +149,7 @@ they are. The review pack opens with it.
 
 ## Workflow
 
-1. Read the accepted knowledge and the code before asking anything you
+1. Read `INDEX.md`, the items it points you to, and the code before asking anything you
    could find out yourself. Every stage you draft cites the knowledge item
    IDs it relies on (`Keeps RULE-001: …`); where the stage departs from an
    accepted item, say so in the stage, with the item's ID and why, for the

@@ -74,6 +74,23 @@ codebase actually follows, a rule this domain actually enforces. General
 advice the skills already give (testing discipline, security checklists,
 API design) does not belong here.
 
+## Where an item goes, and how much
+
+Every intake and run reads from these files, so size costs on every task.
+
+- `conventions.md` — project-wide *how to write code here* only: layout,
+  naming, errors, logging, tests. A practice of one module goes in
+  `domain.md` under that module (`zforge onboard review` warns on a `CONV-`
+  item citing only one module).
+- `rules.md` — project-wide musts and must-nots. Few, short.
+- `domain.md` — everything module-specific, one `## <module>` section each.
+- Budgets (warnings, not refusals): `rules.md` and `conventions.md` 20 KB
+  each, `domain.md` 80 KB. One rule per item, a sentence or two — the
+  citation carries the detail; never restate the code.
+- Agents read `INDEX.md` (generated on accept: one line per item) and fetch
+  items by ID or module, so an item's first sentence should name what it
+  is about.
+
 ## Headless drafting
 
 `zforge onboard draft [--module M] [--budget USD]` and `zforge onboard

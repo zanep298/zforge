@@ -194,10 +194,17 @@ fn outcome(target: &Target) -> Outcome {
 /// Keep the commitments current after a decision on an intake, as the CLI
 /// does; a failure is reported, not fatal.
 fn after_decision(config: &Config, target: &Target, out: &Outcome) {
-    if out.recorded && matches!(target, Target::Intake(_)) {
-        if let Err(e) = crate::knowledge::commitments::write(config) {
-            eprintln!("warning: commitments not updated: {e:#}");
+    if !out.recorded {
+        return;
+    }
+    match target {
+        Target::Intake(_) => {
+            if let Err(e) = crate::knowledge::commitments::write(config) {
+                eprintln!("warning: commitments not updated: {e:#}");
+            }
         }
+        // An accepted knowledge file changes what `INDEX.md` lists.
+        Target::Knowledge(_) => crate::knowledge::index::refresh(config),
     }
 }
 

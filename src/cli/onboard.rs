@@ -68,10 +68,15 @@ pub fn run(cmd: Option<OnboardCmd>) -> Result<()> {
     let k = Knowledge::open(&config);
     match cmd {
         None => run_probe(&config),
-        Some(OnboardCmd::Status { json }) => status(&config, &k, json),
+        Some(OnboardCmd::Status { json }) => {
+            // Cheap, and written only when it changed: keeps `INDEX.md` in
+            // step with the accepted knowledge and `knowledge.extra`.
+            knowledge::index::refresh(&config);
+            status(&config, &k, json)
+        }
         Some(OnboardCmd::Review { file }) => send_for_review(&root, &k, &file),
-        Some(OnboardCmd::Accept { file }) => decide(&k, &file, None),
-        Some(OnboardCmd::Revise { file, note }) => decide(&k, &file, Some(&note)),
+        Some(OnboardCmd::Accept { file }) => decide(&config, &k, &file, None),
+        Some(OnboardCmd::Revise { file, note }) => decide(&config, &k, &file, Some(&note)),
         Some(OnboardCmd::Baseline { known, clear }) => baseline(&k, known, clear),
         Some(OnboardCmd::Draft { module, budget }) => {
             draft_cmd(&root, &config, module.as_deref(), budget)
@@ -298,7 +303,7 @@ fn send_for_review(root: &std::path::Path, k: &Knowledge, rel: &str) -> Result<(
 }
 
 /// Accept (`note = None`) or request changes, after a human confirms.
-fn decide(k: &Knowledge, rel: &str, note: Option<&str>) -> Result<()> {
+fn decide(config: &config::Config, k: &Knowledge, rel: &str, note: Option<&str>) -> Result<()> {
     let (verb, word) = match note {
         None => ("accept", "accept"),
         Some(_) => ("request changes to", "revise"),
@@ -325,6 +330,9 @@ fn decide(k: &Knowledge, rel: &str, note: Option<&str>) -> Result<()> {
         "✓".green(),
         rev.revision
     );
+    if note.is_none() {
+        knowledge::index::refresh(config);
+    }
     Ok(())
 }
 

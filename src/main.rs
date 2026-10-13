@@ -22,8 +22,27 @@ enum HookCmd {
 enum KnowledgeCmd {
     /// Regenerate `commitments.md` (in `knowledge.dir`) and
     /// `.zforge/knowledge/commitments.json` from the accepted revisions of
-    /// every intake.
+    /// every intake, and `INDEX.md` (in `knowledge.dir`) from the accepted
+    /// project knowledge.
     Index {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print accepted knowledge items in full — by ID, by module (a
+    /// `## ` section or a cited path prefix) or by text — instead of
+    /// reading whole files. Filters given together must all match.
+    Get {
+        /// Item IDs, e.g. DOM-004 RULE-001.
+        ids: Vec<String>,
+        /// A domain section name, or a path the items cite.
+        #[arg(long)]
+        module: Option<String>,
+        /// Case-insensitive text in the item.
+        #[arg(long)]
+        grep: Option<String>,
+        /// Also search the reference docs (`knowledge.extra`) for --grep.
+        #[arg(long)]
+        extra: bool,
         #[arg(long)]
         json: bool,
     },
@@ -290,6 +309,16 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Knowledge {
             cmd: KnowledgeCmd::Index { json },
         } => cli::intake::knowledge_index(json),
+        Commands::Knowledge {
+            cmd:
+                KnowledgeCmd::Get {
+                    ids,
+                    module,
+                    grep,
+                    extra,
+                    json,
+                },
+        } => cli::knowledge::get(ids, module, grep, extra, json),
         Commands::Readiness { id, tasks, json } => cli::intake::readiness(&id, &tasks, json),
         Commands::Handover { id, tasks } => cli::intake::handover(&id, &tasks),
         Commands::Onboard { cmd } => cli::onboard::run(cmd),

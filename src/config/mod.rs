@@ -67,6 +67,13 @@ pub struct KnowledgeConfig {
     /// TASK-008).
     #[serde(default = "default_draft_budget_usd")]
     pub draft_budget_usd: f64,
+    /// Reference docs outside the reviewed knowledge — a team's
+    /// cross-service docs folder, say (`../documents`): relative to the
+    /// project root, absolute, or `~/…`. Never reviewed or pinned; listed
+    /// in `INDEX.md`, searched by `knowledge get --grep … --extra`, named
+    /// in a run's prompt and added to Claude's `additionalDirectories`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<PathBuf>,
 }
 
 impl Default for KnowledgeConfig {
@@ -76,6 +83,7 @@ impl Default for KnowledgeConfig {
             dir: default_knowledge_dir(),
             prompt_limit: default_prompt_limit(),
             draft_budget_usd: default_draft_budget_usd(),
+            extra: Vec::new(),
         }
     }
 }
@@ -255,6 +263,17 @@ impl Config {
     /// Where the project's knowledge lives (`knowledge.dir`), absolute.
     pub fn knowledge_dir(&self) -> PathBuf {
         self.resolve_path(&self.knowledge.dir)
+    }
+
+    /// `knowledge.extra`, each resolved like every other configured path,
+    /// paired with the value as written (what `INDEX.md` shows, so the
+    /// committed file names no machine-specific absolute path).
+    pub fn knowledge_extra(&self) -> Vec<(String, PathBuf)> {
+        self.knowledge
+            .extra
+            .iter()
+            .map(|p| (p.to_string_lossy().into_owned(), self.resolve_path(p)))
+            .collect()
     }
 
     #[allow(dead_code)]

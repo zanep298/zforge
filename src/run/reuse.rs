@@ -236,6 +236,7 @@ mod tests {
             },
             manifest_sha256: "m".into(),
             knowledge: Vec::new(),
+            reference_docs: Vec::new(),
             files: files
                 .iter()
                 .map(|(file, text)| ContractFile {
