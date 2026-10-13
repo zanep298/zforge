@@ -288,9 +288,155 @@ pub(crate) fn baseline_modules(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Size budgets, in bytes: every agent that drafts an intake or runs a
+/// task reads from these files, so past a budget they cost more than they
+/// help. `rules.md` and `conventions.md` are project-wide; `domain.md`
+/// holds the module specifics.
+pub const BUDGETS: [(&str, usize); 3] = [
+    ("domain.md", 80 * 1024),
+    ("conventions.md", 20 * 1024),
+    ("rules.md", 20 * 1024),
+];
+
+/// A warning, never an error, when `rel` is over its [`BUDGETS`] entry.
+pub fn size_warnings(rel: &str, text: &str) -> Vec<Issue> {
+    let Some((_, budget)) = BUDGETS.iter().find(|(f, _)| *f == rel) else {
+        return Vec::new();
+    };
+    if text.len() <= *budget {
+        return Vec::new();
+    }
+    let advice = if rel == "domain.md" {
+        "keep each item to the rule and its evidence; split long items, drop restated code"
+    } else {
+        "keep it project-wide; move module-specific items to domain.md"
+    };
+    vec![warn(
+        rel,
+        format!(
+            "is {} KB, over its {} KB budget — {advice}",
+            text.len().div_ceil(1024),
+            budget / 1024
+        ),
+    )]
+}
+
+/// Leading path components that hold modules rather than being one: a
+/// citation under `src/billing/…` belongs to `src/billing`, not `src`.
+const SOURCE_ROOTS: [&str; 12] = [
+    "src", "lib", "app", "apps", "internal", "pkg", "cmd", "packages", "services", "modules",
+    "crates", "libs",
+];
+
+/// The module a cited path belongs to: its top-level directory, or the
+/// first two when the top one is a [`SOURCE_ROOTS`] entry; a file at the
+/// root is its own module.
+pub(crate) fn module_of(path: &str) -> String {
+    let parts: Vec<&str> = path.trim_start_matches("./").split('/').collect();
+    match parts.as_slice() {
+        [first, second, _, ..] if SOURCE_ROOTS.contains(first) => format!("{first}/{second}"),
+        [first, _, ..] => (*first).to_string(),
+        _ => path.to_string(),
+    }
+}
+
+/// A `CONV-` item whose evidence all sits in one module, in a
+/// `conventions.md` whose items span several: likely a module's own
+/// practice, which belongs in `domain.md` under that module. A warning
+/// only — one module may well show a project-wide convention.
+pub fn single_module_conventions(rel: &str, text: &str) -> Vec<Issue> {
+    if rel != "conventions.md" {
+        return Vec::new();
+    }
+    let parsed = items::items(text);
+    let per_item: Vec<(&Item, HashSet<String>)> = parsed
+        .iter()
+        .map(|it| (it, it.evidence.iter().map(|c| module_of(&c.path)).collect()))
+        .collect();
+    let all: HashSet<&String> = per_item.iter().flat_map(|(_, m)| m.iter()).collect();
+    if all.len() < 2 {
+        return Vec::new();
+    }
+    per_item
+        .iter()
+        .filter(|(_, m)| m.len() == 1)
+        .map(|(it, m)| {
+            let module = m.iter().next().map(String::as_str).unwrap_or_default();
+            warn(
+                rel,
+                format!(
+                    "{} (line {}): cites only {module} — if it is that module's practice, \
+                     move it to domain.md under its module",
+                    it.id, it.line
+                ),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_over_its_budget_warns_and_one_within_does_not() {
+        let big = "x".repeat(21 * 1024);
+        let w = size_warnings("rules.md", &big);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].severity, Severity::Warning);
+        assert!(
+            w[0].message.contains("over its 20 KB budget"),
+            "{}",
+            w[0].message
+        );
+        assert!(size_warnings("domain.md", &big).is_empty());
+        let w = size_warnings("domain.md", &"x".repeat(81 * 1024));
+        assert!(w[0].message.contains("80 KB"), "{}", w[0].message);
+        assert!(size_warnings("conventions.md", "short").is_empty());
+        // Through the structural lint every caller uses: a warning, so a
+        // review is not refused for it.
+        let issues = crate::knowledge::lint_issues(
+            "conventions.md",
+            &format!("# C\n\n{big}\n\n## Open questions\n"),
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.message.contains("budget") && i.severity == Severity::Warning),
+            "{issues:?}"
+        );
+        assert!(
+            issues.iter().all(|i| i.severity == Severity::Warning),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn module_of_looks_past_source_roots() {
+        assert_eq!(module_of("src/billing/invoice.rs"), "src/billing");
+        assert_eq!(module_of("src/main.rs"), "src");
+        assert_eq!(module_of("billing/invoice.go"), "billing");
+        assert_eq!(module_of("Makefile"), "Makefile");
+    }
+
+    #[test]
+    fn a_convention_citing_one_module_warns_only_when_others_span_several() {
+        let text = "# Conventions\n\n## errors\n\
+- CONV-001: Errors wrap their cause. (src/billing/a.rs:1, src/auth/b.rs:2)\n\
+- CONV-002: Invoices are built through a builder. (src/billing/c.rs:3, src/billing/d.rs:4)\n\n\
+## Open questions\n";
+        let w = single_module_conventions("conventions.md", text);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].message.starts_with("CONV-002"), "{}", w[0].message);
+        assert!(w[0].message.contains("src/billing"), "{}", w[0].message);
+        assert!(w[0].message.contains("domain.md"), "{}", w[0].message);
+
+        // A single-module project: nothing to move anywhere.
+        let one =
+            "# C\n\n- CONV-001: x. (src/billing/a.rs:1)\n- CONV-002: y. (src/billing/c.rs:3)\n";
+        assert!(single_module_conventions("conventions.md", one).is_empty());
+        assert!(single_module_conventions("domain.md", text).is_empty());
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let out = std::process::Command::new("git")

@@ -4,6 +4,7 @@ pub mod hook;
 pub mod init;
 pub mod install;
 pub mod intake;
+pub mod knowledge;
 pub mod mcp_register;
 pub mod migrate;
 pub mod models;

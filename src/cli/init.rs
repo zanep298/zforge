@@ -403,6 +403,22 @@ fn register_project(cwd: &Path, targets: &[&str], name: Option<&str>, switch: bo
     }
 }
 
+/// `knowledge.extra` directories that exist, absolute and canonical, for
+/// Claude's `additionalDirectories`. A config that cannot be read yields
+/// none — settings are still written.
+fn reference_dirs(zforge_dir: &Path) -> Vec<String> {
+    let Ok(config) = crate::config::load_from(&zforge_dir.join("config.yaml")) else {
+        return Vec::new();
+    };
+    config
+        .knowledge_extra()
+        .into_iter()
+        .filter_map(|(_, p)| std::fs::canonicalize(p).ok())
+        .filter(|p| p.is_dir())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
 // --- per-agent scaffolders ---
 
 fn scaffold_claude(
@@ -424,8 +440,10 @@ fn scaffold_claude(
     std::fs::create_dir_all(&claude_dir)?;
     let settings_path = claude_dir.join("settings.json");
     // Shared with the user and other tools: `--force` merges zforge's
-    // allow entries in instead of replacing the file.
-    match write_settings(&settings_path, force)? {
+    // allow entries in instead of replacing the file. The reference docs
+    // (`knowledge.extra`) that exist become additionalDirectories.
+    let extra_dirs = reference_dirs(zforge_dir);
+    match write_settings(&settings_path, force, &extra_dirs)? {
         SettingsWrite::Created => {
             stats.record(true);
             print_file_status(true, ".claude/settings.json");

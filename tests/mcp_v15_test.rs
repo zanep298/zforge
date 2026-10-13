@@ -123,6 +123,7 @@ fn the_transport_offers_no_way_to_decide() {
         "intake_review",
         "readiness",
         "knowledge_index",
+        "knowledge_get",
         "run_start",
         "run_status",
         "run_cancel",
@@ -137,6 +138,42 @@ fn the_transport_offers_no_way_to_decide() {
         json!({"intake_id": "F", "file": "01-outcome.md"}),
     )]);
     assert!(text(&frames[0]).contains("unknown tool"), "{:?}", frames[0]);
+}
+
+/// `knowledge_get` is read-only: nothing accepted yet answers nothing, and
+/// `include_extra` searches the reference docs `knowledge.extra` names.
+#[test]
+fn knowledge_get_reads_accepted_items_and_reference_docs() {
+    let p = Project::new();
+    std::fs::write(
+        p.root.join(".zforge/config.yaml"),
+        "project:\n  name: t\n  language: shell\n  test_command: \"true\"\n\
+         knowledge:\n  extra: [team-docs]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(p.root.join("team-docs/services")).unwrap();
+    std::fs::write(
+        p.root.join("team-docs/services/billing.md"),
+        "# Billing\n\n## Ledger\n\nEvery invoice posts to the ledger.\n",
+    )
+    .unwrap();
+    let frames = p.mcp(&[
+        call(1, "knowledge_get", json!({"ids": ["DOM-001"]})),
+        call(
+            2,
+            "knowledge_get",
+            json!({"grep": "ledger", "include_extra": true}),
+        ),
+        call(3, "knowledge_get", json!({})),
+    ]);
+    let first = json_result(&frames[0]);
+    assert_eq!(first["items"], json!([]), "{first}");
+    assert_eq!(first["missing"], json!(["DOM-001"]), "{first}");
+    let second = json_result(&frames[1]);
+    let hit = &second["extra"]["hits"][0];
+    assert_eq!(hit["path"], "team-docs/services/billing.md", "{second}");
+    assert_eq!(hit["heading"], "Ledger", "{second}");
+    assert!(text(&frames[2]).contains("--module"), "{:?}", frames[2]);
 }
 
 /// Preparing an intake over MCP: create, fill, review, see the state.

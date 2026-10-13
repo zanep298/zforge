@@ -71,6 +71,7 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
         "change_new" => change_new,
         "readiness" => readiness_report,
         "knowledge_index" => knowledge_index,
+        "knowledge_get" => knowledge_get,
         "onboard_probe" => onboard_probe,
         "onboard_status" => onboard_status,
         "onboard_review" => onboard_review,
@@ -197,6 +198,32 @@ fn knowledge_index(_args: &Value) -> Result<String> {
     Ok(serde_json::to_string_pretty(
         &commitments::build(&root()?)?,
     )?)
+}
+
+/// Accepted knowledge items in full — by ID, module or text — and, with
+/// `include_extra`, matching sections of the reference docs. Read-only.
+fn knowledge_get(args: &Value) -> Result<String> {
+    let config = load_config()?;
+    let k = Knowledge::open(&config);
+    let mut ids = string_list(args, "ids");
+    if let Some(one) = opt_str(args, "ids") {
+        ids.extend(
+            one.split([',', ' '])
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        );
+    }
+    let q = knowledge::lookup::Query {
+        ids,
+        module: opt_str(args, "module"),
+        grep: opt_str(args, "grep"),
+        extra: args
+            .get("include_extra")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
+    let answer = knowledge::lookup::get(&k, &q, &config.knowledge_extra())?;
+    Ok(serde_json::to_string_pretty(&answer)?)
 }
 
 fn load_config() -> Result<config::Config> {
@@ -419,6 +446,16 @@ pub fn definitions() -> Vec<Value> {
             "name": "knowledge_index",
             "description": "v1.5: accepted requirements and binding decisions across all intakes, each with its source revision, whether the decision is still active, and whether it is implemented (handed over, or verified by a run with the candidate it tested).",
             "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "knowledge_get",
+            "description": "The project's accepted knowledge items (domain, conventions, rules) in full, with their citations — by ID, by module (a domain section name or a path the items cite) or by text; filters given together must all match. Read docs/knowledge/INDEX.md first and fetch only what the change touches instead of reading whole files. With include_extra and grep, also returns matching sections of the reference docs (knowledge.extra), bounded.",
+            "inputSchema": { "type": "object", "properties": {
+                "ids": { "type": "array", "items": { "type": "string" }, "description": "e.g. [\"DOM-004\", \"RULE-001\"]" },
+                "module": { "type": "string", "description": "A section name (case-insensitive) or a cited path prefix, e.g. billing or src/billing" },
+                "grep": { "type": "string", "description": "Case-insensitive text in the item" },
+                "include_extra": { "type": "boolean", "description": "Also search the reference docs (needs grep)" }
+            } }
         }),
         json!({
             "name": "onboard_probe",

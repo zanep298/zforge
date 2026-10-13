@@ -10,7 +10,7 @@ zforge's working directory for this project.
 | `intakes/<ID>/.records/` | Revisions, decisions, handover manifests | no — written by zforge |
 | `runs/RUN-nnn/` | A run: `run.yaml`, `events.jsonl` (the source of truth), `progress.md`, `result.md` | no |
 | `worktrees/<RUN>/` | A run's worktree, on branch `zforge/<task>/<run>` | no — `zforge run clean <RUN>` |
-| `knowledge/` | `index.md` / `index.json`: each requirement, decided and built | no — `zforge knowledge index` |
+| `knowledge/` | `commitments.json`: each requirement, decided and built (`commitments.md` and the project knowledge's `INDEX.md` live in `knowledge.dir`) | no — `zforge knowledge index` |
 
 ## Workflow
 

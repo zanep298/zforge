@@ -56,6 +56,14 @@ that apply to their task. `zforge onboard status` shows each file's state
 and any citation gone stale since it was accepted; `zforge onboard refresh`
 redrafts only what is stale.
 
+Reading it: `docs/knowledge/INDEX.md` lists every accepted item in one line
+(regenerated on accept). Read the index, then fetch only the items the work
+touches — `zforge knowledge get <ID…>`, `--module <section|path>`,
+`--grep <text>` (MCP `knowledge_get`). Never read `domain.md` whole.
+Reference docs outside the project (`knowledge.extra` in
+`.zforge/config.yaml`) are listed in the index; search them with
+`zforge knowledge get --grep <text> --extra` and read only what applies.
+
 ---
 
 ## When You Are Asked To Build Something
@@ -120,6 +128,7 @@ The tools prepare and observe; none of them accepts, revises or hands over.
 | `readiness` | Can the accepted files be handed over, and why not |
 | `run_start`, `run_status`, `run_log`, `run_list`, `run_cancel` | Build a handover or one task, and follow it |
 | `knowledge_index` | Rebuild `.zforge/knowledge/` from accepted intakes and runs |
+| `knowledge_get` | Accepted knowledge items in full by ID, module or text (and reference docs with `include_extra`) |
 | `onboard_probe` | Probe the project (language, docs, baseline test run) — no model call |
 | `onboard_status` | Each knowledge file's review state, open questions and stale citations |
 | `onboard_review` | Send a knowledge file for the user's review |

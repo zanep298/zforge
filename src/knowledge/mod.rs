@@ -12,10 +12,13 @@
 pub mod commitments;
 pub mod docs;
 pub mod draft;
+pub mod index;
 pub mod items;
 pub mod known;
 pub mod lint;
+pub mod lookup;
 pub mod probe;
+pub mod reference;
 pub mod select;
 pub mod stale;
 
@@ -130,6 +133,8 @@ pub fn lint_issues(rel: &str, text: &str) -> Vec<Issue> {
             message: format!("has no \"{}\" section", intake_lint::OPEN_QUESTIONS),
         });
     }
+    issues.extend(lint::size_warnings(rel, text));
+    issues.extend(lint::single_module_conventions(rel, text));
     issues
 }
 

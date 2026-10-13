@@ -285,10 +285,15 @@ pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
 }
 
 /// `zforge knowledge index`: regenerate `commitments.md` (in
-/// `knowledge.dir`) and `.zforge/knowledge/commitments.json`.
+/// `knowledge.dir`) and `.zforge/knowledge/commitments.json`, and the
+/// project knowledge's `INDEX.md`.
 pub fn knowledge_index(json: bool) -> Result<()> {
     let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
     let entries = crate::knowledge::commitments::write(&config)?;
+    let (index, _) = crate::knowledge::index::write(&config)?;
+    if !json {
+        eprintln!("{} {}", "✓".green(), index.display());
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {

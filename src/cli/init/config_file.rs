@@ -48,6 +48,10 @@ paths:
 {{execution}}knowledge:
   # The branch "integrated" is judged against.
   baseline: main
+  # Reference docs outside the reviewed knowledge (e.g. a team's
+  # cross-service docs): listed in INDEX.md, searched by
+  # `zforge knowledge get --grep … --extra`, readable without prompts.
+  # extra: [../documents]
 "#;
 
 pub(crate) struct Managed<'a> {
