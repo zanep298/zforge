@@ -86,6 +86,20 @@ pub enum RunCmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// The same facts for two or more runs side by side — cost, attempts,
+    /// review verdicts, knowledge in the prompt, what the agent ran and
+    /// read, what the output changed — to judge a change to agents,
+    /// skills or prompts on work already done.
+    Compare {
+        #[arg(num_args = 2.., required = true)]
+        runs: Vec<String>,
+        /// Also run this shell command (e.g. a linter) on each run's output,
+        /// in a throwaway worktree that is removed afterwards.
+        #[arg(long)]
+        check: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Print (or follow) a background run's log.
     Log {
         run: String,
@@ -117,6 +131,14 @@ pub fn run(args: RunArgs) -> Result<()> {
     let root = project_root()?;
     match args.cmd {
         Some(RunCmd::Status { run, json }) => status(&root, &run, json),
+        Some(RunCmd::Compare { runs, check, json }) => {
+            let facts = crate::run::compare::compare(&root, &runs, check.as_deref())?;
+            match json {
+                true => println!("{}", serde_json::to_string_pretty(&facts)?),
+                false => print!("{}", crate::run::compare::render(&facts)),
+            }
+            Ok(())
+        }
         Some(RunCmd::List { handover, json }) => list(&root, handover.as_deref(), json),
         Some(RunCmd::Cancel { run }) if is_handover(&run) => {
             let f = feature_ops::cancel(&root, &run)?;

@@ -6,6 +6,7 @@
 //! `progress.md` are generated from the log and carry no authority.
 
 pub mod agent_env;
+pub mod compare;
 pub mod contract;
 pub mod execute;
 pub mod feature;
