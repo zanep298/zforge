@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce idiomatic Swift and clean architecture in this iOS project.
-Read this before implementing any iOS task.
+Idiomatic Swift and clean architecture for iOS code, for where the project's
+conventions and nearby code are silent.
 
 ## Architecture: MVVM + Clean Layers
 

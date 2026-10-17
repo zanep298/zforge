@@ -29,7 +29,9 @@
      cargo test
      ```
 
-     Without a code block, zforge runs `project.test_command`. -->
+     Without a code block, zforge runs `project.integration_command` from
+     .zforge/config.yaml, else `project.test_command` — leave the block out
+     when the project's integration command already checks this feature. -->
 
 ## Open questions
 

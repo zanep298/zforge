@@ -17,22 +17,36 @@ use colored::Colorize;
 pub enum OnboardCmd {
     /// Every knowledge file's review state and open questions.
     Status {
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
     },
     /// Send a knowledge file's current content for review as a new revision.
-    Review { file: String },
-    /// Accept the revision under review. Interactive terminal only.
-    Accept { file: String },
-    /// Ask for changes to the revision under review. Interactive terminal only.
+    Review {
+        /// Knowledge file: domain.md, conventions.md or rules.md.
+        file: String,
+        /// What changed since the last revision and why; recorded on the
+        /// review.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Accept the revision under review. Needs an interactive terminal (in
+    /// Claude Code the user types `/accept knowledge`).
+    Accept {
+        /// Knowledge file: domain.md, conventions.md or rules.md.
+        file: String,
+    },
+    /// Ask for changes to the revision under review. Needs an interactive
+    /// terminal (in Claude Code the user types `/revise knowledge`).
     Revise {
+        /// Knowledge file: domain.md, conventions.md or rules.md.
         file: String,
         /// What needs to change.
         #[arg(long)]
         note: String,
     },
-    /// Record or clear the baseline's known-failure list. Interactive
-    /// terminal only (D1).
+    /// Record or clear the baseline's known-failure list. Needs an
+    /// interactive terminal.
     Baseline {
         /// Comma-separated test names to record as known failures.
         /// Replaces the list in force; it does not add to it.
@@ -63,7 +77,7 @@ pub enum OnboardCmd {
 
 /// `cmd = None` is bare `zforge onboard`: probe the project (Output).
 pub fn run(cmd: Option<OnboardCmd>) -> Result<()> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     let root = config.project_root();
     let k = Knowledge::open(&config);
     match cmd {
@@ -74,7 +88,9 @@ pub fn run(cmd: Option<OnboardCmd>) -> Result<()> {
             knowledge::index::refresh(&config);
             status(&config, &k, json)
         }
-        Some(OnboardCmd::Review { file }) => send_for_review(&root, &k, &file),
+        Some(OnboardCmd::Review { file, note }) => {
+            send_for_review(&root, &k, &file, note.as_deref().unwrap_or(""))
+        }
         Some(OnboardCmd::Accept { file }) => decide(&config, &k, &file, None),
         Some(OnboardCmd::Revise { file, note }) => decide(&config, &k, &file, Some(&note)),
         Some(OnboardCmd::Baseline { known, clear }) => baseline(&k, known, clear),
@@ -270,10 +286,13 @@ fn baseline(k: &Knowledge, known_arg: Option<String>, clear: bool) -> Result<()>
     Ok(())
 }
 
-fn send_for_review(root: &std::path::Path, k: &Knowledge, rel: &str) -> Result<()> {
-    let r = knowledge::review(root, k, rel)?;
+fn send_for_review(root: &std::path::Path, k: &Knowledge, rel: &str, note: &str) -> Result<()> {
+    let r = knowledge::review_noted(root, k, rel, note)?;
     for w in &r.warnings {
         eprintln!("{} {}: {}", "⚠".yellow(), w.file, w.message);
+    }
+    if let Some(w) = r.note_warning(rel) {
+        eprintln!("{} {w}", "⚠".yellow());
     }
     if r.unchanged {
         println!(

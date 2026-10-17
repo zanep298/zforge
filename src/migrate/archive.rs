@@ -19,10 +19,15 @@ impl Archive {
     /// An archive for paths under `root`, kept in `<base>/v1-archive/<ts>/`.
     /// Nothing is created until something is archived.
     pub fn new(root: &Path, base: &Path) -> Self {
+        Self::named(root, base, DIR)
+    }
+
+    /// An archive for paths under `root`, kept in `<base>/<name>/<ts>/`.
+    pub fn named(root: &Path, base: &Path, name: &str) -> Self {
         let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
         Self {
             root: root.to_path_buf(),
-            dir: base.join(DIR).join(ts),
+            dir: base.join(name).join(ts),
         }
     }
 

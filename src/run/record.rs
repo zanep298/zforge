@@ -84,12 +84,15 @@ pub struct Checks {
 }
 
 /// Where the commands came from: the first code block of the pinned
-/// breakdown's "Kiểm chứng tích hợp", or `project.test_command` when that
-/// section has none.
+/// breakdown's "Integration verification", else
+/// `project.integration_command`, else `project.test_command`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ChecksFrom {
     Breakdown,
+    /// `project.integration_command`.
+    IntegrationCommand,
+    /// `project.test_command` (the name run files have always recorded).
     Config,
 }
 
@@ -115,6 +118,23 @@ pub struct Start {
     /// first dependency's output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<Previous>,
+    /// This task's verified output would not merge with the outputs of
+    /// tasks it does not depend on, so the run does the task again on top
+    /// of them (`start::conflicts`, `feature_ops`). Their outputs are in
+    /// `from` beside the dependencies'. Absent for every other run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebased: Option<Rebased>,
+}
+
+/// Why and on what a run was stacked (`Start::rebased`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Rebased {
+    /// The tasks whose outputs this run starts on top of.
+    pub onto: Vec<String>,
+    /// The files the merge conflicted in.
+    pub files: Vec<String>,
+    /// This task's earlier output that conflicted.
+    pub replaces: Source,
 }
 
 /// The earlier verified run a run continues from.

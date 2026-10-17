@@ -375,3 +375,224 @@ fn status_follows_the_feature() {
     let text = String::from_utf8_lossy(&p.zforge(&["status"]).stdout).into_owned();
     assert!(text.contains("TASK-001 verified"), "{text}");
 }
+
+/// Two tasks that do not depend on each other change the same file: their
+/// outputs would not merge. The loop runs the later one again on top of
+/// the earlier one's output, telling its agent why, and the integration
+/// then merges and passes.
+#[test]
+fn conflicting_siblings_are_stacked_before_the_integration() {
+    let p = Project::with(
+        3.0,
+        3,
+        &[("TASK-001", ""), ("TASK-002", "")],
+        "```bash\nsh test.sh\ngrep -qx TASK-001 shared.txt\ngrep -qx TASK-002 shared.txt\n```",
+    );
+    // Each task writes its name into shared.txt; told it starts on top of
+    // another output, it adds its line instead.
+    p.stub(&per_task(
+        &p,
+        &format!(
+            "if grep -q 'does not merge with the output of' {m}/prompt; then\n  \
+             echo \"$task\" >> shared.txt\nelse\n  echo \"$task\" > shared.txt\nfi",
+            m = p.marks.display()
+        ),
+    ));
+    let before = checkout(&p);
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert!(
+        err(&out).contains("TASK-002's output does not merge with TASK-001's (shared.txt)"),
+        "{}",
+        err(&out)
+    );
+
+    assert_eq!(task_of(&p, "RUN-001"), "TASK-001");
+    assert_eq!(task_of(&p, "RUN-002"), "TASK-002");
+    assert_eq!(task_of(&p, "RUN-003"), "TASK-002");
+    let start = &status_json(&p, "RUN-003")["meta"]["start"];
+    assert_eq!(start["rebased"]["onto"], serde_json::json!(["TASK-001"]));
+    assert_eq!(start["rebased"]["files"], serde_json::json!(["shared.txt"]));
+    assert_eq!(start["rebased"]["replaces"]["run"], "RUN-002");
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(prompt.contains("RUN-002"), "{prompt}");
+    assert_eq!(p.last("RUN-003")["event"], "verified");
+
+    assert_eq!(task_of(&p, "RUN-004"), "integration");
+    assert_eq!(p.last("RUN-004")["event"], "verified");
+    assert!(!p.run_dir("RUN-005").exists(), "nothing more");
+    assert_eq!(checkout(&p), before);
+}
+
+/// A task depending on two conflicting outputs (as RUN-037 in the field):
+/// the later dependency is stacked on the earlier first, then the task
+/// starts from both.
+#[test]
+fn a_task_on_conflicting_dependencies_waits_for_them_to_be_stacked() {
+    let p = Project::with(
+        3.0,
+        3,
+        &[
+            ("TASK-001", ""),
+            ("TASK-002", ""),
+            ("TASK-003", "TASK-001, TASK-002"),
+        ],
+        "sh test.sh",
+    );
+    p.stub(&per_task(
+        &p,
+        &format!(
+            "if grep -q 'does not merge with the output of' {m}/prompt; then\n  \
+             echo \"$task\" >> shared.txt\nelif [ \"$task\" != TASK-003 ]; then\n  \
+             echo \"$task\" > shared.txt\nfi",
+            m = p.marks.display()
+        ),
+    ));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    let tasks: Vec<String> = (1..=5)
+        .map(|n| task_of(&p, &format!("RUN-00{n}")))
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            "TASK-001",
+            "TASK-002",
+            "TASK-002",
+            "TASK-003",
+            "integration"
+        ]
+    );
+    let from: Vec<String> = status_json(&p, "RUN-004")["meta"]["start"]["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["run"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(from, ["RUN-001", "RUN-003"]);
+    assert_eq!(p.last("RUN-005")["event"], "verified");
+}
+
+/// An integration check failing on the environment — its output names
+/// Docker — is run once more and, passing, verifies the feature; the retry
+/// is in `checks.log`.
+#[test]
+fn an_integration_check_failing_on_the_environment_is_retried_once() {
+    let mark = tempfile::tempdir().unwrap();
+    let flag = mark.path().join("docker-up");
+    let p = Project::with(
+        3.0,
+        3,
+        &[("TASK-001", "")],
+        &format!(
+            "```bash\nsh test.sh\ntest -f {f} || {{ touch {f}; echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock' >&2; exit 1; }}\n```",
+            f = flag.display()
+        ),
+    );
+    p.stub(&per_task(&p, ""));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+    assert_eq!(p.last("RUN-002")["event"], "verified");
+    assert_eq!(p.count("RUN-002", "verify_failed"), 0);
+    let log = std::fs::read_to_string(p.run_dir("RUN-002").join("checks.log")).unwrap();
+    assert!(
+        log.contains("matches infrastructure pattern \"Cannot connect to the Docker daemon\""),
+        "{log}"
+    );
+    assert!(log.contains("passed on retry"), "{log}");
+}
+
+/// Failing on the environment twice ends the integration with an `infra: `
+/// reason; it is not a verdict, so running the handover again retries it.
+#[test]
+fn an_integration_failing_on_the_environment_twice_is_retried_by_the_next_run() {
+    let mark = tempfile::tempdir().unwrap();
+    let n = mark.path().join("attempts");
+    let p = Project::with(
+        3.0,
+        3,
+        &[("TASK-001", "")],
+        &format!(
+            "```bash\nn=$(cat {n} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {n}; [ $n -ge 3 ] || {{ echo 'dial tcp 127.0.0.1:5432: connect: connection refused' >&2; exit 1; }}\n```",
+            n = n.display()
+        ),
+    );
+    p.stub(&per_task(&p, ""));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(!out.status.success());
+    let failed = p.last("RUN-002");
+    assert_eq!(failed["event"], "failed");
+    let reason = failed["reason"].as_str().unwrap();
+    assert!(reason.starts_with("infra: "), "{reason}");
+    assert!(reason.contains("connection refused"), "{reason}");
+    assert_eq!(std::fs::read_to_string(&n).unwrap().trim(), "2");
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(p.agent_calls(), 1, "the task is not run again");
+    assert_eq!(status_json(&p, "RUN-003")["meta"]["retry_of"], "RUN-002");
+    assert_eq!(p.last("RUN-003")["event"], "verified");
+}
+
+/// Without a block under "Integration verification", the integration runs
+/// `project.integration_command` before falling back to the test command.
+#[test]
+fn the_project_integration_command_stands_in_for_a_missing_block() {
+    let mark = tempfile::tempdir().unwrap();
+    let ran = mark.path().join("ran");
+    let p = Project::bare(3.0, 3);
+    let config = p.root.join(".zforge/config.yaml");
+    let text = std::fs::read_to_string(&config).unwrap().replace(
+        "  test_command: \"sh test.sh\"\n",
+        &format!(
+            "  test_command: \"sh test.sh\"\n  integration_command: \"sh test.sh && touch {}\"\n",
+            ran.display()
+        ),
+    );
+    std::fs::write(&config, text).unwrap();
+    p.hand_over(&[("TASK-001", "")], "Chạy toàn bộ.");
+    p.stub(&per_task(&p, ""));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let meta = &status_json(&p, "RUN-002")["meta"];
+    assert_eq!(meta["checks"]["from"], "integration_command");
+    assert!(ran.exists());
+}
+
+/// A tiny intake (`intake new --tiny`) runs like any other: its standard
+/// 04-breakdown has no code block, so the integration check is the
+/// project's test command.
+#[test]
+fn a_tiny_intake_runs_to_a_verified_feature() {
+    use zforge::intake::templates::tiny_stage;
+    let outcome = tiny_stage("01-outcome.md", "F")
+        .unwrap()
+        .replace("## Summary\n", "## Summary\nadd returns the sum.\n")
+        .replace(
+            "## Requirements\n",
+            "## Requirements\n\n- REQ-001: add returns the sum.\n",
+        );
+    let mut files = vec![("01-outcome.md", outcome)];
+    for stage in ["02-behavior.md", "03-solution.md", "04-breakdown.md"] {
+        files.push((stage, tiny_stage(stage, "F").unwrap()));
+    }
+    files.push(("tasks/TASK-001.md", task("TASK-001", "")));
+    let p = Project::with_files(3.0, 3, &files);
+    p.stub(&per_task(&p, ""));
+
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        states(&p, "HANDOVER-001"),
+        expect(&[("TASK-001", "verified")])
+    );
+    assert_eq!(status_json(&p, "RUN-002")["meta"]["kind"], "integration");
+    assert_eq!(p.last("RUN-002")["event"], "verified");
+}

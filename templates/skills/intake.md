@@ -14,6 +14,27 @@ You prepare, explain and send files for review. **The user decides.**
   "prepare a handover"
 - `zforge intake status <ID>` shows files in draft or needing revision
 
+## Choose the profile first
+
+Before writing anything, pick the profile — it decides which files you
+write (the stages are described under "Stages and files"):
+
+| Profile | When | Start with |
+|---------|------|------------|
+| tiny | one task, one module, no new interface | `zforge intake new <ID> --tiny` (MCP `tiny: true`) |
+| small | up to two tasks, one module, no new interface | `zforge intake new <ID> --small` (MCP `small: true`) |
+| full | everything else | `zforge intake new <ID>` |
+| fixup | a few fixes to an integrated intake | `zforge intake amend <NEW> --from <ID> --fixup` |
+
+Tiny: write 01-outcome and `tasks/TASK-001.md` only. 02/03/04 are standard
+text pointing at the task — its acceptance criteria are the behavior, its
+Constraints the binding decisions — so put both there; leave the standard
+text alone and the pack shows it as one line. A second task does not fit:
+change `profile:` to `small` and write 02/03/04 of their own.
+Small: 02-behavior is one table and 03-solution only its binding decisions,
+with no summary. In every profile all five kinds of file still exist and are
+reviewed, accepted and pinned.
+
 ## Required Inputs
 
 - The user's request, in their words
@@ -42,7 +63,10 @@ per intake.
 1. `01-outcome.md` — problem, users, desired result, scope, what must not
    change, out of scope, signs of success. Each mandatory requirement is a
    list item starting with a stable ID, one sentence of at most 25 words;
-   its conditions go in sub-items: `- REQ-001: …`.
+   its conditions go in sub-items: `- REQ-001: …`. A requirement that
+   replaces one another intake accepted ends with `(supersedes
+   <INTAKE>/REQ-nnn[, …])` — lint checks the target exists, and the
+   commitments then mark it superseded; never say it only in prose.
 2. `02-behavior.md` — normal, edge, error and recovery situations as a
    table, one row each: `# | Kind | When | Then | REQ`. An example below
    the table only where a row alone would be ambiguous.
@@ -55,8 +79,10 @@ per intake.
    the whole is verified. Put the exact commands in the section's first
    fenced code block, one per line (`#` lines are comments) — zforge runs
    them, in order, on a tree holding every task's output. Without a block
-   it runs the project's test command, which may not check what the tasks
-   do together. Do not draw the dependency graph: `zforge intake graph
+   it runs `project.integration_command` from `.zforge/config.yaml`, else
+   the project's test command, which may not check what the tasks do
+   together. Leave the block out when the project's integration command
+   already covers the feature; do not copy it into every breakdown. Do not draw the dependency graph: `zforge intake graph
    <ID>` generates it from the tasks.
 5. `tasks/TASK-xxx.md` (`zforge intake task <ID> TASK-xxx`) — the contract:
    frontmatter `requirements` / `depends_on`, and the sections Goal, Input,
@@ -68,6 +94,10 @@ per intake.
      files the task may modify. A run that passes only after changing any
      other existing test is not counted. Add it only when the contract
      means it, with exact paths, and say why under Constraints.
+   - `review: true|false` (optional frontmatter): overrides the project's
+     `execution.review` for this task. Set `review: true` on risky tasks
+     (security, money, data migration, a subtle invariant) so a second
+     agent checks the passing work against the contract.
    - When the task builds on or departs from the accepted knowledge, name
      the items under Constraints: `Knowledge: DOM-004, RULE-001`. `zforge
      intake review` warns, naming the ID, on a citation that is not in the
@@ -84,7 +114,13 @@ By default the user reviews the whole intake once.
 2. Ask every question that would change the files **before** drafting. What
    the user must still settle goes under **Open questions** as
    `- [ ] question — stage where it will be settled`; tick it `[x]` only
-   when the answer is written into the file.
+   when the answer is written into the file. Questions for people outside
+   the team (product owner, design) that several intakes share go in one
+   questions file instead — `zforge questions new <NAME>`, lines `- [ ]
+   Q-1: …` — cited from each intake as `Q:<NAME>/Q-1`. People record the
+   answers there (`- [x] Q-1: … => answer`); never write one yourself.
+   Readiness refuses while a cited question is open; `zforge questions
+   status` (MCP `questions_status`) shows what is still open.
 3. Draft 01 → 04 and every task in one pass, each stage building on the one
    before it, following `zforge-intake-writing` (`intake-writing.md`
    beside this file in the skills store). Keep conclusions in the files,
@@ -101,22 +137,24 @@ By default the user reviews the whole intake once.
    nothing in it goes stale), `/accept <file>…` or `/revise <file>: <what
    to change>`; zforge's prompt hook records it and tells you. At a
    terminal: `zforge intake accept <ID> --all` or `zforge intake
-   accept|revise <ID> <file>`. On a revision note: revise, `review --all`
-   again, show the new pack.
+   accept|revise <ID> <file>`. On a revision note: revise, `review --all
+   --note "<what changed and why>"` again, show the new pack.
 7. When all files are accepted, `zforge readiness <ID>`; fix what it lists
    by revising files (each goes through review again).
 8. Show what the handover would pin (readiness lists it) and ask the user
    to type `/handover` (or run `zforge handover <ID>`). Once the hook
    reports it recorded, start it with `run_start` and follow it.
 
+**Always note why a file changed.** Every time you send a file again
+(revision 2 and later), pass `--note "<what changed and why>"` (MCP
+`note`) — above all when the user asked for the change in chat instead of
+with `/revise`, since nothing else records it. One note covers a whole
+`review --all`. The pack lists these notes, newest first, and zforge warns
+when a revision goes out without one.
+
 **Staged** instead — stop after a stage and wait for its acceptance — when
 the user asks, or when 01-outcome has open questions whose answers would
 change everything below it: stop after 01 and ask.
-
-**Small profile** (`zforge intake new <ID> --small`, MCP `small: true`) for
-at most two tasks in one module with no new interface: 02-behavior is one
-table and 03-solution only its binding decisions, with no summary. The
-files all still exist and are accepted and pinned like any others.
 
 Revising a file after the ones below it were accepted leaves those that
 rest on what changed out of date, and readiness refuses them; `review
@@ -131,7 +169,7 @@ Changing an intake after a handover, or answering a change request: follow
 - [ ] Binding decisions and suggestions are marked apart in 03-solution
 - [ ] Every acceptance criterion says how it is verified
 - [ ] Integration verification is a section of its own, with its commands in a
-      fenced code block
+      fenced code block (or none, when `project.integration_command` applies)
 - [ ] `tests_may_change` appears only where the contract means it, with exact paths
 - [ ] Each stage opens with a Summary; no readability warning left unexplained
 - [ ] Diagrams are mermaid, one question each; no hand-drawn dependency graph

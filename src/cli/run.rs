@@ -26,14 +26,16 @@ pub struct RunArgs {
     pub cmd: Option<RunCmd>,
     /// `HANDOVER-001`, or `<INTAKE>/HANDOVER-001` when ambiguous.
     pub handover: Option<String>,
-    /// The leaf task to run.
-    #[arg(long, conflicts_with = "integration")]
+    /// Run only this task.
+    #[arg(long, value_name = "TASK", conflicts_with = "integration")]
     pub task: Option<String>,
     /// Check every task's verified output together, with the integration
-    /// check of the handed-over breakdown.
+    /// check of the handed-over breakdown (the project's test command when
+    /// it has none). No agent is called.
     #[arg(long)]
     pub integration: bool,
-    /// Run in the background; follow with `zforge run status <RUN>`.
+    /// Run in the background; follow with `zforge run status <RUN|HANDOVER>`,
+    /// `zforge run log <RUN|HANDOVER> --follow` or `zforge run wait`.
     #[arg(long = "async")]
     pub background: bool,
 }
@@ -44,7 +46,9 @@ pub enum RunCmd {
     /// given a handover, where each of its tasks and its integration stand.
     Status {
         /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
         run: String,
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
     },
@@ -53,14 +57,22 @@ pub enum RunCmd {
         /// Only runs of this handover.
         #[arg(long)]
         handover: Option<String>,
+        /// Machine-readable list.
         #[arg(long)]
         json: bool,
     },
-    /// Stop a run's agent and tests and record it cancelled.
-    Cancel { run: String },
+    /// Stop a run's agent and tests and record it cancelled; given a
+    /// handover, stop its loop and every unfinished run.
+    Cancel {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
+        run: String,
+    },
     /// Run the same task again as a new run, with what is left of the budget.
     Retry {
+        /// The run to retry, e.g. RUN-001.
         run: String,
+        /// Run in the background.
         #[arg(long = "async")]
         background: bool,
     },
@@ -91,17 +103,21 @@ pub enum RunCmd {
     /// read, what the output changed — to judge a change to agents,
     /// skills or prompts on work already done.
     Compare {
-        #[arg(num_args = 2.., required = true)]
+        /// Two or more runs, e.g. RUN-001 RUN-004.
+        #[arg(value_name = "RUN", num_args = 2.., required = true)]
         runs: Vec<String>,
         /// Also run this shell command (e.g. a linter) on each run's output,
         /// in a throwaway worktree that is removed afterwards.
         #[arg(long)]
         check: Option<String>,
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
     },
-    /// Print (or follow) a background run's log.
+    /// Print (or follow) a background run's log, or a handover loop's.
     Log {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
         run: String,
         /// Keep printing until the run ends.
         #[arg(long)]
@@ -110,8 +126,11 @@ pub enum RunCmd {
         #[arg(long)]
         tail: Option<usize>,
     },
-    /// Block until the run ends. Exit 0 only when it is verified.
+    /// Block until the run ends — or, given a handover, its loop. Exit 0
+    /// only when it is verified.
     Wait {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
         run: String,
         /// Give up after this many seconds (default 3600).
         #[arg(long, default_value = "3600")]
@@ -123,7 +142,7 @@ pub enum RunCmd {
 }
 
 fn project_root() -> Result<std::path::PathBuf> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     Ok(config.project_root())
 }
 
@@ -153,6 +172,16 @@ pub fn run(args: RunArgs) -> Result<()> {
         }
         Some(RunCmd::Retry { run, background }) => {
             let old = Run::open(&root, &run)?;
+            // A retry runs the same pinned contract again; a run that got
+            // stuck on the same tests will most likely get stuck again.
+            if let Some(reason) = old.state()?.reason.filter(|r| r.starts_with("stuck:")) {
+                eprintln!(
+                    "{} {} {reason}\n  the retry uses the same contract; amend the intake and hand \
+                     over again if the tests or the contract are wrong",
+                    "warning:".yellow(),
+                    old.id
+                );
+            }
             let new = ops::retry(&root, &old)?;
             eprintln!("{} {} retries {}", "▶".cyan(), new.id, old.id);
             start(&root, &new, background)
@@ -223,6 +252,9 @@ fn start(root: &Path, run: &Run, background: bool) -> Result<()> {
             checks.commands.len(),
             match checks.from {
                 crate::run::record::ChecksFrom::Breakdown => "breakdown",
+                crate::run::record::ChecksFrom::IntegrationCommand => {
+                    "project's integration command"
+                }
                 crate::run::record::ChecksFrom::Config => "project's test command",
             }
         ),

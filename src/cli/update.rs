@@ -115,8 +115,8 @@ pub fn run() -> Result<()> {
 
     println!("{} Updated to v{}", "✓".green(), latest);
     println!(
-        "  Run {} to refresh global templates.",
-        "zforge install --force".cyan()
+        "  Run {} (or any `zforge init`) to refresh the global store; your edits are kept.",
+        "zforge install".cyan()
     );
 
     Ok(())

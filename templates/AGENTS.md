@@ -20,7 +20,7 @@ intake new → write 01-outcome … 04-breakdown + tasks/ → review --all → p
 
 | Stage | Command | Who |
 |-------|---------|-----|
-| Start an intake | `zforge intake new <ID> [--small]`, `zforge intake task <ID> <TASK>` | agent or user |
+| Start an intake | `zforge intake new <ID> [--small|--tiny]`, `zforge intake task <ID> <TASK>` | agent or user |
 | Send the whole intake for review | `zforge intake review <ID> --all` (or one `<file>`) | agent or user |
 | Show what is to be decided | `zforge intake pack <ID>` — brief, summaries, diffs, warnings | agent or user |
 | Accept or ask for changes | `zforge intake accept <ID> --all` (the whole intake, in dependency order), `zforge intake accept\|revise <ID> <file>` | **user, in a terminal** |
@@ -87,6 +87,9 @@ Load the file before starting that work:
 | When | Skill file |
 |------|-----------|
 | Preparing an intake | `{{skills_dir}}/intake.md` |
+| Writing or revising intake files and the brief | `{{skills_dir}}/intake-writing.md` |
+| Changing an accepted intake or answering a change request | `{{skills_dir}}/intake-change.md` |
+| Drafting the project's knowledge (onboarding) | `{{skills_dir}}/onboard.md` |
 | Writing tests | `{{skills_dir}}/write-tests-first.md` |
 | Implementing a task | `{{skills_dir}}/implement-minimal-patch.md` |
 | Reviewing a change against its contract | `{{skills_dir}}/review-patch.md` |
@@ -104,7 +107,7 @@ Load these only when the task touches that area:
 | Fixing a performance problem | `{{skills_dir}}/performance-optimize.md` |
 | Backend API contract changes | `{{skills_dir}}/backend/api-contracts.md` |
 | Database schema or migration changes | `{{skills_dir}}/backend/database-migrations.md` |
-| Logs, metrics, traces, jobs | `{{skills_dir}}/backend/observability.md` |
+| Logs, metrics, traces | `{{skills_dir}}/backend/observability.md` |
 | Queue, cron, worker changes | `{{skills_dir}}/backend/background-jobs.md` |
 | React or route UI changes | `{{skills_dir}}/frontend/react-patterns.md` |
 | Frontend tests | `{{skills_dir}}/frontend/frontend-testing.md` |

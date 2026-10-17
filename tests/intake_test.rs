@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use zforge::intake::record::Decider;
 
 const OUTCOME: &str = "# F-1 — Outcome\n\n## Vấn đề\nCần lọc.\n\n## Yêu cầu\n\n- REQ-001: lọc theo trạng thái\n\n## Câu hỏi còn mở\n\n- [ ] trạng thái archived có tính không?\n";
 
@@ -600,4 +601,362 @@ fn amend_starts_a_new_intake_from_the_accepted_revisions() {
         .zforge(&["intake", "amend", "H-1", "--from", "G-1"])
         .status
         .success());
+}
+
+/// `intake amend --fixup`: compact stages referring to the source's
+/// accepted revisions and one task stub; once the fixes are written they
+/// lint clean and go through review, acceptance, readiness and handover
+/// like any intake — all four stages pinned.
+#[test]
+fn a_fixup_amend_is_short_and_goes_through_the_whole_flow() {
+    let p = Project::new();
+    p.ready_intake();
+    let out = p.ok(&["intake", "amend", "G-1", "--from", "F-1", "--fixup"]);
+    assert!(out.contains("created G-1, a fixup of F-1"), "{out}");
+    let g = p.root.join(".zforge/intakes/G-1");
+    let read = |f: &str| std::fs::read_to_string(g.join(f)).unwrap();
+
+    let outcome = read("01-outcome.md");
+    assert!(
+        outcome.starts_with("---\nprofile: fixup\namends: F-1\n---\n"),
+        "{outcome}"
+    );
+    assert!(zforge::intake::lint::is_small(&outcome));
+    let behavior = read("02-behavior.md");
+    assert!(
+        behavior.starts_with("# G-1 — Behavior\n\nAs accepted in F-1 (revision 1), except:"),
+        "{behavior}"
+    );
+    assert!(behavior.contains(".zforge/intakes/F-1/.records/revisions/02-behavior/1.md"));
+    assert!(read("03-solution.md").contains("As accepted in F-1 (revision 1), except:"));
+    assert!(read("04-breakdown.md").contains("| TASK-001 Fixes | REQ-002 |"));
+    let stub = read("tasks/TASK-001.md");
+    assert!(stub.contains("requirements: [REQ-002]"), "{stub}");
+    assert!(stub.contains("parent: G-1\namends: F-1\n"), "{stub}");
+    assert!(read("brief.md").contains("Fixup of F-1"));
+    let i = zforge::intake::Intake::open(&p.root, "G-1").unwrap();
+    assert_eq!(i.files().len(), 5);
+
+    // Until the fixes are written, nothing is sent.
+    let out = p.zforge(&["intake", "review", "G-1", "--all"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("defines no requirement"),
+        "{}",
+        stderr(&out)
+    );
+
+    let outcome = outcome
+        .replace(
+            "## Summary\n",
+            "## Summary\nOne fix: the filter ignores case.\n",
+        )
+        .replace(
+            "## Problem\n",
+            "## Problem\n- Filtering by `Open` finds nothing.\n",
+        )
+        .replace(
+            "## Requirements\n",
+            "## Requirements\n\n- REQ-002: The status filter ignores case.\n",
+        );
+    std::fs::write(g.join("01-outcome.md"), outcome).unwrap();
+    let mut task = stub;
+    for (section, text) in [
+        ("Goal", "Case-insensitive filter."),
+        ("Input", "The listing."),
+        ("Output", "The filter."),
+        ("Constraints", "Keep the API."),
+        ("Autonomy", "Any helper."),
+        (
+            "Acceptance and verification",
+            "- AC-01: `Open` finds open tasks",
+        ),
+        ("Amend the contract when", "The API must change."),
+    ] {
+        task = task.replacen(
+            &format!("## {section}\n"),
+            &format!("## {section}\n{text}\n"),
+            1,
+        );
+    }
+    std::fs::write(g.join("tasks/TASK-001.md"), task).unwrap();
+
+    let out = p.zforge(&["intake", "review", "G-1", "--all"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains('⚠'),
+        "the fixup files lint clean: {}",
+        stderr(&out)
+    );
+    let pack = p.ok(&["intake", "pack", "G-1"]);
+    assert_eq!(
+        pack.matches("Standard text for a fixup intake — nothing of its own to decide.")
+            .count(),
+        3,
+        "untouched 02/03/04 take one line each: {pack}"
+    );
+    let decided =
+        zforge::intake::batch::accept_all(&i, &i.files(), &Decider::terminal(None)).unwrap();
+    assert!(decided.iter().all(|(_, r)| r.is_ok()), "{decided:?}");
+
+    let out = p.zforge(&["readiness", "G-1", "--json"]);
+    let r: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(out.status.success(), "{:?}", failing(&r));
+    assert_eq!(r["tasks"], serde_json::json!(["TASK-001"]));
+    assert_eq!(r["files"].as_array().unwrap().len(), 5);
+    let config = zforge::config::load_from(&p.root.join(".zforge/config.yaml")).unwrap();
+    let pinned: Vec<zforge::intake::readiness::Pinned> =
+        serde_json::from_value(r["files"].clone()).unwrap();
+    let m = zforge::intake::handover::create(&i, &p.root, &[], &config, &pinned, None).unwrap();
+    assert_eq!(m.tasks, ["TASK-001"]);
+
+    // A fixup amends settled work: a source with a stage not accepted is refused.
+    p.ok(&["intake", "new", "H-1"]);
+    let out = p.zforge(&["intake", "amend", "K-1", "--from", "H-1", "--fixup"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("no accepted revision"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// Revision notes: recorded on the review, warned about when a later
+/// revision goes out without one, and listed newest first in the pack.
+#[test]
+fn revision_notes_are_recorded_warned_about_and_packed() {
+    let p = Project::new();
+    p.ok(&["intake", "new", "F-1"]);
+    let outcome = p.intake_dir().join("01-outcome.md");
+    std::fs::write(&outcome, OUTCOME).unwrap();
+    let out = p.zforge(&["intake", "review", "F-1", "01-outcome.md"]);
+    assert!(out.status.success());
+    assert!(!stderr(&out).contains("without a note"), "first revision");
+    let i = zforge::intake::Intake::open(&p.root, "F-1").unwrap();
+    zforge::intake::review::accept(&i, "01-outcome.md", None).unwrap();
+
+    // Revision 2, without a note: warned, still sent.
+    std::fs::write(&outcome, OUTCOME.replace("lọc theo", "lọc nhanh theo")).unwrap();
+    let out = p.zforge(&["intake", "review", "F-1", "01-outcome.md"]);
+    assert!(out.status.success());
+    assert!(
+        stderr(&out).contains("revision 2 was sent without a note"),
+        "{}",
+        stderr(&out)
+    );
+    zforge::intake::review::revise(&i, "01-outcome.md", None, "say which statuses").unwrap();
+
+    // Revision 3, with a note (through --all, so the other stages go too).
+    for (f, text) in [
+        ("02-behavior.md", BEHAVIOR),
+        ("03-solution.md", SOLUTION),
+        ("04-breakdown.md", BREAKDOWN),
+    ] {
+        std::fs::write(p.intake_dir().join(f), text).unwrap();
+    }
+    std::fs::write(
+        &outcome,
+        OUTCOME.replace("lọc theo", "lọc nhanh theo open/done"),
+    )
+    .unwrap();
+    let out = p.zforge(&[
+        "intake",
+        "review",
+        "F-1",
+        "--all",
+        "--note",
+        "named the statuses, as asked",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("without a note"), "{}", stderr(&out));
+
+    let log = zforge::intake::record::read(&i).unwrap();
+    let last = log.iter().rfind(|d| d.file == "01-outcome.md").unwrap();
+    assert_eq!(
+        (last.revision, last.note.as_str()),
+        (3, "named the statuses, as asked")
+    );
+
+    let pack = p.ok(&["intake", "pack", "F-1"]);
+    let why = "Why it changed, newest first:\n\n\
+               - revision 3: named the statuses, as asked\n\
+               - revision 2, changes asked: say which statuses\n\
+               - revision 2: no note\n";
+    assert!(pack.contains(why), "{pack}");
+}
+
+/// `intake new --tiny`: one task created with the intake, 02/03/04 standard
+/// text that lints clean and collapses to one line in the pack until it is
+/// edited; all five files are still reviewed, accepted and pinned.
+#[test]
+fn a_tiny_intake_has_one_task_and_goes_through_the_whole_flow() {
+    let p = Project::new();
+    p.ready_intake();
+    let out = p.zforge(&["intake", "new", "X-1", "--tiny", "--small"]);
+    assert!(!out.status.success(), "--tiny with --small is refused");
+
+    let out = p.ok(&["intake", "new", "T-1", "--tiny"]);
+    assert!(out.contains("tiny profile"), "{out}");
+    let t = p.root.join(".zforge/intakes/T-1");
+    let read = |f: &str| std::fs::read_to_string(t.join(f)).unwrap();
+    let i = zforge::intake::Intake::open(&p.root, "T-1").unwrap();
+    assert_eq!(
+        i.files(),
+        [
+            "01-outcome.md",
+            "02-behavior.md",
+            "03-solution.md",
+            "04-breakdown.md",
+            "tasks/TASK-001.md"
+        ]
+    );
+    let outcome = read("01-outcome.md");
+    assert!(
+        outcome.starts_with("---\nprofile: tiny\n---\n"),
+        "{outcome}"
+    );
+    assert!(zforge::intake::lint::is_small(&outcome) && zforge::intake::lint::is_tiny(&outcome));
+    assert!(read("02-behavior.md").contains("TASK-001's acceptance criteria"));
+    assert!(read("03-solution.md").contains("TASK-001's Constraints"));
+    assert!(read("04-breakdown.md").contains("| TASK-001 | every requirement of 01-outcome |"));
+    assert!(t.join("brief.md").is_file());
+
+    // Until 01-outcome and the task are written, nothing is sent.
+    let out = p.zforge(&["intake", "review", "T-1", "--all"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("defines no requirement"),
+        "{}",
+        stderr(&out)
+    );
+
+    let outcome = outcome
+        .replace("## Summary\n", "## Summary\nThe filter ignores case.\n")
+        .replace(
+            "## Requirements\n",
+            "## Requirements\n\n- REQ-001: The status filter ignores case.\n",
+        )
+        .replace(
+            "## Must not change\n",
+            "## Must not change\n\n- The CLI flags.\n",
+        );
+    std::fs::write(t.join("01-outcome.md"), outcome).unwrap();
+    let mut task = read("tasks/TASK-001.md")
+        .replace("requirements: []", "requirements: [REQ-001]")
+        .replace("# TASK-001 — \n", "# TASK-001 — Case-insensitive filter\n");
+    for (section, text) in [
+        ("Goal", "Case-insensitive filter."),
+        ("Input", "The listing."),
+        ("Output", "The filter."),
+        ("Constraints", "Keep the API."),
+        ("Autonomy", "Any helper."),
+        (
+            "Acceptance and verification",
+            "- AC-01: `Open` finds open tasks",
+        ),
+        ("Amend the contract when", "The API must change."),
+    ] {
+        task = task.replacen(
+            &format!("## {section}\n"),
+            &format!("## {section}\n{text}\n"),
+            1,
+        );
+    }
+    std::fs::write(t.join("tasks/TASK-001.md"), task).unwrap();
+
+    let out = p.zforge(&["intake", "review", "T-1", "--all"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains('⚠'),
+        "the tiny files lint clean: {}",
+        stderr(&out)
+    );
+    let pack = p.ok(&["intake", "pack", "T-1"]);
+    assert_eq!(
+        pack.matches("Standard text for a tiny intake — nothing of its own to decide.")
+            .count(),
+        3,
+        "{pack}"
+    );
+    assert!(pack.contains("The filter ignores case."), "{pack}");
+
+    // An edited 03-solution is the user's to read: shown like any file.
+    let solution = format!(
+        "{}\n## Binding decisions\n\n| # | Decision | Why |\n|---|---|---|\n| D-1 | Compare lowercased | REQ-001 |\n",
+        read("03-solution.md")
+    );
+    std::fs::write(t.join("03-solution.md"), solution).unwrap();
+    let out = p.zforge(&["intake", "review", "T-1", "--all"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let pack = p.ok(&["intake", "pack", "T-1"]);
+    assert_eq!(
+        pack.matches("Standard text for a tiny intake").count(),
+        2,
+        "{pack}"
+    );
+    let solution_part = pack.split("### 03-solution.md").nth(1).unwrap();
+    assert!(
+        solution_part
+            .split("### ")
+            .next()
+            .unwrap()
+            .contains("New: no accepted revision yet."),
+        "{pack}"
+    );
+
+    let decided =
+        zforge::intake::batch::accept_all(&i, &i.files(), &Decider::terminal(None)).unwrap();
+    assert!(decided.iter().all(|(_, r)| r.is_ok()), "{decided:?}");
+    let out = p.zforge(&["readiness", "T-1", "--json"]);
+    let r: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(out.status.success(), "{:?}", failing(&r));
+    assert_eq!(r["tasks"], serde_json::json!(["TASK-001"]));
+    assert_eq!(r["files"].as_array().unwrap().len(), 5);
+    let config = zforge::config::load_from(&p.root.join(".zforge/config.yaml")).unwrap();
+    let pinned: Vec<zforge::intake::readiness::Pinned> =
+        serde_json::from_value(r["files"].clone()).unwrap();
+    let m = zforge::intake::handover::create(&i, &p.root, &[], &config, &pinned, None).unwrap();
+    assert_eq!(m.tasks, ["TASK-001"]);
+
+    // A second task does not fit a tiny intake: an error naming the fix.
+    p.ok(&["intake", "task", "T-1", "TASK-002"]);
+    let status: serde_json::Value =
+        serde_json::from_str(&p.ok(&["intake", "status", "T-1", "--json"])).unwrap();
+    let errors: Vec<String> = status
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["file"] == "tasks/TASK-001.md")
+        .flat_map(|f| f["issues"].as_array().unwrap().clone())
+        .filter(|i| i["severity"] == "error")
+        .map(|i| i["message"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|m| m.starts_with("a tiny intake has one task") && m.contains("`small`")),
+        "{errors:?}"
+    );
+    let out = p.zforge(&["intake", "review", "T-1", "tasks/TASK-001.md"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("a tiny intake has one task"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// A full-profile intake with exactly one task gets a hint, not an error.
+#[test]
+fn intake_status_suggests_the_tiny_profile_for_one_task() {
+    let p = Project::new();
+    p.ok(&["intake", "new", "F-1"]);
+    assert!(!p.ok(&["intake", "status", "F-1"]).contains("--tiny"));
+    p.ok(&["intake", "task", "F-1", "TASK-001"]);
+    let out = p.ok(&["intake", "status", "F-1"]);
+    assert!(out.contains("--tiny"), "{out}");
+    p.ok(&["intake", "task", "F-1", "TASK-002"]);
+    assert!(!p.ok(&["intake", "status", "F-1"]).contains("--tiny"));
+    p.ok(&["intake", "new", "T-1", "--tiny"]);
+    assert!(!p.ok(&["intake", "status", "T-1"]).contains("--tiny"));
 }

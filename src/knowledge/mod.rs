@@ -186,7 +186,17 @@ pub fn pending_review(k: &Knowledge, rel: &str) -> Result<Rev> {
 /// for the decision log — a refused review (lint errors, an unknown file)
 /// leaves it byte-identical (Output, AC-04).
 pub fn review(project_root: &Path, k: &Knowledge, rel: &str) -> Result<intake_review::Reviewed> {
-    let reviewed = intake_review::review(k, rel)?;
+    review_noted(project_root, k, rel, "")
+}
+
+/// [`review`], recording `note` — what changed and why — on the review.
+pub fn review_noted(
+    project_root: &Path,
+    k: &Knowledge,
+    rel: &str,
+    note: &str,
+) -> Result<intake_review::Reviewed> {
+    let reviewed = intake_review::review_noted(k, rel, note)?;
     ensure_gitattributes(project_root, &k.dir)?;
     Ok(reviewed)
 }

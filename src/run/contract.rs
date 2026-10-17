@@ -54,6 +54,11 @@ pub struct Contract {
     pub depends_on: Vec<String>,
     /// Protected test files the contract lets it change (`run::guard`).
     pub tests_may_change: Vec<String>,
+    /// The task's own `review:`, overriding `execution.review`.
+    pub review: Option<bool>,
+    /// The `## Tests you must not change` section (`guard::Guard::brief`),
+    /// set once the worktree exists; empty until then.
+    pub protected_tests: String,
     /// Every file the manifest pins, verified.
     pub files: Vec<ContractFile>,
     /// The handover's pinned knowledge (ONBOARD TASK-007), verified; empty
@@ -154,6 +159,8 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         task: task.to_string(),
         depends_on,
         tests_may_change: meta.tests_may_change,
+        review: meta.review,
+        protected_tests: String::new(),
         files: h.files,
         knowledge: h.knowledge,
         previous_attempt: None,
@@ -351,10 +358,11 @@ impl Handover {
             .collect())
     }
 
-    /// The integration check: the first code block under "Kiểm chứng tích
-    /// hợp" in the pinned breakdown, one command per non-empty, non-comment
-    /// line; without one, `test_command`.
-    pub fn checks(&self, test_command: &str) -> Result<Checks> {
+    /// The integration check: the first code block under "Integration
+    /// verification" in the pinned breakdown, one command per non-empty,
+    /// non-comment line; without one, `integration_command` (same lines),
+    /// else `test_command`.
+    pub fn checks(&self, integration_command: Option<&str>, test_command: &str) -> Result<Checks> {
         let breakdown = self.file(STAGES[3])?;
         let commands = integration_block(&breakdown.text);
         if !commands.is_empty() {
@@ -363,10 +371,17 @@ impl Handover {
                 commands,
             });
         }
+        let commands = command_lines(integration_command.unwrap_or_default().lines());
+        if !commands.is_empty() {
+            return Ok(Checks {
+                from: ChecksFrom::IntegrationCommand,
+                commands,
+            });
+        }
         let test_command = test_command.trim();
         if test_command.is_empty() {
             bail!(
-                "no integration check: {} has no code block under \"{}\" and no `project.test_command` is configured",
+                "no integration check: {} has no code block under \"{}\" and neither `project.integration_command` nor `project.test_command` is configured",
                 STAGES[3],
                 lint::INTEGRATION
             );
@@ -401,8 +416,12 @@ fn integration_block(breakdown: &str) -> Vec<String> {
             Some(_) => {}
         }
     }
+    command_lines(lines.take_while(|l| !fence(l)))
+}
+
+/// One command per non-empty line; `#` lines are comments.
+fn command_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     lines
-        .take_while(|l| !fence(l))
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(String::from)
@@ -490,6 +509,7 @@ impl Contract {
             )
             .replace("{{project_knowledge}}\n", &Self::knowledge_block(knowledge))
             .replace("{{reference_docs}}\n", &self.reference_block())
+            .replace("{{protected_tests}}\n", &self.protected_tests)
             .replace("{{task_contract}}", self.task_file().text.trim_end())
             .replace("{{stage_context}}", &self.stage_context())
     }
@@ -521,10 +541,12 @@ impl Contract {
     /// What this task's agents get from the project's accepted knowledge
     /// (ONBOARD REQ-008): every pinned `rules.md`/`conventions.md` item and
     /// the `domain.md` items this task's contract and stages name, within
-    /// `limit` bytes (`knowledge.prompt_limit`) — drawn only from the
-    /// pinned snapshots (AC-01, AC-02, AC-03). Empty when the handover
-    /// pinned no knowledge (AC-05).
-    pub fn knowledge_selection(&self, limit: usize) -> select::Selection {
+    /// `limit` bytes (`knowledge.prompt_limit`), of which conventions and
+    /// rules unrelated to the task take at most `general_limit`
+    /// (`knowledge.general_limit`) — drawn only from the pinned snapshots
+    /// (AC-01, AC-02, AC-03). Empty when the handover pinned no knowledge
+    /// (AC-05).
+    pub fn knowledge_selection(&self, limit: usize, general_limit: usize) -> select::Selection {
         if self.knowledge.is_empty() {
             return select::Selection::default();
         }
@@ -539,7 +561,7 @@ impl Contract {
                 snapshot_path: &k.snapshot_path,
             })
             .collect();
-        select::for_task(&pins, &search_text, limit)
+        select::for_task(&pins, &search_text, limit, general_limit)
     }
 
     /// The `## Project knowledge` block for a prompt; empty (so the whole
@@ -760,13 +782,29 @@ pub(crate) mod tests {
         let h = load_handover(&f.root, "HANDOVER-001").unwrap();
         assert_eq!(h.leaves().unwrap(), ["TASK-002"]);
         assert_eq!(
-            h.checks("cargo test").unwrap(),
+            h.checks(None, "cargo test").unwrap(),
             Checks {
                 from: ChecksFrom::Config,
                 commands: vec!["cargo test".into()]
             }
         );
-        let err = h.checks("  ").unwrap_err().to_string();
+        // `project.integration_command` comes before the test command.
+        assert_eq!(
+            h.checks(
+                Some("# integration\nmake it\n\n  go test ./test/...  \n"),
+                "cargo test"
+            )
+            .unwrap(),
+            Checks {
+                from: ChecksFrom::IntegrationCommand,
+                commands: vec!["make it".into(), "go test ./test/...".into()]
+            }
+        );
+        assert_eq!(
+            h.checks(Some("  "), "cargo test").unwrap().from,
+            ChecksFrom::Config
+        );
+        let err = h.checks(None, "  ").unwrap_err().to_string();
         assert!(err.contains("no integration check"), "{err}");
     }
 
@@ -842,6 +880,28 @@ pub(crate) mod tests {
             .prompt(None, "CR.md", &[], "cargo test", &empty)
             .contains("## Checklists"));
         assert!(!p.contains("{{checklists}}"));
+    }
+
+    /// The protected-tests section lands before the change request
+    /// section it points to; without one the slot leaves no trace.
+    #[test]
+    fn prompt_carries_the_protected_tests_section() {
+        let f = handed_over();
+        let empty = select::Selection::default();
+        let mut c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        assert!(
+            !p.contains("Tests you must not change") && !p.contains("{{"),
+            "{p}"
+        );
+
+        let tracked = vec!["internal/audit/writer_test.rs".to_string()];
+        c.protected_tests = crate::run::guard::Guard::new(None, "cargo test", &[], &f.root)
+            .brief(&tracked, &c.task_file().text);
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        let at = p.find("## Tests you must not change").expect("section");
+        assert!(at < p.find("## When the contract itself must change").unwrap());
+        assert!(p.contains("- `internal/audit/writer_test.rs`"), "{p}");
     }
 
     #[test]
@@ -988,7 +1048,7 @@ pub(crate) mod tests {
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         assert_eq!(c.knowledge.len(), 3, "{:?}", c.knowledge);
 
-        let s = c.knowledge_selection(10_000);
+        let s = c.knowledge_selection(10_000, usize::MAX);
         assert_eq!(s.items, ["CONV-001", "RULE-001", "DOM-001", "DOM-002"]);
         assert!(s.omitted.is_empty());
         assert!(!s.items.contains(&"DOM-003".to_string()));
@@ -1000,7 +1060,7 @@ pub(crate) mod tests {
     fn code_and_review_prompts_carry_the_same_knowledge() {
         let f = handed_over_with_full_knowledge();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
-        let s = c.knowledge_selection(10_000);
+        let s = c.knowledge_selection(10_000, usize::MAX);
         let code_prompt = c.prompt(None, "CR.md", &[], "cargo test", &s);
         let review_prompt = c.review_prompt("abc123", "cargo test", &s);
         assert!(code_prompt.contains("## Project knowledge") && code_prompt.contains("RULE-001"));
@@ -1028,7 +1088,7 @@ pub(crate) mod tests {
         let f = handed_over_with_full_knowledge();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         // Room for the first item only.
-        let s = c.knowledge_selection(80);
+        let s = c.knowledge_selection(80, usize::MAX);
         assert!(!s.items.is_empty());
         assert!(!s.omitted.is_empty(), "{:?}", s);
         assert!(!s.snapshots.is_empty());
@@ -1054,7 +1114,7 @@ pub(crate) mod tests {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         assert!(c.knowledge.is_empty());
-        let s = c.knowledge_selection(10_000);
+        let s = c.knowledge_selection(10_000, usize::MAX);
         assert_eq!(s, select::Selection::default());
         let p = c.prompt(None, "CR.md", &[], "cargo test", &s);
         assert!(!p.contains("## Project knowledge"), "{p}");

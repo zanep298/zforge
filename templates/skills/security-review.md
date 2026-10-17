@@ -19,7 +19,7 @@ and dependency risk.
 
 ## Expected Outputs
 
-A `security-report.md` with findings grouped by severity:
+In your final message (never a file in the worktree — a run commits everything there), findings grouped by severity:
 
 - **CRITICAL** — must fix before merge (exploitable vulnerability, secret leak)
 - **HIGH** — should fix before merge (missing auth check, unvalidated input)

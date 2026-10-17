@@ -14,7 +14,7 @@ pub fn get(
     extra: bool,
     json: bool,
 ) -> Result<()> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     let k = Knowledge::open(&config);
     let q = lookup::Query {
         ids,

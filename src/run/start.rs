@@ -12,7 +12,9 @@
 //! the agent: which outputs to keep is a contract question, not the agent's.
 
 use super::git;
-use super::record::{self, Previous, RunKind, RunMeta, RunState, RunStatus, Source, Start};
+use super::record::{
+    self, Previous, Rebased, RunKind, RunMeta, RunState, RunStatus, Source, Start,
+};
 use anyhow::{bail, Result};
 use std::path::Path;
 
@@ -47,6 +49,7 @@ pub fn plan(
         commit: from[0].commit.clone(),
         from,
         previous: None,
+        rebased: None,
     }))
 }
 
@@ -111,6 +114,7 @@ pub fn previous(
             commit: output,
             from: start.map(|s| s.from.clone()).unwrap_or_default(),
             previous: Some(previous),
+            rebased: None,
         }));
     }
     Ok(None)
@@ -131,6 +135,115 @@ fn merges_cleanly(project_root: &Path, output: &str, baseline: &str) -> bool {
             output,
             baseline,
         ])
+}
+
+/// Outputs that would not merge: the first source (in `sources`' order)
+/// that conflicts with one before it, those it conflicts with, and the
+/// files. Pairwise `git merge-tree`, touching no work tree; a pair where one
+/// output already contains the other never conflicts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    pub earlier: Vec<Source>,
+    pub later: Source,
+    pub files: Vec<String>,
+}
+
+pub fn conflicts(project_root: &Path, sources: &[Source]) -> Result<Option<Conflict>> {
+    for (j, later) in sources.iter().enumerate() {
+        let mut earlier = Vec::new();
+        let mut files: Vec<String> = Vec::new();
+        for e in &sources[..j] {
+            for f in conflicting_files(project_root, &e.commit, &later.commit)? {
+                if !files.contains(&f) {
+                    files.push(f);
+                }
+                if !earlier.contains(e) {
+                    earlier.push(e.clone());
+                }
+            }
+        }
+        if !earlier.is_empty() {
+            return Ok(Some(Conflict {
+                earlier,
+                later: later.clone(),
+                files,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// The files `a` and `b` conflict in; empty when they merge.
+fn conflicting_files(project_root: &Path, a: &str, b: &str) -> Result<Vec<String>> {
+    let contains = |x: &str, y: &str| -> Result<bool> {
+        Ok(
+            git::run(project_root, &["merge-base", "--is-ancestor", x, y])?
+                .status
+                .success(),
+        )
+    };
+    if a == b || contains(a, b)? || contains(b, a)? {
+        return Ok(Vec::new());
+    }
+    let out = git::run(
+        project_root,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            a,
+            b,
+        ],
+    )?;
+    match out.status.code() {
+        Some(0) => Ok(Vec::new()),
+        // Exit 1: conflicts — the tree id, then one conflicted path a line.
+        Some(1) => Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .skip(1)
+            .take_while(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()),
+        _ => bail!(
+            "git merge-tree {a} {b}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+    }
+}
+
+/// Where a run of the conflict's later task starts: from its dependencies'
+/// outputs (as [`plan`]) with the earlier outputs it conflicted with merged
+/// in after them, so its new output contains them.
+pub fn stacked(
+    project_root: &Path,
+    intake: &str,
+    handover: &str,
+    deps: &[String],
+    c: &Conflict,
+) -> Result<Start> {
+    let task = &c.later.task;
+    let mut from = plan(project_root, intake, handover, task, deps)?
+        .map(|s| s.from)
+        .unwrap_or_default();
+    for e in &c.earlier {
+        if !from.iter().any(|f| f.task == e.task) {
+            from.push(e.clone());
+        }
+    }
+    let Some(first) = from.first() else {
+        bail!("{task}: nothing to start on top of");
+    };
+    Ok(Start {
+        commit: first.commit.clone(),
+        from: from.clone(),
+        previous: None,
+        rebased: Some(Rebased {
+            onto: c.earlier.iter().map(|e| e.task.clone()).collect(),
+            files: c.files.clone(),
+            replaces: c.later.clone(),
+        }),
+    })
 }
 
 /// Merge `baseline` into a run continuing from an earlier output
@@ -461,6 +574,7 @@ mod tests {
                 commit: b.clone(),
                 from: vec![src("B", &b), src("D", &d)],
                 previous: None,
+                rebased: None,
             },
         )
         .unwrap();
@@ -489,6 +603,7 @@ mod tests {
                 commit: b.clone(),
                 from: vec![src("B", &b), src("D", &d)],
                 previous: None,
+                rebased: None,
             },
         )
         .unwrap_err();
@@ -526,5 +641,31 @@ mod tests {
         bring_baseline(&r.root, "RUN-009", &moved).unwrap();
         assert!(r.root.join("other.txt").is_file());
         assert!(git::is_clean(&r.root).unwrap());
+    }
+
+    #[test]
+    fn conflicts_name_the_later_output_what_it_meets_and_the_files() {
+        let r = Repo::new();
+        let a = r.output("a", "shared.txt", "a's line\n");
+        let b = r.output("b", "b.txt", "b only\n");
+        let c = r.output("c", "shared.txt", "c's line\n");
+        let sources = [src("A", &a), src("B", &b), src("C", &c)];
+
+        let found = conflicts(&r.root, &sources).unwrap().unwrap();
+        assert_eq!(found.later, src("C", &c));
+        assert_eq!(found.earlier, vec![src("A", &a)]);
+        assert_eq!(found.files, ["shared.txt"]);
+
+        assert_eq!(conflicts(&r.root, &sources[..2]).unwrap(), None);
+
+        // C redone on top of A's output contains it: no conflict any more.
+        r.git(&["checkout", "-q", "-b", "c2", &a]);
+        r.write("shared.txt", "a's line\nc's line\n");
+        let c2 = r.commit("c2");
+        r.git(&["checkout", "-q", "main"]);
+        assert_eq!(
+            conflicts(&r.root, &[src("A", &a), src("C", &c2)]).unwrap(),
+            None
+        );
     }
 }

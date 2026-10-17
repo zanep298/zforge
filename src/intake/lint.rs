@@ -121,22 +121,45 @@ pub struct Known {
     /// 03-solution may be a single table, without a summary or open
     /// questions of their own.
     pub small: bool,
+    /// The intake uses the tiny profile ([`is_tiny`]): one task only.
+    pub tiny: bool,
 }
 
 /// Stages a small intake keeps short (`zforge intake new --small`).
 pub const SMALL_STAGES: [&str; 2] = ["02-behavior.md", "03-solution.md"];
 
-/// Whether `01-outcome.md`'s text marks the intake small: frontmatter
-/// `profile: small`. The marker lives in the accepted outcome, so the user
-/// accepts the profile with it.
-pub fn is_small(outcome: &str) -> bool {
+/// `profile:` values of 01-outcome's frontmatter.
+pub const PROFILE_SMALL: &str = "small";
+pub const PROFILE_TINY: &str = "tiny";
+pub const PROFILE_FIXUP: &str = "fixup";
+
+/// The `profile:` 01-outcome's frontmatter names, lowercased — `None` for
+/// the full profile.
+pub fn profile(outcome: &str) -> Option<String> {
     let (Some(fm), _) = split_frontmatter(outcome) else {
-        return false;
+        return None;
     };
     serde_yaml::from_str::<serde_yaml::Value>(fm)
-        .ok()
-        .and_then(|v| v.get("profile").and_then(|p| p.as_str()).map(str::to_owned))
-        .is_some_and(|p| p.trim().eq_ignore_ascii_case("small"))
+        .ok()?
+        .get("profile")?
+        .as_str()
+        .map(|p| p.trim().to_lowercase())
+}
+
+/// Whether `01-outcome.md`'s text marks the intake small: frontmatter
+/// `profile: small`, `profile: tiny` (`zforge intake new --tiny`, whose
+/// 02/03/04 point at its one task) or `profile: fixup` (`zforge intake
+/// amend --fixup`, whose 02/03 say only what changes from the intake it
+/// amends). The marker lives in the accepted outcome, so the user accepts
+/// the profile with it.
+pub fn is_small(outcome: &str) -> bool {
+    profile(outcome)
+        .is_some_and(|p| [PROFILE_SMALL, PROFILE_TINY, PROFILE_FIXUP].contains(&p.as_str()))
+}
+
+/// Whether `01-outcome.md`'s text marks the intake tiny: one task.
+pub fn is_tiny(outcome: &str) -> bool {
+    profile(outcome).as_deref() == Some(PROFILE_TINY)
 }
 
 /// Leaf task frontmatter.
@@ -148,6 +171,9 @@ pub struct TaskMeta {
     pub depends_on: Vec<String>,
     /// Protected test files the contract lets the task change (globs).
     pub tests_may_change: Vec<String>,
+    /// Whether this task's passing work is reviewed by a second agent,
+    /// overriding `execution.review`; `None` follows the project.
+    pub review: Option<bool>,
 }
 
 fn re(pattern: &'static str, cell: &'static OnceLock<Regex>) -> &'static Regex {
@@ -315,12 +341,18 @@ pub fn parse_task_meta(text: &str) -> Result<TaskMeta, String> {
             Some(_) => Err(format!("`{k}` must be a list")),
         }
     };
+    let review = match v.get("review") {
+        None | Some(serde_yaml::Value::Null) => None,
+        Some(serde_yaml::Value::Bool(b)) => Some(*b),
+        Some(_) => return Err("`review` must be true or false".into()),
+    };
     Ok(TaskMeta {
         id: string("id"),
         parent: string("parent"),
         requirements: list("requirements")?,
         depends_on: list("depends_on")?,
         tests_may_change: list("tests_may_change")?,
+        review,
     })
 }
 
@@ -419,6 +451,16 @@ pub fn lint(rel: &str, text: &str, intake_id: &str, known: &Known) -> Vec<Issue>
         .and_then(|n| n.strip_suffix(".md"))
     {
         lint_task(rel, stem, text, &clean, intake_id, known, &mut issues);
+        if known.tiny && known.tasks.len() > 1 {
+            issues.push(Issue::error(
+                rel,
+                format!(
+                    "a tiny intake has one task, and this one has {}; change `profile:` to \
+                     `small` in 01-outcome and give 02/03/04 text of their own",
+                    known.tasks.len()
+                ),
+            ));
+        }
     }
 
     let relaxed = known.small && SMALL_STAGES.contains(&rel);
@@ -545,8 +587,27 @@ mod tests {
                 requirements: vec!["REQ-001".into()],
                 depends_on: vec![],
                 tests_may_change: vec![],
+                review: None,
             }
         );
+    }
+
+    /// `review:` overrides `execution.review` for one task; anything but a
+    /// boolean is an error lint reports.
+    #[test]
+    fn a_task_may_switch_its_review_on_or_off() {
+        let with = |v: &str| {
+            TASK_OK.replace(
+                "depends_on: []\n",
+                &format!("depends_on: []\nreview: {v}\n"),
+            )
+        };
+        assert_eq!(parse_task_meta(&with("true")).unwrap().review, Some(true));
+        assert_eq!(parse_task_meta(&with("false")).unwrap().review, Some(false));
+        assert_eq!(parse_task_meta(TASK_OK).unwrap().review, None);
+        let e = lint("tasks/TASK-001.md", &with("yes please"), "F", &known());
+        assert_eq!(errors(&e), ["`review` must be true or false"]);
+        assert!(errors(&lint("tasks/TASK-001.md", &with("true"), "F", &known())).is_empty());
     }
 
     #[test]

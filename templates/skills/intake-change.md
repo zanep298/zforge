@@ -32,3 +32,14 @@ table) — a stage that is not is compared whole.
   copied from the accepted revisions; change only what changes, rewrite
   `brief.md` around the change, `zforge intake review <NEW> --all`, show
   the pack, and ask the user to type `/accept <NEW> all`. Never accept for them.
+- **A few contained fixes to an integrated intake** (a code review's
+  findings, a small bug in what was built): `zforge intake amend <NEW>
+  --from <ID> --fixup` (MCP `intake_amend`, `fixup: true`) instead of
+  copying everything. 01-outcome is short (`profile: fixup`): the problem,
+  new requirements numbered after the source's, what must not change;
+  02-behavior and 03-solution say "As accepted in <ID> (revision n),
+  except:" with one bullet per change (or `- No other change.`);
+  04-breakdown has one task, `TASK-001`, and runs the project's test
+  command; write `tasks/TASK-001.md` from its stub. All four stages are
+  still reviewed, accepted and pinned. Use the full amend when the change
+  reshapes behavior or needs several tasks.

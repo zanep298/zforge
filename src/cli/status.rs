@@ -2,7 +2,7 @@
 //! every registered project) — its files, handovers, runs — and the next
 //! step. The data comes from `crate::status`.
 
-use crate::status::{self, GlobalResult, IntakeStatus, OnboardingStatus};
+use crate::status::{self, GlobalResult, InitVersion, IntakeStatus, OnboardingStatus};
 use anyhow::Result;
 use colored::Colorize;
 use std::time::Duration;
@@ -56,6 +56,22 @@ fn known_passing_line(o: &OnboardingStatus) -> Option<String> {
     ))
 }
 
+/// `zforge 1.5.1`, or what differs from this binary and the fix.
+fn init_line(v: &InitVersion) -> String {
+    let recorded = match &v.recorded {
+        Some(r) => format!("zforge {r}"),
+        None => "an older zforge (no version recorded)".to_string(),
+    };
+    match &v.next {
+        None => recorded,
+        Some(next) => format!(
+            "{recorded}, this is zforge {} — {}",
+            v.current,
+            next.as_str().yellow()
+        ),
+    }
+}
+
 pub fn run(json: bool) -> Result<()> {
     let config = crate::config::load()?;
     let s = status::project(&config.project_root())?;
@@ -66,6 +82,7 @@ pub fn run(json: bool) -> Result<()> {
     if s.needs_migration {
         println!("{}", MIGRATE_HINT.yellow());
     }
+    println!("{} {}", "init:".bold(), init_line(&s.init));
     println!("{} {}", "project:".bold(), onboarding_line(&s.onboarding));
     if let Some(line) = stale_line(&s.onboarding) {
         println!("{}", line.yellow());
@@ -99,12 +116,14 @@ pub fn run_global(timeout_ms: u64, json: bool) -> Result<()> {
             GlobalResult::Skipped { reason } => println!("  {} {reason}", "skipped:".yellow()),
             GlobalResult::Ok {
                 needs_migration,
+                init,
                 onboarding,
                 intakes,
             } => {
                 if *needs_migration {
                     println!("  {}", MIGRATE_HINT.yellow());
                 }
+                println!("  {}", init_line(init));
                 println!("  {}", onboarding_line(onboarding));
                 if let Some(line) = stale_line(onboarding) {
                     println!("  {}", line.yellow());

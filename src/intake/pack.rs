@@ -1,14 +1,18 @@
 //! The review pack: one Markdown document with everything the user needs
 //! to decide on an intake's files under review at once — the brief, then
 //! for each file its revision, summary and changes since the accepted
-//! revision, the warnings, and the exact words to decide with.
+//! revision, the warnings, and the exact words to decide with. A tiny or
+//! fixup intake's 02/03/04 still in the standard text zforge wrote
+//! (`templates::is_standard`) take one line: there is nothing in them to
+//! read.
 //!
 //! Read-only and stored nowhere: it is rendered from the records each time.
 
 use super::lint::{self, Severity};
 use super::readability::SUMMARY;
-use super::status::DocState;
-use super::{batch, hash, record, review, Intake, BRIEF_FILE};
+use super::record::{Decision, DecisionKind};
+use super::status::{DocState, Rev};
+use super::{batch, hash, record, review, templates, Intake, BRIEF_FILE};
 use crate::knowledge::docs::DocSet;
 use anyhow::Result;
 use std::fmt::Write as _;
@@ -38,6 +42,31 @@ fn summary(text: &str) -> Option<String> {
     let lines = lint::section(&secs, SUMMARY)?;
     let s = lines.join("\n").trim().to_string();
     (!s.is_empty()).then_some(s)
+}
+
+/// Why `file` changed since its accepted revision `accepted` (`None`:
+/// none), up to the revision under review: each revision's note and each
+/// request for changes, newest first. Empty for a first revision.
+fn history(log: &[Decision], file: &str, accepted: Option<&Rev>, pending: u32) -> Vec<String> {
+    let (since, same) = accepted.map_or((0, ""), |a| (a.revision, a.sha256.as_str()));
+    log.iter()
+        .rev()
+        .filter(|d| d.file == file && d.revision > since && d.revision <= pending)
+        .filter_map(|d| match d.decision {
+            DecisionKind::Review if d.revision > 1 => Some(if !d.note.is_empty() {
+                format!("revision {}: {}", d.revision, d.note)
+            } else if d.sha256 == same {
+                format!("revision {}: unchanged, to confirm again", d.revision)
+            } else {
+                format!("revision {}: no note", d.revision)
+            }),
+            DecisionKind::NeedsRevision => Some(format!(
+                "revision {}, changes asked: {}",
+                d.revision, d.note
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The review pack of `intake`.
@@ -72,6 +101,10 @@ pub fn render(intake: &Intake) -> Result<String> {
     }
 
     let statuses = review::statuses(intake)?;
+    let log = record::read(intake)?;
+    let profile = std::fs::read_to_string(intake.dir.join(lint::OUTCOME))
+        .ok()
+        .and_then(|o| lint::profile(&o));
     let mut warnings = Vec::new();
     let mut changed = Vec::new();
     out.push_str("## Files under review\n\n");
@@ -97,12 +130,30 @@ pub fn render(intake: &Intake) -> Result<String> {
                  sent again.**\n"
             );
         }
+        if let Some(p) = profile
+            .as_deref()
+            .filter(|p| templates::is_standard(p, f, &text))
+        {
+            let _ = writeln!(
+                out,
+                "Standard text for a {p} intake — nothing of its own to decide.\n"
+            );
+            continue;
+        }
         match summary(&text) {
             Some(sum) => {
                 let _ = writeln!(out, "{}\n", demote(&sum).trim_end());
             }
             None if f.starts_with("tasks/") => {}
             None => out.push_str("_No summary._\n\n"),
+        }
+        let why = history(&log, f, s.accepted.as_ref(), pending.revision);
+        if !why.is_empty() {
+            out.push_str("Why it changed, newest first:\n\n");
+            for line in &why {
+                let _ = writeln!(out, "- {line}");
+            }
+            out.push('\n');
         }
         match &s.accepted {
             Some(a) => {

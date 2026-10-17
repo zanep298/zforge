@@ -6,7 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce TDD-first Rust testing in this project. Read this before writing any test.
+TDD-first Rust testing, for where the project's conventions and nearby tests
+are silent.
 Test command: the project's `project.test_command` (`.zforge/config.yaml`) —
 the prompt you work from names it.
 

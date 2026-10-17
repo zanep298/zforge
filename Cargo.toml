@@ -1,11 +1,11 @@
 [package]
 name = "zforge"
-version = "1.5.1"
+version = "1.5.0"
 edition = "2021"
-description = "TDD-first AI development workflow CLI"
+description = "Human-reviewed AI development CLI: intake → review → handover, then agents code and verify each task in its own git worktree"
 license = "MIT"
 repository = "https://github.com/zanep298/zforge"
-keywords = ["cli", "tdd", "ai", "workflow", "development"]
+keywords = ["cli", "ai", "agents", "workflow", "code-review"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.74"
 

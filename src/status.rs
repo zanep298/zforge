@@ -19,10 +19,37 @@ pub struct ProjectStatus {
     /// `zforge migrate` moves them.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub needs_migration: bool,
+    /// The zforge that last ran `zforge init` here, against this one.
+    pub init: InitVersion,
     /// Whether the project's own knowledge is onboarded (ONBOARD REQ-001):
     /// shown above the intakes, since it applies to the whole project.
     pub onboarding: OnboardingStatus,
     pub intakes: Vec<IntakeStatus>,
+}
+
+/// `zforge.version` from the project's config next to the running zforge:
+/// files `init` generated (agents, skills, settings, instructions) follow
+/// the zforge that wrote them, so a mismatch is worth an `init --force`.
+#[derive(Debug, Clone, Serialize)]
+pub struct InitVersion {
+    /// `None`: the config predates the key (an init before it existed).
+    pub recorded: Option<String>,
+    pub current: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+fn init_version(project_root: &Path) -> InitVersion {
+    let current = crate::cli::init::config_file::VERSION.to_string();
+    let recorded =
+        crate::cli::init::config_file::init_version(&project_root.join(".zforge/config.yaml"));
+    let next = (recorded.as_deref() != Some(current.as_str()))
+        .then(|| "`zforge init --force` to refresh what init generated".to_string());
+    InitVersion {
+        recorded,
+        current,
+        next,
+    }
 }
 
 /// One stale citation, named for `zforge status`'s `knowledge: N items
@@ -187,6 +214,7 @@ pub fn project(project_root: &Path) -> Result<ProjectStatus> {
     Ok(ProjectStatus {
         root: project_root.to_path_buf(),
         needs_migration: crate::migrate::project::needs_migration(project_root),
+        init: init_version(project_root),
         onboarding: onboarding_status(project_root),
         intakes,
     })
@@ -382,6 +410,7 @@ pub enum GlobalResult {
     Ok {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         needs_migration: bool,
+        init: InitVersion,
         onboarding: OnboardingStatus,
         intakes: Vec<IntakeStatus>,
     },
@@ -415,6 +444,7 @@ pub fn global(timeout: Duration) -> Result<Vec<GlobalRow>> {
             let result = match rx.recv_timeout(left) {
                 Ok(Ok(s)) => GlobalResult::Ok {
                     needs_migration: s.needs_migration,
+                    init: s.init,
                     onboarding: s.onboarding,
                     intakes: s.intakes,
                 },
@@ -488,6 +518,28 @@ mod tests {
 
         let next = next_step("F", &accepted, &[], None);
         assert!(next.contains("zforge readiness F"), "{next}");
+    }
+
+    #[test]
+    fn init_version_compares_the_config_with_this_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = tmp.path().join(".zforge/config.yaml");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        let current = crate::cli::init::config_file::VERSION;
+
+        std::fs::write(&cfg, "project:\n  name: app\n").unwrap();
+        let v = init_version(tmp.path());
+        assert_eq!(v.recorded, None);
+        assert!(v.next.is_some());
+
+        std::fs::write(&cfg, "zforge:\n  version: \"0.1.0\"\n").unwrap();
+        assert_eq!(init_version(tmp.path()).recorded.as_deref(), Some("0.1.0"));
+        assert!(init_version(tmp.path()).next.is_some());
+
+        std::fs::write(&cfg, format!("zforge:\n  version: \"{current}\"\n")).unwrap();
+        let v = init_version(tmp.path());
+        assert_eq!(v.recorded.as_deref(), Some(current));
+        assert_eq!(v.next, None);
     }
 
     #[test]

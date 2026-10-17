@@ -47,6 +47,11 @@ pub struct Manifest {
     /// an older manifest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub known_failures: Vec<String>,
+    /// Shared stakeholder questions files the handed-over files cite, with
+    /// their SHA-256 at handover (`intake::questions`): the answers the
+    /// contract relied on. Absent (empty) in an older manifest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<super::questions::Pin>,
     pub baseline: Baseline,
     pub policy: Policy,
     pub delivery: String,
@@ -152,6 +157,17 @@ pub fn create_as(
         }
     }
     let known_failures = knowledge::known::list(&k)?;
+    let mut pinned_texts = Vec::new();
+    for p in &r.files {
+        pinned_texts.push((
+            p.file.clone(),
+            super::record::read_snapshot(intake, &p.file, p.revision)?,
+        ));
+    }
+    let questions = super::crossref::pin_questions(
+        intake,
+        pinned_texts.iter().map(|(f, t)| (f.as_str(), t.as_str())),
+    )?;
     let manifest = Manifest {
         id: format!("HANDOVER-{n:03}"),
         intake: intake.id.clone(),
@@ -163,6 +179,7 @@ pub fn create_as(
         files: r.files,
         knowledge: knowledge_pins,
         known_failures,
+        questions,
         baseline: Baseline {
             branch: config.knowledge.baseline.clone(),
             commit,

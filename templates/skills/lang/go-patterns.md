@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce idiomatic Go in this project: error handling, interfaces, composition,
-and package organization. Read this before implementing any Go task.
+Idiomatic Go — error handling, interfaces, composition and package
+organization — for where the project's conventions and nearby code are silent.
 
 ## Error Handling
 

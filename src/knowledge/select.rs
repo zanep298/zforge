@@ -13,6 +13,12 @@
 //! 4. `domain.md` items whose module section the task names;
 //! 5. the remaining (module-specific, unrelated) conventions and rules.
 //!
+//! Tiers 3 and 5 — conventions and rules the task neither cites nor names
+//! a path of — also share a smaller budget of their own
+//! (`knowledge.general_limit`): a project with a hundred conventions would
+//! otherwise spend most of every prompt on ones about other modules. What
+//! does not fit it goes to the same index as what does not fit the limit.
+//!
 //! Conventions come before rules in every tier: how the code is laid out
 //! and written matters most to the code agent. The prompt shows what was
 //! taken grouped by file — conventions, rules, domain — each in its own
@@ -50,7 +56,7 @@ pub struct Selection {
     pub text: String,
     /// IDs of the items actually included in `text`.
     pub items: Vec<String>,
-    /// IDs that did not fit the byte limit.
+    /// IDs that did not fit the byte limit, or the general limit.
     pub omitted: Vec<String>,
     /// Absolute snapshot paths of the files an omitted item came from.
     pub snapshots: Vec<PathBuf>,
@@ -225,8 +231,15 @@ fn related(it: &Item, task_dirs: &[Vec<&str>]) -> bool {
 
 /// What `task` gets from `files` — the knowledge snapshots a handover
 /// pinned — read for `search_text`, the task's contract and its accepted
-/// stages concatenated: item IDs it cites, and the paths it names.
-pub fn for_task(files: &[PinnedFile], search_text: &str, limit: usize) -> Selection {
+/// stages concatenated: item IDs it cites, and the paths it names. At most
+/// `limit` bytes in all, of which conventions and rules unrelated to the
+/// task take at most `general_limit`.
+pub fn for_task(
+    files: &[PinnedFile],
+    search_text: &str,
+    limit: usize,
+    general_limit: usize,
+) -> Selection {
     if files.is_empty() {
         return Selection::default();
     }
@@ -288,6 +301,11 @@ pub fn for_task(files: &[PinnedFile], search_text: &str, limit: usize) -> Select
             6 + f
         }
     };
+    // Tiers 3, 4, 6, 7: conventions and rules unrelated to the task.
+    let is_general: Vec<bool> = candidates
+        .iter()
+        .map(|(pin, it)| matches!(tier(pin, it), 3 | 4 | 6 | 7))
+        .collect();
     let mut priority: Vec<(usize, usize)> = candidates
         .iter()
         .enumerate()
@@ -297,7 +315,13 @@ pub fn for_task(files: &[PinnedFile], search_text: &str, limit: usize) -> Select
     priority.sort();
     let priority: Vec<usize> = priority.into_iter().map(|(_, i)| i).collect();
 
-    build(&candidates, &priority, files, limit)
+    build(
+        &candidates,
+        &priority,
+        &is_general,
+        files,
+        (limit, general_limit),
+    )
 }
 
 /// One file's header in the prompt.
@@ -316,18 +340,21 @@ fn shows_sections(pin: &PinnedFile) -> bool {
 
 /// Take `candidates` in `priority` order while they fit `limit` — a
 /// file's header, and a domain section's, counted the first time
-/// something under it is taken — then render what was taken in prompt
-/// order, grouped by file.
+/// something under it is taken — and, for those `general` marks, also
+/// `general_limit`; then render what was taken in prompt order, grouped
+/// by file.
 fn build(
     candidates: &[(PinnedFile, Item)],
     priority: &[usize],
+    general: &[bool],
     files: &[PinnedFile],
-    limit: usize,
+    (limit, general_limit): (usize, usize),
 ) -> Selection {
     let mut taken = vec![false; candidates.len()];
     let mut files_open: BTreeSet<&str> = BTreeSet::new();
     let mut sections_open: BTreeSet<(&str, &str)> = BTreeSet::new();
     let mut budget = limit;
+    let mut general_budget = general_limit;
     let mut omitted_order = Vec::new();
 
     for &i in priority {
@@ -345,8 +372,12 @@ fn build(
         if new_section {
             cost += section_header(&it.section).len();
         }
-        if cost <= budget {
+        let fits_general = !general[i] || cost <= general_budget;
+        if cost <= budget && fits_general {
             budget -= cost;
+            if general[i] {
+                general_budget -= cost;
+            }
             taken[i] = true;
             files_open.insert(pin.file);
             if new_section {
@@ -454,7 +485,9 @@ fn omitted_block(
         listed += 1;
     }
     let mut out = format!(
-        "\nNot shown — over the knowledge prompt limit ({} item(s)), most relevant first:\n{index}",
+        "\nNot shown — over the knowledge prompt limit, or unrelated to this task's paths \
+         beyond `knowledge.general_limit` ({} item(s)); `zforge knowledge get <ID…>` prints \
+         any of them. Most relevant first:\n{index}",
         omitted_order.len()
     );
     let rest = omitted_order.len() - listed;
@@ -573,7 +606,7 @@ mod tests {
         let snaps = test_snaps();
         let files = pins(&r, &c, &d, &snaps);
         let search = "Constraints\n\nKnowledge: DOM-001\n";
-        let s = for_task(&files, search, 10_000);
+        let s = for_task(&files, search, 10_000, usize::MAX);
         assert_eq!(s.items, ["CONV-001", "RULE-001", "RULE-002", "DOM-001"]);
         assert!(s.text.find("### conventions.md") < s.text.find("### rules.md"));
         assert!(s.omitted.is_empty());
@@ -595,7 +628,7 @@ mod tests {
         let snaps = test_snaps();
         let files = pins(&r, &c, &d, &snaps);
         let search = "See `internal/audit/writer.rs` for the export path.";
-        let s = for_task(&files, search, 10_000);
+        let s = for_task(&files, search, 10_000, usize::MAX);
         assert!(s.items.contains(&"DOM-002".to_string()));
         assert!(!s.items.contains(&"DOM-001".to_string()));
     }
@@ -609,7 +642,7 @@ mod tests {
         let files = pins(&r, &c, &d, &snaps);
         // Room for conventions.md's header and CONV-001, nothing more.
         let limit = block_len("conventions.md", 2, &c, &["CONV-001"]);
-        let s = for_task(&files, "", limit);
+        let s = for_task(&files, "", limit, usize::MAX);
         assert_eq!(s.items, ["CONV-001"]);
         assert_eq!(s.omitted, ["RULE-001", "RULE-002"]);
         // domain.md is never cited by the empty search text, so nothing of
@@ -640,7 +673,7 @@ mod tests {
         let snaps = test_snaps();
         let files = pins(&r, &c, &d, &snaps);
         let limit = block_len("conventions.md", 2, &c, &["CONV-001"]) + 5;
-        let s = for_task(&files, "", limit);
+        let s = for_task(&files, "", limit, usize::MAX);
         assert_eq!(s.items, ["CONV-001"]);
         assert!(s.omitted.contains(&"RULE-001".to_string()));
     }
@@ -673,14 +706,62 @@ mod tests {
         let search = "## Output\n\n- `internal/module/referral_program/handler/claim.go`\n";
         let limit = block_len("conventions.md", 2, &c, &["CONV-001"])
             + block_len("rules.md", 3, &r, &["RULE-001"]);
-        let s = for_task(&files, search, limit);
+        let s = for_task(&files, search, limit, usize::MAX);
         assert_eq!(s.items, ["CONV-001", "RULE-001"], "{}", s.text);
         assert_eq!(s.omitted, ["CONV-002", "RULE-002"]);
 
         // Without the path, the general convention is the one that fits.
         let limit = block_len("conventions.md", 2, &c, &["CONV-002"]);
-        let s = for_task(&files, "", limit);
+        let s = for_task(&files, "", limit, usize::MAX);
         assert_eq!(s.items, ["CONV-002"]);
+    }
+
+    /// Conventions and rules unrelated to the task share
+    /// `knowledge.general_limit`; cited and path-related ones do not count
+    /// against it, and what it leaves out is indexed like anything over the
+    /// limit.
+    #[test]
+    fn unrelated_items_are_capped_by_the_general_limit() {
+        let (r, c, d) = (go_rules(), go_conventions(), domain());
+        let snaps = test_snaps();
+        let files = pins(&r, &c, &d, &snaps);
+        let search = "## Output\n\n- `internal/module/referral_program/handler/claim.go`\n";
+
+        let s = for_task(&files, search, 10_000, 0);
+        assert_eq!(s.items, ["CONV-001", "RULE-001"], "{}", s.text);
+        assert_eq!(s.omitted, ["CONV-002", "RULE-002"]);
+        assert!(
+            s.text.contains("- CONV-002 — errors wrap with %w."),
+            "{}",
+            s.text
+        );
+        assert!(s.text.contains("knowledge.general_limit"), "{}", s.text);
+
+        // Room in the general budget for one general item: the convention.
+        let one = block_len("conventions.md", 2, &c, &["CONV-002"]);
+        let s = for_task(&files, search, 10_000, one);
+        assert_eq!(s.items, ["CONV-001", "CONV-002", "RULE-001"]);
+        assert_eq!(s.omitted, ["RULE-002"]);
+
+        // A cited item is never held back by it.
+        let s = for_task(&files, "Knowledge: RULE-002", 10_000, 0);
+        assert_eq!(s.items, ["RULE-002"]);
+    }
+
+    /// Conventions of another module count as unrelated too.
+    #[test]
+    fn another_modules_conventions_are_capped_by_the_general_limit() {
+        let c = "## internal/billing\n- CONV-001: invoices round half-even. \
+                 (internal/billing/round.go:3)\n"
+            .to_string();
+        let (r, d) = (String::new(), String::new());
+        let snaps = test_snaps();
+        let files = pins(&r, &c, &d, &snaps);
+        let s = for_task(&files, "`internal/token/refresh.go`", 10_000, 0);
+        assert!(s.items.is_empty(), "{}", s.text);
+        assert_eq!(s.omitted, ["CONV-001"]);
+        let s = for_task(&files, "`internal/billing/tax.go`", 10_000, 0);
+        assert_eq!(s.items, ["CONV-001"], "related by path");
     }
 
     /// A cited ID comes first, whatever its file.
@@ -690,7 +771,7 @@ mod tests {
         let snaps = test_snaps();
         let files = pins(&r, &c, &d, &snaps);
         let limit = block_len("rules.md", 3, &r, &["RULE-002"]);
-        let s = for_task(&files, "Knowledge: RULE-002", limit);
+        let s = for_task(&files, "Knowledge: RULE-002", limit, usize::MAX);
         assert_eq!(s.items, ["RULE-002"]);
     }
 
@@ -703,9 +784,9 @@ mod tests {
         let snaps = test_snaps();
         let files = pins(&r, &c, &d, &snaps);
         let search = "`internal/module/referral_program/handler/claim.go`";
-        let s = for_task(&files, search, 0);
+        let s = for_task(&files, search, 0, usize::MAX);
         assert!(s.items.is_empty());
-        let index = s.text.split("most relevant first:\n").nth(1).unwrap();
+        let index = s.text.split("Most relevant first:\n").nth(1).unwrap();
         let lines: Vec<&str> = index.lines().take(4).collect();
         assert_eq!(
             lines,
@@ -738,7 +819,7 @@ mod tests {
         let (r, d) = (rules(), domain());
         let snaps = test_snaps();
         let files = pins(&r, &c, &d, &snaps);
-        let s = for_task(&files, "", 0);
+        let s = for_task(&files, "", 0, usize::MAX);
         assert_eq!(s.omitted.len(), 202);
         let index_lines: Vec<&str> = s
             .text
@@ -806,7 +887,7 @@ mod tests {
     /// AC-05 (selection level): no pinned files select nothing.
     #[test]
     fn no_files_selects_nothing() {
-        let s = for_task(&[], "Knowledge: DOM-001", 10_000);
+        let s = for_task(&[], "Knowledge: DOM-001", 10_000, usize::MAX);
         assert_eq!(s, Selection::default());
         assert!(s.text.is_empty());
     }

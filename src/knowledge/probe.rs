@@ -407,6 +407,7 @@ mod tests {
                 name: "p".into(),
                 language: language.into(),
                 test_command: test_command.into(),
+                integration_command: None,
             },
             paths: Default::default(),
             runner: Default::default(),

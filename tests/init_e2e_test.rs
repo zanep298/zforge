@@ -79,9 +79,9 @@ exit 0
         self.root.path().join(name)
     }
 
-    fn zforge(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_zforge"))
-            .args(args)
+    fn command(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_zforge"));
+        cmd.args(args)
             .current_dir(&self.project)
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", self.stub_dir.display()))
@@ -89,10 +89,34 @@ exit 0
             .env("ZFORGE_HOME", self.dir("zf"))
             .env("CODEX_HOME", self.dir("codex"))
             .env("XDG_CONFIG_HOME", self.dir("xdg"))
-            .env("CLAUDE_CONFIG_DIR", self.dir("claude"))
+            .env("CLAUDE_CONFIG_DIR", self.dir("claude"));
+        cmd
+    }
+
+    fn zforge(&self, args: &[&str]) -> Output {
+        self.command(args)
             .stdin(Stdio::null())
             .output()
             .expect("run zforge")
+    }
+
+    /// `zforge args` with `input` on stdin (e.g. init's "Update it?").
+    fn zforge_with_input(&self, args: &[&str], input: &str) -> Output {
+        use std::io::Write;
+        let mut child = self
+            .command(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run zforge");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().expect("wait for zforge")
     }
 
     fn init(&self, extra: &[&str]) -> Output {
@@ -728,4 +752,82 @@ fn git_exclude_keeps_everything_init_writes_out_of_git() {
         1
     );
     assert!(refreshed.lines().any(|l| l == "/.zforge/"));
+}
+
+/// After an upgrade, a plain `zforge init` (no `--force`) brings the global
+/// store and the files it renders into the project to this version: what
+/// an earlier zforge wrote and nobody changed is updated, an edit is kept
+/// and reported (`crate::shipped`).
+#[test]
+fn plain_init_refreshes_what_an_older_zforge_wrote_and_keeps_edits() {
+    fn sha(text: &str) -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(text.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+    /// Make `rel` under `root` look written by an older zforge: content
+    /// `old`, recorded in the manifest at `manifest`.
+    fn age(root: &Path, manifest: &Path, rel: &str, old: &str) {
+        std::fs::write(root.join(rel), old).unwrap();
+        let mut m: Value =
+            serde_json::from_str(&std::fs::read_to_string(manifest).unwrap()).unwrap();
+        m["version"] = "0.0.1".into();
+        m["files"][rel] = sha(old).into();
+        std::fs::write(manifest, serde_json::to_string(&m).unwrap()).unwrap();
+    }
+
+    let env = Env::new(&CLIENTS);
+    env.init(&["--agent", "claude"]);
+    let store = env.dir("zf");
+    let store_manifest = store.join(".shipped.json");
+    let project_manifest = env.project.join(".zforge/.shipped.json");
+    assert!(store_manifest.exists() && project_manifest.exists());
+    let fresh_intake = std::fs::read_to_string(store.join("skills/intake.md")).unwrap();
+    let fresh_skill = env.read(".claude/skills/zforge-review-patch/SKILL.md");
+    let fresh_agent = env.read(".claude/agents/code-agent.md");
+
+    age(&store, &store_manifest, "skills/intake.md", "OLD INTAKE");
+    age(
+        &env.project,
+        &project_manifest,
+        ".claude/skills/zforge-review-patch/SKILL.md",
+        "---\nname: zforge-review-patch\n---\nOLD",
+    );
+    age(
+        &env.project,
+        &project_manifest,
+        ".claude/agents/code-agent.md",
+        "OLD AGENT",
+    );
+    std::fs::write(
+        env.project.join(".claude/agents/review-agent.md"),
+        "MY REVIEWER",
+    )
+    .unwrap();
+
+    let out = env.zforge_with_input(&["init", "--no-install", "--agent", "claude"], "y\n");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+
+    assert_eq!(
+        std::fs::read_to_string(store.join("skills/intake.md")).unwrap(),
+        fresh_intake
+    );
+    assert!(stderr.contains("1 updated"), "{stderr}");
+    assert_eq!(
+        env.read(".claude/skills/zforge-review-patch/SKILL.md"),
+        fresh_skill
+    );
+    assert_eq!(env.read(".claude/agents/code-agent.md"), fresh_agent);
+    assert_eq!(env.read(".claude/agents/review-agent.md"), "MY REVIEWER");
+    assert!(
+        stdout.contains("kept .claude/agents/review-agent.md"),
+        "{stdout}"
+    );
+    let m: Value =
+        serde_json::from_str(&std::fs::read_to_string(&store_manifest).unwrap()).unwrap();
+    assert_eq!(m["version"].as_str(), Some(env!("CARGO_PKG_VERSION")));
 }

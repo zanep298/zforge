@@ -2076,6 +2076,71 @@ fn an_approved_review_lets_the_run_be_verified() {
     assert!(prompt.contains("git diff "), "{prompt}");
 }
 
+/// A task's accepted `review: true` asks for a review in a project that
+/// has it off.
+#[test]
+fn a_task_can_ask_for_a_review_the_project_does_not() {
+    let p = Project::new(3.0, 2);
+    p.amend(
+        "tasks/TASK-001.md",
+        "depends_on: []",
+        "depends_on: []\nreview: true",
+    );
+    p.hand_over_again();
+    p.stub(&coder_and_reviewer(
+        &p,
+        "true",
+        "- lib.sh: correct\nVERDICT: APPROVE",
+    ));
+    let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        p.count("RUN-001", "reviewed"),
+        1,
+        "{:?}",
+        p.events("RUN-001")
+    );
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+    assert_eq!(p.agent_calls(), 2);
+}
+
+/// A task's accepted `review: false` skips the review the project asks for.
+#[test]
+fn a_task_can_skip_the_review_the_project_asks_for() {
+    let p = Project::new(3.0, 2);
+    enable_review(&p);
+    p.amend(
+        "tasks/TASK-001.md",
+        "depends_on: []",
+        "depends_on: []\nreview: false",
+    );
+    p.hand_over_again();
+    p.stub(&coder_and_reviewer(&p, "true", "VERDICT: CHANGES"));
+    let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(p.count("RUN-001", "review_started"), 0);
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+    assert_eq!(p.agent_calls(), 1);
+}
+
+/// Before its first attempt the code agent is told which tests it may not
+/// change — here the script the test command names.
+#[test]
+fn the_first_prompt_names_the_tests_the_agent_must_not_change() {
+    let p = Project::new(3.0, 2);
+    p.stub(&fix_and_report());
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(prompt.contains("## Tests you must not change"), "{prompt}");
+    assert!(
+        prompt.contains("`test.sh` (named by the test command)"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("write a change request"), "{prompt}");
+    assert!(!prompt.contains("{{protected_tests}}"), "{prompt}");
+}
+
 /// The review's findings go back to the coder, whose next attempt is
 /// reviewed again.
 #[test]

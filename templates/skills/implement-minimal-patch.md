@@ -8,7 +8,7 @@ directly required by the current task.
 
 ## When to Use
 
-- During every coding step
+- While implementing any task
 - When reviewing whether a changeset is appropriately scoped
 - When deciding whether to include a "while I'm here" fix
 

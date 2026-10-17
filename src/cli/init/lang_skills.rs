@@ -16,15 +16,17 @@ pub(crate) fn build_lang_skills_section(
     let rows: Vec<String> = skills
         .iter()
         .map(|(name, _)| {
-            format!(
-                "| `{}/{}` | {} patterns and testing |",
-                skills_dir, name, language
-            )
+            let stem = std::path::Path::new(name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let (purpose, _) = super::claude_skills::language_skill(language, &stem);
+            format!("| `{}/{}` | {} |", skills_dir, name, purpose)
         })
         .collect();
     format!(
-        "## Language Skills\n\nRead these before writing any {} code:\n\n| File | Purpose |\n|------|---------|\n{}\n",
-        language,
+        "## Language Skills\n\nGeneral {} checklists — the project's conventions and nearby code win where they differ:\n\n| File | Purpose |\n|------|---------|\n{}\n",
+        super::claude_skills::language_label(language),
         rows.join("\n")
     )
 }
@@ -96,6 +98,15 @@ mod tests {
         assert!(section.contains("|------|---------|\n| `.zforge/skills/flutter-patterns.md`"));
         let shared = build_lang_skills_section("flutter", &skills, "/home/u/.zforge/skills");
         assert!(shared.contains("| `/home/u/.zforge/skills/flutter-patterns.md`"));
+        assert!(section.contains("General Flutter (Dart) checklists"));
+        // Each row says what its checklist is for, from the native catalog.
+        let (patterns, _) =
+            crate::cli::init::claude_skills::language_skill("flutter", "flutter-patterns");
+        assert!(section.contains(&format!(
+            "| `.zforge/skills/flutter-patterns.md` | {patterns} |"
+        )));
+        assert!(section.contains("General Flutter (Dart) testing checklist"));
+        assert!(!section.contains("patterns and testing"));
     }
 
     #[test]

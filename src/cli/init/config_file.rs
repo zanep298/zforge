@@ -5,10 +5,10 @@
 //! models.yaml, then `init --force`") reset the very models it was meant to
 //! apply. Refresh now leaves user-owned content alone:
 //!
-//! - zforge-managed keys — `runner.default`, `paths.agents`,
-//!   `paths.skills` — are set from the current init, because they encode
-//!   the choices made by this run (`--agent`, `--default-runner`, local vs
-//!   shared);
+//! - zforge-managed keys — `zforge.version`, `runner.default`,
+//!   `paths.agents`, `paths.skills` — are set from the current init,
+//!   because they encode the choices made by this run (`--agent`,
+//!   `--default-runner`, local vs shared) and the zforge that made them;
 //! - everything else (project name, language, test command, execution
 //!   policy, knowledge baseline) is only written when the file is created.
 //!
@@ -33,16 +33,31 @@ pub(crate) const EXECUTION_BLOCK: &str = "execution:
   # Safety net for a hung agent call, in seconds; the budget should stop a
   # working one first.
   # agent_timeout_secs: 3600
+  # Limit on one run of the test command while verifying, in seconds.
+  # test_timeout_secs: 300
   # Keep a verified run's worktree; by default it is removed once the run's
   # output is sealed on its branch (failed runs always keep theirs).
   # keep_worktrees: true
+  # Output that marks a failing integration check as the environment's fault
+  # (retried once; built in: Docker, testcontainers, connection refused, …).
+  # infra_patterns: [\"database system is starting up\"]
 ";
 
+/// The zforge that writes the config, recorded as `zforge.version` by every
+/// init so `zforge status` can tell when the project was set up by another.
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Template for a fresh config. Placeholders are filled by [`render_fresh`].
-const CONFIG_TEMPLATE: &str = r#"project:
+const CONFIG_TEMPLATE: &str = r#"zforge:
+  # The zforge that last ran `zforge init` here; every init sets it.
+  version: "{{version}}"
+project:
   name: ""
   language: "{{language}}"
   test_command: "{{test_command}}"
+  # What an integration run checks when a handover's breakdown has no
+  # "Integration verification" code block (default: test_command).
+  # integration_command: "ENABLE_INTEGRATION_TEST=true go test ./test/..."
 runner:
   default: "{{default_runner}}"
 paths:
@@ -51,6 +66,10 @@ paths:
 {{execution}}knowledge:
   # The branch "integrated" is judged against.
   baseline: main
+  # Bytes of a run's prompt for conventions/rules unrelated to the task
+  # (not cited, not about the paths it names); the rest are listed by ID
+  # and title. 0 = list them only.
+  # general_limit: 8000
   # Reference docs outside the reviewed knowledge (e.g. a team's
   # cross-service docs): listed in INDEX.md, searched by
   # `zforge knowledge get --grep … --extra`, readable without prompts.
@@ -74,6 +93,7 @@ pub(crate) enum ConfigWrite {
 pub(crate) fn render_fresh(language: &str, test_command: &str, managed: &Managed<'_>) -> String {
     CONFIG_TEMPLATE
         .replace("{{execution}}", EXECUTION_BLOCK)
+        .replace("{{version}}", VERSION)
         .replace("{{language}}", &yaml_escape(language))
         .replace("{{test_command}}", &yaml_escape(test_command))
         .replace("{{default_runner}}", &yaml_escape(managed.default_runner))
@@ -109,6 +129,7 @@ pub(crate) fn write_config(
     })?;
     let before = doc.clone();
     let updates = [
+        ("zforge", "version", VERSION),
         ("runner", "default", managed.default_runner),
         ("paths", "agents", managed.paths.config_agents.as_str()),
         ("paths", "skills", managed.paths.config_skills.as_str()),
@@ -231,6 +252,17 @@ fn set(doc: &mut Value, keys: &[&str], value: &str) {
     }
 }
 
+/// `zforge.version` of the config at `path`: the zforge that last ran init
+/// there. `None` when the file is unreadable or predates the key.
+pub(crate) fn init_version(path: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let doc: Value = serde_yaml::from_str(&raw).ok()?;
+    match doc.get("zforge")?.get("version")? {
+        Value::String(s) => Some(s.clone()),
+        v => serde_yaml::to_string(v).ok().map(|s| s.trim().to_string()),
+    }
+}
+
 /// Escape for a double-quoted YAML scalar.
 fn yaml_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -262,6 +294,32 @@ mod tests {
         assert_eq!(cfg.default_runner(), "codex");
         assert_eq!(cfg.paths.skills, Path::new("/opt/zf/skills"));
         assert_eq!(cfg.paths.agents, Path::new("/opt/zf/agents"));
+        assert_eq!(init_version(&path).as_deref(), Some(VERSION));
+    }
+
+    #[test]
+    fn reinit_records_the_running_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.yaml");
+        let old = "zforge:\n  version: \"0.1.0\" # old\nproject:\n  name: app\n";
+        std::fs::write(&path, old).unwrap();
+        let local = StorePaths::local();
+        write_config(&path, "rust", "cargo test", &managed("claude", &local)).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            out.contains(&format!("  version: \"{VERSION}\" # old\n")),
+            "{out}"
+        );
+        assert_eq!(init_version(&path).as_deref(), Some(VERSION));
+    }
+
+    #[test]
+    fn a_config_without_the_key_has_no_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.yaml");
+        std::fs::write(&path, "project:\n  name: app\n").unwrap();
+        assert_eq!(init_version(&path), None);
+        assert_eq!(init_version(&tmp.path().join("missing.yaml")), None);
     }
 
     // FIX-017: re-init keeps what the user edited, updates what init owns.
@@ -337,7 +395,8 @@ paths:
                 "default: \"codex\"   # the usual",
             )
             .replace("agents: ./.zforge/agents", "agents: \"/opt/zf/agents\"")
-            .replace("skills: ./.zforge/skills", "skills: \"/opt/zf/skills\"");
+            .replace("skills: ./.zforge/skills", "skills: \"/opt/zf/skills\"")
+            + &format!("\nzforge:\n  version: \"{VERSION}\"\n");
         assert_eq!(out, expected);
     }
 

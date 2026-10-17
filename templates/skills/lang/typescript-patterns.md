@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce idiomatic TypeScript in this project: type safety, error handling,
-async patterns, and module organization. Read this before implementing any task.
+Idiomatic TypeScript — type safety, error handling, async patterns and module
+organization — for where the project's conventions and nearby code are silent.
 
 ## Type Safety
 

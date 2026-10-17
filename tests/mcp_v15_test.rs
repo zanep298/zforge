@@ -125,6 +125,7 @@ fn the_transport_offers_no_way_to_decide() {
         "readiness",
         "knowledge_index",
         "knowledge_get",
+        "questions_status",
         "run_start",
         "run_status",
         "run_cancel",
@@ -522,4 +523,42 @@ fn status_shows_each_intake_and_its_next_step() {
             .contains("zforge intake review F"),
         "{s}"
     );
+}
+
+/// `intake_new` with `tiny: true` writes the one task with the intake;
+/// `small` and `tiny` together are refused; `intake_status` hints at the
+/// tiny profile for a full intake with one task.
+#[test]
+fn an_agent_creates_a_tiny_intake() {
+    let p = Project::new();
+    let frames = p.mcp(&[
+        call(1, "intake_new", json!({"intake_id": "T", "tiny": true})),
+        call(
+            2,
+            "intake_new",
+            json!({"intake_id": "U", "tiny": true, "small": true}),
+        ),
+        call(3, "intake_new", json!({"intake_id": "F"})),
+        call(
+            4,
+            "intake_task",
+            json!({"intake_id": "F", "task_id": "TASK-001"}),
+        ),
+        call(5, "intake_status", json!({"intake_id": "F"})),
+        call(6, "intake_status", json!({"intake_id": "T"})),
+    ]);
+    assert!(text(&frames[0]).contains("tiny profile"), "{:?}", frames[0]);
+    let d = p.root.join(".zforge/intakes/T");
+    assert!(d.join("tasks/TASK-001.md").is_file());
+    let outcome = std::fs::read_to_string(d.join("01-outcome.md")).unwrap();
+    assert!(outcome.starts_with("---\nprofile: tiny\n---"), "{outcome}");
+    assert!(text(&frames[1]).contains("not both"), "{:?}", frames[1]);
+    assert!(!p.root.join(".zforge/intakes/U").exists());
+    let status: Value = serde_json::from_str(&text(&frames[4])).unwrap();
+    assert!(
+        status["hint"].as_str().unwrap().contains("--tiny"),
+        "{status}"
+    );
+    let status: Value = serde_json::from_str(&text(&frames[5])).unwrap();
+    assert!(status["hint"].is_null(), "{status}");
 }

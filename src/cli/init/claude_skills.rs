@@ -36,17 +36,17 @@ struct BaseSkill {
 const BASE: &[BaseSkill] = &[
     BaseSkill {
         source: "write-tests-first.md",
-        description: "TDD discipline: write the failing test first, confirm it fails for the right reason, then implement. Use before writing any production code.",
+        description: "Test-first discipline: one acceptance criterion (AC-nn) at a time — write its failing test, see it fail for the right reason under the project's test command, then implement. Use when implementing a task contract or adding behavior or a bug fix to production code.",
         phases: &["code"],
     },
     BaseSkill {
         source: "implement-minimal-patch.md",
-        description: "Make the smallest working change that satisfies the task contract and passes the tests, without unrelated refactors. Use while implementing a task.",
+        description: "Make the smallest change that satisfies the task contract and passes the tests — no unrelated refactors, conventions of the surrounding code, generated files regenerated not edited; when the contract's output, interface or binding decisions must change, write a change request instead. Use while implementing a task.",
         phases: &["code"],
     },
     BaseSkill {
         source: "review-patch.md",
-        description: "Review a change against its task contract: every acceptance criterion met and tested, nothing outside the scope, no weakened tests, risks named. Use when reviewing a run's work or any change made for a zforge task.",
+        description: "Review a change against its zforge task contract: every AC-nn met and proven by a test the test command runs, nothing outside the scope, binding decisions kept, no weakened tests, regression risk named; findings as '- ' lines, then exactly one VERDICT: APPROVE or VERDICT: CHANGES. Use when reviewing a run's work or any change made for a zforge task.",
         phases: &["review"],
     },
     BaseSkill {
@@ -56,7 +56,7 @@ const BASE: &[BaseSkill] = &[
     },
     BaseSkill {
         source: "intake.md",
-        description: "Prepare a zforge v1.5 intake with the user — outcome, behavior, solution, breakdown and leaf task contracts under .zforge/intakes/ — and send each file for review. Use when a request should be clarified and broken down before implementation, or when `zforge intake status` shows files to write or revise.",
+        description: "Prepare a zforge intake with the user — 01-outcome, 02-behavior, 03-solution, 04-breakdown and leaf task contracts under .zforge/intakes/ — send it for review and present the pack; only the user accepts or hands over. Use when a feature, change or fix should be clarified and broken down before implementation, or when zforge intake status shows files to write or revise.",
         phases: &[],
     },
     BaseSkill {
@@ -76,12 +76,12 @@ const BASE: &[BaseSkill] = &[
     },
     BaseSkill {
         source: "security-review.md",
-        description: "Find security vulnerabilities in a changeset before merge: injection, authn/authz, secrets, unsafe input handling, dependency risks. Use when a change touches user input, auth, data access or external calls.",
+        description: "Find security vulnerabilities in a changeset before merge: injection, authn/authz, secrets, unsafe input handling, dependency risks. Use when a change touches user input, auth, data access or external calls. Findings are reported in the final message, never written to a file.",
         phases: &[],
     },
     BaseSkill {
         source: "performance-optimize.md",
-        description: "Fix a measurable performance problem using data: measure, locate the bottleneck, change one thing, measure again. Use when a task is about speed, memory or resource use.",
+        description: "Fix a measured performance problem with data: baseline, locate the bottleneck, change one thing, measure again. Use when something is measurably too slow or uses too much memory or CPU — not for writing new code efficiently, which the language checklists cover.",
         phases: &[],
     },
     BaseSkill {
@@ -96,7 +96,7 @@ const BASE: &[BaseSkill] = &[
     },
     BaseSkill {
         source: "backend/observability.md",
-        description: "Add logs, metrics and traces that make failures diagnosable. Use when a change affects request handling, background work, external calls or failure paths.",
+        description: "Add logs, metrics and traces that make failures diagnosable without leaking sensitive data. Use when adding or changing logging, metrics, tracing or alerts, or when a change adds a failure path that must be diagnosable in production.",
         phases: &[],
     },
     BaseSkill {
@@ -121,7 +121,7 @@ const BASE: &[BaseSkill] = &[
     },
     BaseSkill {
         source: "frontend/figma-to-ui.md",
-        description: "Turn Figma designs or Figma MCP output into faithful, maintainable UI code. Use when implementing a design.",
+        description: "Turn Figma designs or Figma MCP output into faithful, maintainable UI code using the project's existing components and tokens. Use when a task includes a Figma link, Figma MCP output or a visual design to implement.",
         phases: &[],
     },
     BaseSkill {
@@ -152,7 +152,7 @@ fn native_name(source: &str) -> String {
     format!("{PREFIX}{stem}")
 }
 
-fn language_label(lang: &str) -> &'static str {
+pub(crate) fn language_label(lang: &str) -> &'static str {
     match lang {
         "rust" => "Rust",
         "go" => "Go",
@@ -166,29 +166,39 @@ fn language_label(lang: &str) -> &'static str {
 }
 
 /// Description and whether the code agent preloads it, by file-name shape.
-/// Core `<lang>-patterns` / `<lang>-testing` are preloaded; UI and
-/// device-level variants stay model-invocable to keep the agent's context
-/// lean.
-fn language_skill(lang: &str, stem: &str) -> (String, bool) {
+/// Core `<lang>-patterns` / `<lang>-testing` (and Go's `go-memory`) are
+/// preloaded; UI and device-level variants stay model-invocable to keep the
+/// agent's context lean.
+pub(crate) fn language_skill(lang: &str, stem: &str) -> (String, bool) {
     let l = language_label(lang);
     if stem.ends_with("-ui-patterns") || stem.ends_with("-compose-ui") {
         (
             format!("{l} UI patterns for screens and reusable components. Use when building or changing {l} UI."),
             false,
         )
-    } else if stem.ends_with("-instrumented-testing") || stem.ends_with("-snapshot-accessibility") {
+    } else if stem.ends_with("-instrumented-testing") {
         (
-            format!("{l} device-level, snapshot and accessibility testing. Use when UI or platform integration needs test coverage beyond unit tests."),
+            format!("{l} instrumented (on-device) tests, only where JVM tests cannot cover the behavior: device APIs, navigation, permissions, Compose UI. Use when a change needs on-device test coverage."),
             false,
+        )
+    } else if stem.ends_with("-snapshot-accessibility") {
+        (
+            format!("{l} snapshot and accessibility checks for screens, reusable components and visual states. Use when a UI change needs visual-regression or accessibility coverage."),
+            false,
+        )
+    } else if stem == "go-memory" {
+        (
+            "Keep memory bounded and allocations low in Go backend code: bounded input, goroutines that end, closed bodies and rows, hot-path allocations, retained slices. Use when writing or changing handlers, workers, consumers or other per-request code; for a measured memory problem use zforge-performance-optimize.".to_string(),
+            true,
         )
     } else if stem.ends_with("-testing") {
         (
-            format!("How this project writes and runs {l} tests: structure, naming, fixtures, the test command. Use before adding or changing {l} tests."),
+            format!("General {l} testing checklist — test-first, structure, naming, fixtures — to apply where the project's own tests show no pattern; run tests only with the project's test command. Use before adding or changing {l} tests."),
             true,
         )
     } else {
         (
-            format!("{l} conventions for this project: idioms, error handling, module organization. Use before writing or changing {l} code."),
+            format!("General {l} idioms — error handling, types, module organization — to apply where the project's own conventions and the surrounding code are silent. Use before writing or changing {l} code."),
             true,
         )
     }
@@ -325,16 +335,31 @@ pub(crate) fn write(project_root: &Path, vars: &Vars, force: bool) -> Result<Wri
             report.removed.push(name);
         }
     }
-    for skill in &skills {
-        let path = dir.join(&skill.name).join("SKILL.md");
-        if path.exists() && !force {
-            report.kept += 1;
-            continue;
+    // Brought to this version (`crate::shipped`): a skill zforge wrote and
+    // nobody changed since is updated; an edited one is kept. One written
+    // before the project's manifest existed is replaced (old copy archived)
+    // when it carries zforge's marker, kept otherwise.
+    let files: Vec<(String, String)> = skills
+        .iter()
+        .map(|skill| {
+            (
+                format!(".claude/skills/{}/SKILL.md", skill.name),
+                render(skill, vars),
+            )
+        })
+        .collect();
+    let sync = super::sync_project(project_root, &files, force, &|rel| {
+        let dir = Path::new(rel).parent().unwrap_or(Path::new(rel));
+        if is_generated_by_zforge(&project_root.join(dir)) {
+            crate::shipped::Unrecorded::Replace
+        } else {
+            crate::shipped::Unrecorded::Keep
         }
-        crate::fs::writer::write_file(&path, &render(skill, vars))?;
-        report.written += 1;
-    }
+    })?;
+    report.written = sync.written();
+    report.kept = sync.kept.len() + sync.current;
     report.total = skills.len();
+    report.sync = sync;
     Ok(report)
 }
 
@@ -344,6 +369,8 @@ pub(crate) struct WriteReport {
     pub written: usize,
     pub kept: usize,
     pub removed: Vec<String>,
+    /// What the refresh did, file by file.
+    pub sync: crate::shipped::Report,
 }
 
 /// Skills section of CLAUDE.md, generated from the catalog so the document
@@ -436,6 +463,13 @@ mod tests {
                 "zforge-rust-testing",
             ]
         );
+    }
+
+    #[test]
+    fn go_code_agent_preloads_the_memory_checklist() {
+        let code = required_for("code", "go");
+        assert!(code.contains(&"zforge-go-memory".to_string()));
+        assert!(sources_for("code", "go").contains(&"go-memory.md".to_string()));
     }
 
     // UI/device variants stay invocable, not preloaded.

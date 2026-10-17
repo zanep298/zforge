@@ -15,7 +15,7 @@
 //! allotment as spent.
 
 use super::contract::{self, Contract};
-use super::record::{self, Run, RunEvent, RunKind, RunMeta, RunState, RunStatus};
+use super::record::{self, Run, RunEvent, RunKind, RunMeta, RunState, RunStatus, Start};
 use super::worktree;
 use crate::config::Config;
 use crate::orchestrator::agent_args::{named_agent_for, NamedAgent};
@@ -33,8 +33,6 @@ pub const RUNNER: &str = "claude";
 const MIN_ALLOTMENT_USD: f64 = 0.01;
 /// Lines of test output handed back to the agent after a failed verification.
 const FEEDBACK_LINES: usize = 60;
-/// Test suite time limit.
-const TEST_TIMEOUT_SECS: u64 = 300;
 /// The result subtype Claude reports when `--max-budget-usd` stopped the
 /// agent.
 const BUDGET_EXHAUSTED: &str = "error_max_budget_usd";
@@ -107,6 +105,35 @@ pub fn create(
         .or(start),
         false => start,
     };
+    record_run(project_root, &c, task, retry_of, start)
+}
+
+/// Record a run that does the conflict's later task again on top of the
+/// outputs it would not merge with (`start::stacked`).
+pub fn create_stacked(
+    project_root: &Path,
+    handover_id: &str,
+    conflict: &super::start::Conflict,
+) -> Result<Run> {
+    let task = &conflict.later.task;
+    let c = contract::load(project_root, handover_id, task)?;
+    let start = super::start::stacked(
+        project_root,
+        &c.intake,
+        &c.manifest.id,
+        &c.depends_on,
+        conflict,
+    )?;
+    record_run(project_root, &c, task, None, Some(start))
+}
+
+fn record_run(
+    project_root: &Path,
+    c: &Contract,
+    task: &str,
+    retry_of: Option<&str>,
+    start: Option<Start>,
+) -> Result<Run> {
     let spent = spent_before(project_root, &c.intake, &c.manifest.id, task)?;
     let left = c.manifest.policy.budget_usd - spent;
     if left < MIN_ALLOTMENT_USD {
@@ -209,12 +236,52 @@ fn prepare(project_root: &Path, meta: &RunMeta) -> Result<(Contract, Config, Age
                 &meta.baseline_commit,
             )?);
         }
+        if let Some(rebased) = &start.rebased {
+            contract.previous_attempt = Some(rebased_attempt(project_root, rebased)?);
+        }
     }
+    // Told before the first attempt, from the tree the agent starts on: a
+    // protected test edited by mistake costs a whole attempt.
+    contract.protected_tests = guard_for(&config, &contract, &wt.path).brief(
+        &super::guard::tracked(&wt.path)?,
+        &contract.task_file().text,
+    );
     report_claude_config(
         &meta.id,
         &super::agent_env::bring_claude_config(project_root, &wt.path)?,
     );
     Ok((contract, config, spec, timeout))
+}
+
+/// The tests a run of `contract` may not change, in `work_dir`.
+fn guard_for(config: &Config, contract: &Contract, work_dir: &Path) -> super::guard::Guard {
+    super::guard::Guard::new(
+        config.execution.protected_tests.as_deref(),
+        &config.project.test_command,
+        &contract.tests_may_change,
+        work_dir,
+    )
+}
+
+/// The prompt section for a run stacked on other tasks' outputs: which
+/// earlier output of this task it replaces, why, and how to reuse it.
+fn rebased_attempt(project_root: &Path, r: &record::Rebased) -> Result<String> {
+    let earlier = Run::open(project_root, &r.replaces.run)?.meta()?;
+    let onto = r.onto.join(", ");
+    Ok(format!(
+        "## Previous attempt\n\nThis task already has a verified output — {run}, commit \
+         {commit} — but it does not merge with the output of {onto}: both change {files}. \
+         This worktree starts from {onto}'s output (and this task's dependencies'), so do the \
+         task again on top of it. Reuse the earlier work rather than starting over: \
+         `git diff {start} {commit}` shows it, and `git cherry-pick {start}..{commit}` or \
+         copying its hunks brings it here. Resolve the overlap in {files} so that what {onto} \
+         does keeps working as well as this task; do not undo {onto}'s changes. The \
+         acceptance criteria are those below.\n",
+        run = r.replaces.run,
+        commit = r.replaces.commit,
+        files = r.files.join(", "),
+        start = earlier.start_commit(),
+    ))
 }
 
 /// Say what the agent will find of Claude's project configuration.
@@ -257,16 +324,16 @@ fn work(
     // Where the agent starts: protected tests must still be as they are here
     // when the suite passes (`guard`).
     let start = super::git::head(&work_dir)?;
-    let guard = super::guard::Guard::new(
-        config.execution.protected_tests.as_deref(),
-        &config.project.test_command,
-        &contract.tests_may_change,
-        &work_dir,
-    );
+    let guard = guard_for(config, contract, &work_dir);
+    // The task's accepted `review:` wins over the project's setting.
+    let review = contract.review.unwrap_or(config.execution.review);
     // What this task's agents get from the project's knowledge (ONBOARD
     // REQ-008): computed once, so the code and review prompts carry the
     // same selection (AC-04), and traced with what was actually included.
-    let knowledge = contract.knowledge_selection(config.knowledge.prompt_limit);
+    let knowledge = contract.knowledge_selection(
+        config.knowledge.prompt_limit,
+        config.knowledge.general_limit,
+    );
     // IDs a change request may cite: those the handover pins.
     let known = contract.known();
     let knowledge_revisions: Vec<(String, u32)> = contract
@@ -351,7 +418,7 @@ fn work(
         let result = crate::runner::run_with_language(
             &config.project.test_command,
             &work_dir,
-            TEST_TIMEOUT_SECS,
+            config.execution.test_timeout_secs,
             &config.project.language,
         );
         interrupted()?;
@@ -403,7 +470,7 @@ fn work(
                         ),
                     );
                 }
-                if config.execution.review {
+                if review {
                     let state = run.state()?;
                     let left = meta.budget_usd - state.cost_usd;
                     if left < MIN_ALLOTMENT_USD {
@@ -477,7 +544,10 @@ fn work(
             (false, candidate) => {
                 let mut failed_tests = result.failed_names.clone();
                 if result.timed_out {
-                    failed_tests.push(format!("(test suite timed out after {TEST_TIMEOUT_SECS}s)"));
+                    failed_tests.push(format!(
+                        "(test suite timed out after {}s; raise execution.test_timeout_secs)",
+                        config.execution.test_timeout_secs
+                    ));
                 }
                 run.append(&RunEvent::VerifyFailed {
                     at: Utc::now(),

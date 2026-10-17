@@ -223,6 +223,7 @@ mod tests {
                 files: Vec::<Pinned>::new(),
                 knowledge: Vec::new(),
                 known_failures: Vec::new(),
+                questions: Vec::new(),
                 baseline: Baseline {
                     branch: "main".into(),
                     commit: baseline.into(),

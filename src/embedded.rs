@@ -127,6 +127,10 @@ pub fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
                 "go-testing.md".into(),
                 include_str!("../templates/skills/lang/go-testing.md"),
             ),
+            (
+                "go-memory.md".into(),
+                include_str!("../templates/skills/lang/go-memory.md"),
+            ),
         ],
         "typescript" => vec![
             (
@@ -202,6 +206,21 @@ pub fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
     }
 }
 
+/// Every file the global store holds, by path under the store root:
+/// agent definitions, base skills and every language's skills.
+pub fn store_files() -> Vec<(String, &'static str)> {
+    AGENTS
+        .iter()
+        .map(|(n, b)| (format!("agents/{n}"), *b))
+        .chain(SKILLS.iter().map(|(n, b)| (format!("skills/{n}"), *b)))
+        .chain(
+            all_lang_skills()
+                .into_iter()
+                .map(|(n, b)| (format!("skills/{n}"), b)),
+        )
+        .collect()
+}
+
 /// The global store (`~/.zforge`, or `$ZFORGE_HOME`). Same resolution as
 /// the registry, so a custom `ZFORGE_HOME` moves templates, agents and
 /// skills together with `registry.yaml` instead of splitting them.
@@ -264,6 +283,7 @@ mod tests {
         }
         for rule in [
             "tests_may_change",
+            "write a change request rather than editing",
             "push",
             "Binding decisions",
             "nearest existing code",

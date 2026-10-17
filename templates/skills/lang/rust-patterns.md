@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce idiomatic Rust in this project: ownership, error handling, type design,
-and module organization. Read this before implementing any Rust task.
+Idiomatic Rust — ownership, error handling, type design and module
+organization — for where the project's conventions and nearby code are silent.
 
 ## Ownership and Borrowing
 

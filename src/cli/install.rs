@@ -3,15 +3,16 @@
 //! binary. One-time per-machine setup so multiple projects can share a
 //! single source of truth via `zforge init` (shared mode, the default).
 //!
-//! Re-run after upgrading the binary to refresh global files; pass `--force`
-//! to overwrite user edits.
+//! Every run (and every `zforge init`, via [`ensure_global_store`]) brings
+//! the store to this binary's version, keeping files the user edited
+//! (`crate::shipped`); `--force` replaces those too, archiving a copy.
 
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 
-use crate::cli::init::{label, write_safe};
-use crate::embedded;
+use crate::cli::init::label;
+use crate::{embedded, shipped};
 
 pub fn run(force: bool) -> Result<()> {
     let root = embedded::global_store_dir()
@@ -48,79 +49,94 @@ fn migrate_store(root: &Path, to_stderr: bool) -> Result<()> {
     Ok(())
 }
 
-/// Install the embedded template/agent/skill payload under `root`. Returns
-/// the number of files written. `quiet` suppresses progress lines so other
-/// commands (e.g. `init`) can auto-trigger install without
-/// flooding output.
-pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<usize> {
-    let agents_dir = root.join("agents");
-    let skills_dir = root.join("skills");
-    std::fs::create_dir_all(&agents_dir)?;
-    std::fs::create_dir_all(&skills_dir)?;
+/// Bring the store at `root` to this version's agents and skills
+/// (`crate::shipped`): missing files are written, files zforge wrote and
+/// the user left alone are updated, the user's edits are kept and reported
+/// — unless `force`, which replaces them after archiving a copy. A store
+/// from before the manifest has no record of what zforge wrote: a file
+/// there that differs is archived, then updated. `quiet` (used by `init`)
+/// prints one line to stderr when something changed or was kept, nothing
+/// when all is current.
+pub fn install_into(root: &Path, force: bool, quiet: bool) -> Result<shipped::Report> {
+    let files: Vec<(String, String)> = embedded::store_files()
+        .into_iter()
+        .map(|(rel, body)| (rel, body.to_string()))
+        .collect();
+    let mode = if force {
+        shipped::Mode::Force
+    } else {
+        shipped::Mode::Refresh
+    };
+    let report = shipped::sync(root, &root.join(shipped::MANIFEST), &files, mode, &|_| {
+        shipped::Unrecorded::Replace
+    })?;
 
-    let mut created = 0usize;
-    let mut skipped = 0usize;
-
-    // Agent definitions (.md) — source material for Claude Code / OpenCode /
-    // Codex project-local agent files.
-    for (name, body) in embedded::AGENTS {
-        if write_safe(&agents_dir.join(name), body, force)? {
-            created += 1;
-        } else {
-            skipped += 1;
+    if quiet {
+        if !report.is_quiet() {
+            eprintln!("{} {}", "↻".cyan(), summary_line(root, &report));
         }
+        return Ok(report);
     }
 
-    if !quiet {
-        println!(
-            "{} {} — {} agent definitions",
-            label(created > 0),
-            display_path(&agents_dir),
-            embedded::AGENTS.len(),
-        );
+    println!(
+        "{} {} — {} agent definitions, {} base + {} language skills",
+        label(report.written() > 0),
+        display_path(root),
+        embedded::AGENTS.len(),
+        embedded::SKILLS.len(),
+        embedded::all_lang_skills().len(),
+    );
+    println!("  {}", report.counts());
+    for rel in &report.kept {
+        println!("  {}", kept_line(root, rel));
     }
-
-    // Generic skills (flat + backend/ + frontend/)
-    let before_skills = created;
-    for (name, body) in embedded::SKILLS {
-        if write_safe(&skills_dir.join(name), body, force)? {
-            created += 1;
-        } else {
-            skipped += 1;
-        }
+    if let Some(dir) = &report.archive_dir {
+        println!("  old copies archived in {}", display_path(dir));
     }
+    println!();
+    println!("Next:");
+    println!("  zforge init               # scaffold a project that uses this store");
+    Ok(report)
+}
 
-    // All per-language skills — global store gets every language so any
-    // project can opt in via its AGENTS.md without re-running install.
-    let lang_skills = embedded::all_lang_skills();
-    let lang_count = lang_skills.len();
-    for (name, body) in &lang_skills {
-        if write_safe(&skills_dir.join(name), body, force)? {
-            created += 1;
-        } else {
-            skipped += 1;
-        }
+/// One line for `init`: what changed in the store, and the edits kept.
+fn summary_line(root: &Path, report: &shipped::Report) -> String {
+    let mut line = format!(
+        "{} brought to zforge {}: {}",
+        display_path(root),
+        env!("CARGO_PKG_VERSION"),
+        report.counts()
+    );
+    if let Some(dir) = &report.archive_dir {
+        line.push_str(&format!("; old copies in {}", display_path(dir)));
     }
-
-    if !quiet {
-        println!(
-            "{} {} — {} base + {} language skills",
-            label(created > before_skills),
-            display_path(&skills_dir),
-            embedded::SKILLS.len(),
-            lang_count,
-        );
-        println!();
-        println!(
-            "  {} created, {} skipped (already existed). Use --force to overwrite.",
-            created, skipped
-        );
-        println!();
-        println!("Next:");
-        println!("  zforge init               # scaffold a project that uses this store");
+    if !report.kept.is_empty() {
+        line.push_str(&format!(
+            "; kept your edit: {} (zforge ships a newer version; `zforge install --force` \
+             replaces it, keeping a copy in {}/)",
+            report.kept.join(", "),
+            display_path(&root.join(shipped::ARCHIVE_DIR).join("<ts>"))
+        ));
     }
+    line
+}
 
-    Ok(created)
+fn kept_line(root: &Path, rel: &str) -> String {
+    format!(
+        "{} kept your edit: {rel} (zforge ships a newer version; `zforge install --force` \
+         replaces it, keeping a copy in {}/)",
+        "!".yellow(),
+        display_path(&root.join(shipped::ARCHIVE_DIR).join("<ts>"))
+    )
+}
+
+/// The store against this binary, read-only (`zforge doctor`).
+pub fn store_status(root: &Path) -> shipped::Status {
+    let files: Vec<(String, String)> = embedded::store_files()
+        .into_iter()
+        .map(|(rel, body)| (rel, body.to_string()))
+        .collect();
+    shipped::status(root, &root.join(shipped::MANIFEST), &files)
 }
 
 /// Render `~/.zforge/...` rather than the absolute home expansion when
@@ -136,9 +152,10 @@ fn display_path(path: &Path) -> String {
 
 /// Ensure the global store is usable by this version: a quiet install when
 /// it is empty; otherwise migrate what the task pipeline left
-/// (`crate::migrate::global`) and add files it lacks, never overwriting the
-/// user's. Used by `init` (shared mode) so no separate `zforge install` step
-/// is needed on first run or after an upgrade.
+/// (`crate::migrate::global`) and bring every shipped file to this version,
+/// keeping the user's edits ([`install_into`]). Used by `init` (shared
+/// mode) so no separate `zforge install` step is needed on first run or
+/// after an upgrade.
 pub fn ensure_global_store() -> Result<PathBuf> {
     let root = embedded::global_store_dir()
         .ok_or_else(|| anyhow!("cannot determine home directory for ~/.zforge/"))?;
@@ -151,8 +168,6 @@ pub fn ensure_global_store() -> Result<PathBuf> {
         install_into(&root, /* force */ false, /* quiet */ true)?;
     } else {
         migrate_store(&root, true)?;
-        // Files this version ships that the store lacks (a new skill, or
-        // an agent an older store never had).
         install_into(&root, /* force */ false, /* quiet */ true)?;
     }
     Ok(root)
@@ -163,14 +178,37 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn install_into_writes_all_embedded_files() {
-        let tmp = TempDir::new().unwrap();
-        let written = install_into(tmp.path(), /* force */ false, /* quiet */ true).unwrap();
+    fn read(root: &Path, rel: &str) -> String {
+        std::fs::read_to_string(root.join(rel)).unwrap()
+    }
 
-        let expected =
-            embedded::AGENTS.len() + embedded::SKILLS.len() + embedded::all_lang_skills().len();
-        assert_eq!(written, expected);
+    fn manifest(root: &Path) -> shipped::Manifest {
+        shipped::Manifest::load(&root.join(shipped::MANIFEST)).expect("manifest written")
+    }
+
+    /// The store as an older zforge left it: `rel` holds `old`, and (when
+    /// `recorded`) the manifest says zforge wrote exactly that.
+    fn older_store(root: &Path, rel: &str, old: &str, recorded: bool) {
+        install_into(root, false, true).unwrap();
+        std::fs::write(root.join(rel), old).unwrap();
+        let path = root.join(shipped::MANIFEST);
+        if recorded {
+            let mut m = manifest(root);
+            m.version = "0.0.1".into();
+            m.files.insert(rel.into(), shipped::digest(old.as_bytes()));
+            std::fs::write(&path, serde_json::to_vec(&m).unwrap()).unwrap();
+        } else {
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+
+    #[test]
+    fn install_into_writes_all_embedded_files_and_the_manifest() {
+        let tmp = TempDir::new().unwrap();
+        let report = install_into(tmp.path(), /* force */ false, /* quiet */ true).unwrap();
+
+        let expected = embedded::store_files().len();
+        assert_eq!(report.created.len(), expected);
 
         // Spot-check key files
         assert!(tmp.path().join("agents/code-agent.md").exists());
@@ -178,32 +216,99 @@ mod tests {
         assert!(tmp.path().join("skills/rust-patterns.md").exists());
         assert!(tmp.path().join("skills/flutter-patterns.md").exists());
         assert!(tmp.path().join("skills/backend/api-contracts.md").exists());
+
+        let m = manifest(tmp.path());
+        assert_eq!(m.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(m.files.len(), expected);
+        assert_eq!(
+            m.files["skills/intake.md"],
+            shipped::digest(read(tmp.path(), "skills/intake.md").as_bytes())
+        );
+        assert!(store_status(tmp.path()).is_current());
+
+        // A second run has nothing to do.
+        let again = install_into(tmp.path(), false, true).unwrap();
+        assert!(again.is_quiet());
+        assert_eq!(again.current, expected);
     }
 
     #[test]
-    fn install_into_skips_existing_without_force() {
+    fn upgrade_refreshes_files_zforge_wrote_and_the_user_left_alone() {
         let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("agents")).unwrap();
-        let preexisting = tmp.path().join("agents/code-agent.md");
-        std::fs::write(&preexisting, "USER EDIT").unwrap();
+        older_store(tmp.path(), "skills/intake.md", "OLD INTAKE", true);
+        let status = store_status(tmp.path());
+        assert!(!status.is_current());
+        assert_eq!(status.outdated, vec!["skills/intake.md"]);
 
-        install_into(tmp.path(), /* force */ false, /* quiet */ true).unwrap();
-
-        let contents = std::fs::read_to_string(&preexisting).unwrap();
-        assert_eq!(contents, "USER EDIT", "must not overwrite user edits");
+        let report = install_into(tmp.path(), false, true).unwrap();
+        assert_eq!(report.updated, vec!["skills/intake.md"]);
+        assert!(
+            report.archive_dir.is_none(),
+            "zforge's own copy needs no archive"
+        );
+        assert_eq!(
+            read(tmp.path(), "skills/intake.md"),
+            embedded::store_files()
+                .into_iter()
+                .find(|(r, _)| r == "skills/intake.md")
+                .unwrap()
+                .1
+        );
+        assert_eq!(manifest(tmp.path()).version, env!("CARGO_PKG_VERSION"));
+        assert!(store_status(tmp.path()).is_current());
     }
 
     #[test]
-    fn install_into_overwrites_with_force() {
+    fn upgrade_keeps_and_reports_a_file_the_user_edited() {
         let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("agents")).unwrap();
+        older_store(tmp.path(), "agents/code-agent.md", "OLD AGENT", true);
+        std::fs::write(tmp.path().join("agents/code-agent.md"), "USER EDIT").unwrap();
+
+        let report = install_into(tmp.path(), false, true).unwrap();
+        assert_eq!(report.kept, vec!["agents/code-agent.md"]);
+        assert_eq!(read(tmp.path(), "agents/code-agent.md"), "USER EDIT");
+        assert!(summary_line(tmp.path(), &report).contains("kept your edit: agents/code-agent.md"));
+
+        let status = store_status(tmp.path());
+        assert!(status.is_current(), "an edit kept is not an outdated store");
+        assert_eq!(status.edited, vec!["agents/code-agent.md"]);
+    }
+
+    #[test]
+    fn a_store_from_before_the_manifest_is_archived_then_refreshed() {
+        let tmp = TempDir::new().unwrap();
+        older_store(tmp.path(), "skills/intake.md", "LEGACY", false);
+        assert!(store_status(tmp.path()).version.is_none());
+
+        let report = install_into(tmp.path(), false, true).unwrap();
+        assert_eq!(report.archived, vec!["skills/intake.md"]);
+        let dir = report.archive_dir.expect("old copy archived");
+        assert!(dir.starts_with(tmp.path().join(shipped::ARCHIVE_DIR)));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("skills/intake.md")).unwrap(),
+            "LEGACY"
+        );
+        assert_ne!(read(tmp.path(), "skills/intake.md"), "LEGACY");
+        assert!(store_status(tmp.path()).is_current());
+    }
+
+    #[test]
+    fn force_replaces_edits_after_archiving_them() {
+        let tmp = TempDir::new().unwrap();
+        install_into(tmp.path(), false, true).unwrap();
         let target = tmp.path().join("agents/code-agent.md");
         std::fs::write(&target, "USER EDIT").unwrap();
 
-        install_into(tmp.path(), /* force */ true, /* quiet */ true).unwrap();
+        let report = install_into(tmp.path(), /* force */ true, /* quiet */ true).unwrap();
 
+        assert_eq!(report.archived, vec!["agents/code-agent.md"]);
         let contents = std::fs::read_to_string(&target).unwrap();
         assert_ne!(contents, "USER EDIT", "force must overwrite");
         assert!(!contents.trim().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(report.archive_dir.unwrap().join("agents/code-agent.md"))
+                .unwrap(),
+            "USER EDIT"
+        );
     }
 }

@@ -6,7 +6,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("config file not found — run: zf init")]
+    #[error("config file not found — run: zforge init")]
     NotFound,
     #[error("invalid config: {field} is required")]
     #[allow(dead_code)]
@@ -54,6 +54,12 @@ pub struct RunnerConfig {
 /// what does not fit is indexed one line per item with the accepted
 /// snapshots' paths (`knowledge::select`). Conventions and rules larger
 /// than this are reported by readiness and `zforge onboard status`.
+///
+/// `general_limit` (default 8 000) caps, within that, the conventions and
+/// rules the task neither cites nor touches the paths of: a project with a
+/// hundred conventions would otherwise fill every prompt with ones about
+/// other modules. Beyond it they are indexed by ID and title like anything
+/// over `prompt_limit`; 0 shows none of them in full.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KnowledgeConfig {
     #[serde(default = "default_baseline")]
@@ -62,6 +68,8 @@ pub struct KnowledgeConfig {
     pub dir: PathBuf,
     #[serde(default = "default_prompt_limit")]
     pub prompt_limit: usize,
+    #[serde(default = "default_general_limit")]
+    pub general_limit: usize,
     /// `--max-budget-usd` of one headless `zforge onboard draft` /
     /// `refresh` agent call, when `--budget` does not override it (ONBOARD
     /// TASK-008).
@@ -82,6 +90,7 @@ impl Default for KnowledgeConfig {
             baseline: default_baseline(),
             dir: default_knowledge_dir(),
             prompt_limit: default_prompt_limit(),
+            general_limit: default_general_limit(),
             draft_budget_usd: default_draft_budget_usd(),
             extra: Vec::new(),
         }
@@ -98,6 +107,10 @@ fn default_knowledge_dir() -> PathBuf {
 
 fn default_prompt_limit() -> usize {
     40_000
+}
+
+fn default_general_limit() -> usize {
+    8_000
 }
 
 fn default_draft_budget_usd() -> f64 {
@@ -128,6 +141,11 @@ pub struct ExecutionConfig {
     /// counts its whole allotment.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// Wall-clock limit on one run of the test command while verifying a
+    /// task. A suite killed at it fails the attempt with "test suite timed
+    /// out", which the agent cannot fix — raise it for slow suites.
+    #[serde(default = "default_test_timeout_secs")]
+    pub test_timeout_secs: u64,
     /// Keep a verified run's worktree. Off by default: a verified run's
     /// output is a sealed commit on its branch — what dependent tasks,
     /// reuse and the integration start from — so its worktree is removed
@@ -141,6 +159,13 @@ pub struct ExecutionConfig {
     /// dependencies' outputs are the ones that output was built on.
     #[serde(default = "default_true")]
     pub continue_from_previous: bool,
+    /// Extra case-insensitive substrings, beside the built-in ones
+    /// (`run::integrate::INFRA_PATTERNS`), that mark a failing integration
+    /// check's output as the environment's fault: the check is run once
+    /// more, and failing again ends the run with an `infra: ` reason the
+    /// feature loop retries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra_patterns: Vec<String>,
 }
 
 impl Default for ExecutionConfig {
@@ -151,8 +176,10 @@ impl Default for ExecutionConfig {
             protected_tests: None,
             review: false,
             agent_timeout_secs: default_agent_timeout_secs(),
+            test_timeout_secs: default_test_timeout_secs(),
             keep_worktrees: false,
             continue_from_previous: true,
+            infra_patterns: Vec::new(),
         }
     }
 }
@@ -165,6 +192,10 @@ fn default_true() -> bool {
 
 fn default_agent_timeout_secs() -> u64 {
     3600
+}
+
+fn default_test_timeout_secs() -> u64 {
+    300
 }
 
 /// Whether the project's own gaps (ONBOARD REQ-010) — not onboarded, a
@@ -204,6 +235,11 @@ pub struct ProjectConfig {
     pub language: String,
     #[serde(default = "default_test_command")]
     pub test_command: String,
+    /// What an integration run checks when the handover's breakdown has no
+    /// code block under "Integration verification" (`Handover::checks`):
+    /// one command per line. Absent, it is `test_command`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integration_command: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -537,6 +573,7 @@ mod tests {
         assert_eq!(cfg.execution.max_iterations, 3);
         assert_eq!(cfg.execution.budget_usd, None);
         assert_eq!(cfg.execution.agent_timeout_secs, 3600);
+        assert_eq!(cfg.execution.test_timeout_secs, 300);
         assert!(!cfg.execution.keep_worktrees);
         assert_eq!(cfg.knowledge.draft_budget_usd, 2.0);
     }

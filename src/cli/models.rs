@@ -24,6 +24,7 @@ pub use crate::config::PHASES;
 pub struct ModelsArgs {
     #[command(subcommand)]
     pub cmd: Option<ModelsCmd>,
+    /// Machine-readable report.
     #[arg(long)]
     pub json: bool,
 }
@@ -37,6 +38,7 @@ pub enum ModelsCmd {
         /// As the client names it: a tier (`opus`, `sonnet`, `haiku`), a full
         /// model id, or `inherit` for the client's own default.
         model: String,
+        /// The client it applies to: claude, codex or opencode.
         #[arg(long, default_value = "claude")]
         client: String,
         /// Every project on this machine (`~/.zforge/models.yaml`).
@@ -45,9 +47,12 @@ pub enum ModelsCmd {
     },
     /// Go back to zforge's default for a phase (`all` for every phase).
     Unset {
+        /// code or review — or `all`.
         phase: String,
+        /// The client it applies to: claude, codex or opencode.
         #[arg(long, default_value = "claude")]
         client: String,
+        /// In `~/.zforge/models.yaml` instead of the project's.
         #[arg(long)]
         global: bool,
     },

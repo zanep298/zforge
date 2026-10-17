@@ -1,11 +1,17 @@
 #!/bin/sh
-# zf (zforge) installer
+# zforge installer
 # Usage: curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/zanep298/zforge/main/install.sh | sh
+#
+# ZFORGE_VERSION  release tag to install (default: the latest), e.g. v1.5.0
+# ZFORGE_INSTALL  directory to install into (default: ~/.local/bin)
+# (ZF_VERSION / ZF_INSTALL are still read when the ZFORGE_ ones are unset.)
+#
+# Release binaries: Linux x86_64, macOS x86_64 and arm64.
 
 set -e
 
 REPO="zanep298/zforge"
-BINARY="zf"
+BINARY="zforge"
 
 # Detect OS and architecture
 detect_platform() {
@@ -16,8 +22,7 @@ detect_platform() {
         Linux)
             case "$_arch" in
                 x86_64) echo "x86_64-unknown-linux-gnu" ;;
-                aarch64) echo "aarch64-unknown-linux-gnu" ;;
-                *) echo "unsupported: $_arch on Linux" >&2; exit 1 ;;
+                *) echo "unsupported: $_arch on Linux (release binaries: x86_64); build from source: cargo install --git https://github.com/$REPO" >&2; exit 1 ;;
             esac
             ;;
         Darwin)
@@ -40,7 +45,10 @@ get_latest_version() {
 
 main() {
     platform="$(detect_platform)"
-    version="${ZF_VERSION:-$(get_latest_version)}"
+    version="${ZFORGE_VERSION:-${ZF_VERSION:-}}"
+    if [ -z "$version" ]; then
+        version="$(get_latest_version)"
+    fi
 
     if [ -z "$version" ]; then
         echo "error: could not determine latest version" >&2
@@ -56,7 +64,7 @@ main() {
     curl --proto '=https' --tlsv1.2 -sSfL "$url" -o "$tmpdir/${BINARY}.tar.gz"
     tar xzf "$tmpdir/${BINARY}.tar.gz" -C "$tmpdir"
 
-    install_dir="${ZF_INSTALL:-$HOME/.local/bin}"
+    install_dir="${ZFORGE_INSTALL:-${ZF_INSTALL:-$HOME/.local/bin}}"
     mkdir -p "$install_dir"
     cp "$tmpdir/$BINARY" "$install_dir/"
     chmod +x "$install_dir/$BINARY"

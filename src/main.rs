@@ -4,8 +4,31 @@ use std::process::ExitCode;
 use zforge::cli::outcome::OperationOutcome;
 use zforge::{cli, mcp};
 
+const LONG_ABOUT: &str = "\
+Reviewed intake to verified code: humans accept the contract, agents build and verify it
+in git worktrees.
+
+Flow:
+  zforge init                        scaffold .zforge/ and the Claude Code setup
+  zforge onboard                     probe the project; review its knowledge files
+  zforge intake new <ID>             outcome, behavior, solution, breakdown, tasks
+  zforge intake review <ID> --all    send the files for review
+  zforge intake accept|revise ...    only the user decides: at a terminal, or by typing
+                                     /accept or /revise in Claude Code
+  zforge readiness <ID>              check the accepted revisions can be handed over
+  zforge handover <ID>               the user hands the contract over (or /handover)
+  zforge run <HANDOVER>              each task in its own worktree, verified by the
+                                     project's test command, then the integration check
+  zforge status                      where each intake stands and the next step";
+
 #[derive(Parser)]
-#[command(name = "zforge", version, about = "TDD-first AI development workflow")]
+#[command(
+    name = "zforge",
+    version,
+    about = "Reviewed intake to verified code: humans accept the contract, agents build \
+             and verify it in git worktrees",
+    long_about = LONG_ABOUT
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -25,6 +48,7 @@ enum KnowledgeCmd {
     /// every intake, and `INDEX.md` (in `knowledge.dir`) from the accepted
     /// project knowledge.
     Index {
+        /// Machine-readable output.
         #[arg(long)]
         json: bool,
     },
@@ -43,6 +67,7 @@ enum KnowledgeCmd {
         /// Also search the reference docs (`knowledge.extra`) for --grep.
         #[arg(long)]
         extra: bool,
+        /// Machine-readable output.
         #[arg(long)]
         json: bool,
     },
@@ -57,8 +82,10 @@ enum Commands {
         /// Which AI coding agent to scaffold for: claude (default), codex, opencode, all.
         #[arg(long, default_value = "claude")]
         agent: String,
-        /// Refresh generated files (agent definitions, CLAUDE.md/AGENTS.md,
-        /// settings). Never resets .zforge/config.yaml, models.yaml or memory.
+        /// Refresh generated files (agent definitions, CLAUDE.md/AGENTS.md
+        /// zforge wrote, settings merged). Of .zforge/config.yaml only the
+        /// zforge-managed keys change (zforge.version, runner.default,
+        /// paths), as on every init; its values and models.yaml are kept.
         #[arg(long)]
         force: bool,
         /// Copy templates, agents, and skills into the project instead of
@@ -89,21 +116,26 @@ enum Commands {
         #[arg(long)]
         git_exclude: bool,
     },
-    /// Populate the global ~/.zforge/ store with embedded templates,
-    /// agents, and skills. Run once per machine; rerun after upgrading
-    /// zforge to refresh. Use --force to overwrite local edits.
+    /// Populate the global ~/.zforge/ store with embedded agents and skills,
+    /// or bring it to this version (any `zforge init` does too): files you
+    /// edited are kept and reported. Use --force to replace them as well.
     Install {
+        /// Replace edited agents and skills too, archiving a copy of each
+        /// in ~/.zforge/archive/<time>/.
         #[arg(long)]
         force: bool,
     },
-    /// Download and install the latest zforge release from GitHub.
-    /// Replaces the current binary in-place. No brew update required.
+    /// Download the latest zforge release from GitHub and replace this
+    /// binary in place. Installed with Homebrew? Use `brew upgrade zforge`.
     Update,
-    /// Where each intake stands — files, handovers, runs — and the next
-    /// step. `--global` covers every project in ~/.zforge/registry.yaml.
+    /// Where the project stands: `init:` (the zforge that set it up vs this
+    /// binary), onboarding, and per intake its files, handovers, runs and
+    /// the next step.
     Status {
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
+        /// Every project in ~/.zforge/registry.yaml.
         #[arg(long)]
         global: bool,
         /// With --global: how long to wait for all projects together.
@@ -140,16 +172,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// v1.5 intake: create an intake, send its files for review, record the
-    /// user's decisions. `accept` / `revise` need an interactive terminal.
+    /// Create an intake, send its files for review, record the user's
+    /// decisions. `accept` / `revise` need an interactive terminal (in
+    /// Claude Code the user types `/accept` or `/revise`).
     Intake {
         #[command(subcommand)]
         cmd: crate::cli::intake::IntakeCmd,
     },
     /// Build a handover — every task in its own worktree, then the
-    /// integration check (`zforge run <HANDOVER> [--task <TASK>] [--async]`)
-    /// — or operate runs (`status`, `list`, `log`, `wait`, `cancel`, `retry`,
-    /// `clean`).
+    /// integration check: `zforge run <HANDOVER> [--task <TASK> |
+    /// --integration] [--async]` — or operate runs (`status`, `list`, `log`,
+    /// `wait`, `cancel`, `retry`, `clean`, `compare`, `prune-branches`).
     Run(crate::cli::run::RunArgs),
     /// Which model runs each phase (`code`, `review`), per client: show,
     /// `set`, `unset`. Unset phases use zforge's default tier (Claude:
@@ -170,25 +203,32 @@ enum Commands {
         #[arg(long, conflicts_with = "run_id")]
         handover: Option<String>,
     },
-    /// v1.5: check whether an intake's accepted files are ready to hand
-    /// over (§6.2). Writes `readiness.md`; exits 1 when not ready.
+    /// Check whether an intake's accepted revisions are ready to hand over:
+    /// every file accepted, structure and references clean, open questions
+    /// closed, requirements covered, nothing stale, test command, budget and
+    /// runner set. Writes `readiness.md`; exits 1 when not ready.
     Readiness {
+        /// The intake ID, e.g. FEAT-001.
         id: String,
-        /// Limit the handover to these tasks (default: all).
-        #[arg(long = "task")]
+        /// Check only these tasks (default: all).
+        #[arg(long = "task", value_name = "TASK")]
         tasks: Vec<String>,
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
     },
-    /// v1.5: hand the accepted contract over as a manifest (§6.3).
-    /// Interactive terminal only.
+    /// Hand the accepted contract over as a manifest that pins every
+    /// accepted revision. Needs an interactive terminal (in Claude Code the
+    /// user types `/handover`).
     Handover {
+        /// The intake ID, e.g. FEAT-001.
         id: String,
         /// Limit the handover to these tasks (default: all).
-        #[arg(long = "task")]
+        #[arg(long = "task", value_name = "TASK")]
         tasks: Vec<String>,
     },
-    /// v1.5 product knowledge built from accepted intakes.
+    /// Query and index the project's accepted knowledge (domain, conventions,
+    /// rules) and the commitments made by accepted intakes.
     Knowledge {
         #[command(subcommand)]
         cmd: KnowledgeCmd,
@@ -196,10 +236,19 @@ enum Commands {
     /// Probe the project (no model) and review the project's own knowledge
     /// (domain, conventions, rules) the same way an intake file is. Bare
     /// `zforge onboard` probes and records `baseline.md`. `accept`,
-    /// `revise` and `baseline` need an interactive terminal.
+    /// `revise` and `baseline` need an interactive terminal (in Claude Code
+    /// the user types `/accept knowledge` or `/revise knowledge` instead).
     Onboard {
         #[command(subcommand)]
         cmd: Option<crate::cli::onboard::OnboardCmd>,
+    },
+    /// Shared questions for stakeholders (`.zforge/questions/<NAME>.md`),
+    /// cited from intake files as `Q:<NAME>/Q-<n>`. Not reviewed: record
+    /// answers in the file as they arrive; readiness refuses while a cited
+    /// question is open.
+    Questions {
+        #[command(subcommand)]
+        cmd: crate::cli::questions::QuestionsCmd,
     },
 }
 
@@ -329,6 +378,7 @@ fn dispatch_unit(command: Commands) -> Result<()> {
         Commands::Readiness { id, tasks, json } => cli::intake::readiness(&id, &tasks, json),
         Commands::Handover { id, tasks } => cli::intake::handover(&id, &tasks),
         Commands::Onboard { cmd } => cli::onboard::run(cmd),
+        Commands::Questions { cmd } => cli::questions::run(cmd),
         // Handled by `dispatch` because it carries a verdict.
         Commands::Doctor { .. } => {
             unreachable!("outcome-bearing commands are dispatched before dispatch_unit")

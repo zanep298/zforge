@@ -7,6 +7,13 @@
 //! any other: nothing is reviewed or accepted here, an unchanged copy too
 //! (D1); the user accepts them, e.g. all at once with `/accept all`.
 //!
+//! With `--fixup` ([`fixup`]) nothing is copied: for a few contained
+//! fixes, the new intake states only them — a short 01-outcome with new
+//! REQ IDs, 02-behavior and 03-solution that say "as accepted in <ID>,
+//! except:", a breakdown with one task and that task's stub. All four
+//! stages still exist and are reviewed, accepted and pinned like any
+//! intake's.
+//!
 //! When the source intake's handover is not integrated yet, editing that
 //! intake in place and handing it over again is the lighter path: tasks
 //! whose items did not change are reused (`run::reuse`).
@@ -109,6 +116,111 @@ pub fn amend(
         origin,
         copied: accepted,
         skipped,
+    })
+}
+
+/// What [`fixup`] wrote.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Fixup {
+    pub intake: String,
+    pub origin: Origin,
+    /// Files written, in the order the user works through them.
+    pub written: Vec<String>,
+    /// The source's accepted revision of each stage the new one refers to.
+    pub refers_to: Vec<(String, u32)>,
+    /// The first new requirement ID, continuing after the source's.
+    pub first_requirement: String,
+}
+
+/// The one task a fixup intake starts with.
+pub const FIXUP_TASK: &str = "TASK-001";
+
+/// Create fixup intake `new_id` amending `from_id`: compact stages that
+/// refer to the source's accepted revisions, and one task stub. Every
+/// stage of the source must be accepted — a fixup amends settled work.
+pub fn fixup(
+    project_root: &Path,
+    new_id: &str,
+    from_id: &str,
+    handover_id: Option<&str>,
+) -> Result<Fixup> {
+    let src = Intake::open(project_root, from_id)?;
+    let statuses = review::statuses(&src)?;
+    let mut refers_to = Vec::new();
+    for stage in STAGES {
+        match statuses
+            .iter()
+            .find(|s| s.file == stage)
+            .and_then(|s| s.accepted.as_ref())
+        {
+            Some(a) => refers_to.push((stage.to_string(), a.revision)),
+            None => bail!(
+                "{from_id}'s {stage} has no accepted revision: a fixup amends an intake whose \
+                 stages are all accepted"
+            ),
+        }
+    }
+    let origin = origin(project_root, &src, handover_id)?;
+    let outcome = record::read_snapshot(&src, super::lint::OUTCOME, refers_to[0].1)?;
+    let last = super::lint::defined_requirements(&outcome)
+        .iter()
+        .filter_map(|r| r.strip_prefix("REQ-")?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0);
+    let req = format!("REQ-{:03}", last + 1);
+
+    let new = review::create(project_root, new_id)?;
+    let describe = origin.describe();
+    let mut written = Vec::new();
+    for (stage, rev) in &refers_to {
+        let snapshot = record::snapshot_path(&src, stage, *rev);
+        let snapshot = snapshot
+            .strip_prefix(project_root)
+            .unwrap_or(&snapshot)
+            .display()
+            .to_string();
+        let revision = rev.to_string();
+        let body = super::templates::fixup_stage(
+            stage,
+            new_id,
+            &[
+                ("from", from_id),
+                ("origin", &describe),
+                ("revision", &revision),
+                ("req", &req),
+                ("snapshot", &snapshot),
+            ],
+        )
+        .expect("fixup template for every stage");
+        crate::fs::write_atomic(&new.dir.join(stage), body.as_bytes())?;
+        written.push(stage.clone());
+    }
+    let task = super::templates::task(new_id, FIXUP_TASK).replacen(
+        "requirements: []",
+        &format!("requirements: [{req}]"),
+        1,
+    );
+    let task = task_copy(&task, from_id, new_id, &origin);
+    let rel = format!("{}/{FIXUP_TASK}.md", super::TASKS_DIR);
+    crate::fs::write_atomic(&new.dir.join(&rel), task.as_bytes())?;
+    written.push(rel);
+
+    let brief = super::templates::brief(new_id);
+    let (title, rest) = brief.split_once('\n').unwrap_or((&brief, ""));
+    crate::fs::write_atomic(
+        &new.dir.join(BRIEF_FILE),
+        format!(
+            "{title}\n\nFixup of {from_id}: only the fixes; everything else stays as \
+             accepted.\nAmended: {describe}.\n{rest}"
+        )
+        .as_bytes(),
+    )?;
+    Ok(Fixup {
+        intake: new.id,
+        origin,
+        written,
+        refers_to,
+        first_requirement: req,
     })
 }
 

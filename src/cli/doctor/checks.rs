@@ -654,3 +654,123 @@ pub fn runs(ctx: &Ctx<'_>) -> Check {
         dead[0].split_whitespace().next().unwrap_or("<RUN>")
     ))
 }
+
+/// The store this project reads agents and skills from (`paths.skills`'s
+/// parent — the global store in shared mode) against this binary
+/// (`crate::shipped`). Local mode copies them into `.zforge/`, which
+/// `zforge init --local` refreshes; nothing to check here then.
+pub fn global_store(ctx: &Ctx<'_>) -> Check {
+    let skills = ctx.config.skills_dir();
+    let store = skills.parent().unwrap_or(&skills);
+    if store == ctx.root.join(".zforge") {
+        return Check::new(
+            STORE,
+            false,
+            Level::Configured,
+            "local mode: agents and skills are copied into .zforge/",
+        )
+        .not_checked("the copies' version (`zforge init --local` refreshes them)");
+    }
+    store_check(store)
+}
+
+const STORE: &str = "global store";
+
+fn store_check(store: &Path) -> Check {
+    let shown = store.display();
+    if !store.join("agents").is_dir() {
+        return Check::new(
+            STORE,
+            false,
+            Level::Missing,
+            format!("{shown} has no agents"),
+        )
+        .fix("zforge install");
+    }
+    let status = crate::cli::install::store_status(store);
+    let this = env!("CARGO_PKG_VERSION");
+    let Some(version) = &status.version else {
+        return Check::new(
+            STORE,
+            false,
+            Level::Present,
+            format!(
+                "{shown}: written by a zforge from before {this}, no record of what it wrote — \
+                 its agents and skills may be stale"
+            ),
+        )
+        .fix("zforge install (updates them, archiving the old copies)");
+    };
+    if !status.is_current() {
+        let mut detail = format!("{shown}: written by zforge {version}, this is {this}");
+        if !status.outdated.is_empty() {
+            detail.push_str(&format!("; {} file(s) outdated", status.outdated.len()));
+        }
+        if !status.missing.is_empty() {
+            detail.push_str(&format!("; missing: {}", status.missing.join(", ")));
+        }
+        return Check::new(STORE, false, Level::Present, detail).fix("zforge install");
+    }
+    if status.edited.is_empty() {
+        return Check::new(
+            STORE,
+            false,
+            Level::Working,
+            format!("{shown}: every agent and skill is zforge {this}'s"),
+        );
+    }
+    Check::new(
+        STORE,
+        false,
+        Level::Present,
+        format!(
+            "{shown}: zforge {this}; kept your edits: {} (`zforge install --force` replaces \
+             them, archiving a copy)",
+            status.edited.join(", ")
+        ),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_store_check_follows_the_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path();
+        assert_eq!(store_check(store).level, Level::Missing);
+
+        crate::cli::install::install_into(store, false, true).unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Working, "{}", check.detail);
+        assert!(check.fix.is_none());
+
+        // A kept edit: still current, listed, nothing to fix.
+        std::fs::write(store.join("skills/intake.md"), "MY INTAKE").unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Present);
+        assert!(
+            check.detail.contains("skills/intake.md"),
+            "{}",
+            check.detail
+        );
+        assert!(check.fix.is_none());
+
+        // An older manifest asks for `zforge install`.
+        let manifest = store.join(crate::shipped::MANIFEST);
+        let mut m = crate::shipped::Manifest::load(&manifest).unwrap();
+        m.version = "0.0.1".into();
+        std::fs::write(&manifest, serde_json::to_vec(&m).unwrap()).unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Present);
+        assert!(check.detail.contains("0.0.1"), "{}", check.detail);
+        assert_eq!(check.fix.as_deref(), Some("zforge install"));
+
+        // No manifest at all: a store from before it.
+        std::fs::remove_file(&manifest).unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Present);
+        assert!(check.fix.unwrap().starts_with("zforge install"));
+    }
+}

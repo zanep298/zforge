@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce maintainable Flutter and Dart patterns. Use this before implementing any
-Flutter feature or refactor.
+Maintainable Flutter and Dart patterns, for where the project's conventions
+and nearby code are silent.
 
 ## Architecture
 

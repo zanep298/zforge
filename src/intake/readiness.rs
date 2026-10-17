@@ -147,6 +147,8 @@ pub fn check(
     let known = Known {
         requirements: lint::defined_requirements(&outcome).into_iter().collect(),
         tasks: metas.keys().cloned().collect(),
+        small: lint::is_small(&outcome),
+        tiny: lint::is_tiny(&outcome),
         ..Known::default()
     };
     let mut problems = Vec::new();
@@ -172,6 +174,17 @@ pub fn check(
         })
         .collect();
     b.check("open questions", problems);
+
+    // References outside the intake: supersedes targets and shared
+    // stakeholder questions (`crossref`), which must all be answered.
+    let (references, open) = super::crossref::readiness(
+        intake,
+        pinned
+            .iter()
+            .map(|p| (p.file.as_str(), texts[&p.file].as_str())),
+    );
+    b.check("cross-intake references", references);
+    b.check("stakeholder questions", open);
 
     // Every requirement has a task answering for it.
     let covered: BTreeSet<&String> = metas.values().flat_map(|m| &m.requirements).collect();
@@ -718,6 +731,74 @@ mod tests {
             crate::intake::review::accept(&i, &f, None).unwrap();
         }
         i
+    }
+
+    /// A shared stakeholder question an accepted file cites blocks the
+    /// handover while open, and stops blocking once answered — without
+    /// any file being reviewed again.
+    #[test]
+    fn an_open_cited_question_blocks_until_answered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_repo(root);
+        commit_all(root);
+        let cfg = config_at(root, false);
+        let path = crate::intake::questions::create(root, "REF").unwrap();
+        std::fs::write(&path, "- [ ] Q-1: archived counts?\n").unwrap();
+        let i = accept_intake(root);
+        // The same intake, with the outcome citing the question.
+        let outcome = std::fs::read_to_string(i.dir.join("01-outcome.md"))
+            .unwrap()
+            .replace("does a thing", "does a thing, per Q:REF/Q-1");
+        let files: Vec<(String, String)> = i
+            .files()
+            .into_iter()
+            .map(|f| {
+                let t = if f == "01-outcome.md" {
+                    outcome.clone()
+                } else {
+                    std::fs::read_to_string(i.dir.join(&f)).unwrap()
+                };
+                (f, t)
+            })
+            .collect();
+        std::fs::remove_dir_all(&i.dir).unwrap();
+        let i = crate::intake::review::create(root, "F").unwrap();
+        for (f, t) in &files {
+            std::fs::write(i.dir.join(f), t).unwrap();
+        }
+        for (f, _) in &files {
+            crate::intake::review::review(&i, f).unwrap();
+            crate::intake::review::accept(&i, f, None).unwrap();
+        }
+
+        let checks =
+            |r: &Readiness, name: &str| r.checks.iter().find(|c| c.name == name).unwrap().clone();
+        let r = check(&i, root, &[], &cfg).unwrap();
+        assert!(!r.ready);
+        let q = checks(&r, "stakeholder questions");
+        assert_eq!(
+            q.problems,
+            ["01-outcome.md: cites Q:REF/Q-1, still open: archived counts?"]
+        );
+        assert!(checks(&r, "cross-intake references").ok);
+
+        std::fs::write(&path, "- [x] Q-1: archived counts? => no\n").unwrap();
+        let r = check(&i, root, &[], &cfg).unwrap();
+        assert!(r.ready, "{:?}", r.checks);
+        // The handover pins the questions file the contract relied on.
+        let m = crate::intake::handover::create(&i, root, &[], &cfg, &r.files, None).unwrap();
+        assert_eq!(m.questions.len(), 1);
+        assert_eq!(m.questions[0].name, "REF");
+        assert_eq!(m.questions[0].cited, ["Q-1"]);
+        assert_eq!(
+            m.questions[0].sha256,
+            crate::intake::hash::sha256("- [x] Q-1: archived counts? => no\n")
+        );
+
+        std::fs::remove_file(&path).unwrap();
+        let r = check(&i, root, &[], &cfg).unwrap();
+        assert!(!checks(&r, "cross-intake references").ok);
     }
 
     /// AC-03: a project that never onboarded still hands over — the gap

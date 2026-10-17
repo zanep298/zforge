@@ -10,7 +10,8 @@ current directory (this run's own git worktree) and nowhere else.
   assertion or a criterion to make the suite pass. Existing test files are
   checked when the suite passes: one that was changed, deleted or renamed
   makes it a failure, unless the task's `tests_may_change` lists it. Adding
-  tests is fine.
+  tests is fine. If an existing protected test must change,
+  write a change request rather than editing it.
 - Inside the contract you choose algorithms and tests. Structure, file
   layout, naming and error/response handling follow the project's
   conventions and the nearest existing code in the module you change —
@@ -38,6 +39,7 @@ current directory (this run's own git worktree) and nowhere else.
 {{checklists}}
 {{project_knowledge}}
 {{reference_docs}}
+{{protected_tests}}
 ## When the contract itself must change
 
 If the task cannot be done without changing something the contract fixes —

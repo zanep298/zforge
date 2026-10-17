@@ -105,7 +105,7 @@ pub fn migrate(store: &Path) -> Result<Report> {
             report.archived.push((*rel).to_string());
         }
     }
-    for (rel, body) in shipped() {
+    for (rel, body) in embedded::store_files() {
         let path = store.join(&rel);
         let Ok(current) = std::fs::read_to_string(&path) else {
             continue; // `install` writes missing files
@@ -136,24 +136,6 @@ pub fn migrate(store: &Path) -> Result<Report> {
     }
     report.archive_dir = Some(archive.dir().to_path_buf());
     Ok(report)
-}
-
-/// Every agent and skill the binary ships, by path under the store.
-fn shipped() -> Vec<(String, &'static str)> {
-    embedded::AGENTS
-        .iter()
-        .map(|(n, b)| (format!("agents/{n}"), *b))
-        .chain(
-            embedded::SKILLS
-                .iter()
-                .map(|(n, b)| (format!("skills/{n}"), *b)),
-        )
-        .chain(
-            embedded::all_lang_skills()
-                .into_iter()
-                .map(|(n, b)| (format!("skills/{n}"), b)),
-        )
-        .collect()
 }
 
 /// One line per change, for the user.

@@ -312,6 +312,7 @@ mod tests {
                     })
                     .collect(),
                 previous: None,
+                rebased: None,
             }),
             kind,
             checks: None,

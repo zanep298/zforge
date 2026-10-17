@@ -113,6 +113,11 @@ pub struct ReviewAll {
 /// error, or is still exactly what the user asked to change, nothing is
 /// sent and the error lists every problem.
 pub fn review_all(intake: &Intake) -> Result<ReviewAll> {
+    review_all_noted(intake, "")
+}
+
+/// [`review_all`], recording `note` on every new revision it makes.
+pub fn review_all_noted(intake: &Intake, note: &str) -> Result<ReviewAll> {
     let _lock = review::lock(intake)?;
     let log = record::read(intake)?;
     let statuses: BTreeMap<String, _> = review::statuses(intake)?
@@ -174,7 +179,7 @@ pub fn review_all(intake: &Intake) -> Result<ReviewAll> {
 
     let mut sent = Vec::new();
     for (f, text, warnings) in ready {
-        let r = review::review_locked(intake, &f, &text, warnings, true)?;
+        let r = review::review_locked(intake, &f, &text, warnings, true, note)?;
         sent.push((f, r));
     }
     Ok(ReviewAll { sent, kept })

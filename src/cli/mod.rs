@@ -12,6 +12,7 @@ pub mod onboard;
 pub mod outcome;
 pub mod output;
 pub mod project;
+pub mod questions;
 pub mod run;
 pub mod status;
 pub mod update;

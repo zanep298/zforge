@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Guide SwiftUI implementation from Figma designs.
-Read this alongside `figma.md` (if present) before implementing any UI task.
+Guide SwiftUI implementation from Figma designs. Use it with
+zforge-figma-to-ui when the task includes a Figma design.
 
 ## Figma → SwiftUI Mapping
 

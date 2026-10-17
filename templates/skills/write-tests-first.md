@@ -8,7 +8,7 @@ before implementation, not after.
 
 ## When to Use
 
-- At the start of every implementation step
+- At the start of every task, for each acceptance criterion
 - When adding any new behavior to existing code
 - When fixing a bug (write a failing test that reproduces it first)
 

@@ -6,8 +6,8 @@
 > project is silent; never restructure code to match it.
 
 ## Purpose
-Enforce Clean Architecture and idiomatic Kotlin in this Android/KMP project.
-Read this before implementing any Android task.
+Clean Architecture and idiomatic Kotlin for Android/KMP code, for where the
+project's conventions and nearby code are silent.
 
 ## Architecture: Clean Layers
 
