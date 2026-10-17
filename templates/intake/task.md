@@ -14,7 +14,10 @@ depends_on: []
      depends_on: the tasks whose output this task builds on.
      If the contract lets the task change an existing test file, add
      `tests_may_change: [path/to/test]` to the frontmatter and say why under
-     Constraints. -->
+     Constraints.
+     `review: true` has a second agent review this task's passing work even
+     when the project's execution.review is off — use it for risky tasks;
+     `review: false` skips the review for this task. -->
 
 ## Goal
 

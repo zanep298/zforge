@@ -7,13 +7,14 @@
 //! `not_checked` rather than assumed.
 
 use super::claude_config::{
-    hooks, parse_mcp_get, referenced_scripts, settings_files, state_file, trusted_by, McpStatus,
+    enabled_plugins, hooks, parse_mcp_get, plugin_hooks, plugin_install_path, plugin_scripts,
+    referenced_scripts, settings_files, state_file, trusted_by, McpStatus,
 };
 use super::report::{Check, Level};
 use crate::config::Config;
 use crate::fs::reader::MarkdownFile;
 use crate::process::run_bounded;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -431,13 +432,7 @@ pub fn caveman_hook(ctx: &Ctx<'_>) -> Check {
         .filter(|h| h.command.contains("caveman"))
         .collect();
     if cave.is_empty() {
-        return Check::new(
-            "caveman hook",
-            false,
-            Level::Missing,
-            "no caveman hook registered",
-        )
-        .fix("see https://github.com/JuliusBrussee/caveman");
+        return caveman_plugin(&ctx.root);
     }
     let missing: Vec<PathBuf> = cave
         .iter()
@@ -458,6 +453,74 @@ pub fn caveman_hook(ctx: &Ctx<'_>) -> Check {
         false,
         Level::Configured,
         format!("registered on {} with scripts present", events.join(", ")),
+    )
+    .not_checked("hook invocation (its effect is on the model's output)")
+}
+
+/// Caveman installed as a Claude plugin: enabled in a settings file,
+/// installed, and its hook scripts present.
+fn caveman_plugin(root: &Path) -> Check {
+    let name = "caveman hook";
+    let Some(id) = enabled_plugins(&settings_files(root))
+        .into_iter()
+        .find(|id| id.split('@').next() == Some("caveman"))
+    else {
+        return Check::new(
+            name,
+            false,
+            Level::Missing,
+            "no caveman hook or plugin enabled",
+        )
+        .fix("see https://github.com/JuliusBrussee/caveman");
+    };
+    let Some(install) = plugin_install_path(&id).filter(|p| p.is_dir()) else {
+        return Check::new(
+            name,
+            false,
+            Level::Broken,
+            format!("plugin {id} enabled but not installed"),
+        )
+        .fix(format!("claude plugin install {id}"));
+    };
+    let cave: Vec<_> = plugin_hooks(&install)
+        .into_iter()
+        .filter(|h| h.command.contains("caveman"))
+        .collect();
+    if cave.is_empty() {
+        return Check::new(
+            name,
+            false,
+            Level::Broken,
+            format!(
+                "plugin {id} declares no caveman hook ({})",
+                install.display()
+            ),
+        );
+    }
+    let missing: Vec<PathBuf> = cave
+        .iter()
+        .flat_map(|h| plugin_scripts(&h.command, &install))
+        .filter(|p| !p.is_file())
+        .collect();
+    if !missing.is_empty() {
+        return Check::new(
+            name,
+            false,
+            Level::Broken,
+            format!("plugin {id} hook script missing: {missing:?}"),
+        )
+        .fix(format!("claude plugin install {id}"));
+    }
+    let mut events: Vec<&str> = cave.iter().map(|h| h.event.as_str()).collect();
+    events.dedup();
+    Check::new(
+        name,
+        false,
+        Level::Configured,
+        format!(
+            "plugin {id} enabled; hooks on {} with scripts present",
+            events.join(", ")
+        ),
     )
     .not_checked("hook invocation (its effect is on the model's output)")
 }
@@ -571,9 +634,10 @@ pub fn runs(ctx: &Ctx<'_>) -> Check {
     }
     if dead.is_empty() {
         let check = Check::new(NAME, false, Level::Working, detail);
-        return match worktrees.first() {
-            None => check,
-            Some(id) => check.fix(format!("free the disk with `zforge run clean {id}`")),
+        return match worktrees.as_slice() {
+            [] => check,
+            [id] => check.fix(format!("free the disk with `zforge run clean {id}`")),
+            _ => check.fix("free the disk with `zforge run clean --all`"),
         };
     }
     Check::new(
@@ -589,4 +653,124 @@ pub fn runs(ctx: &Ctx<'_>) -> Check {
         "record it with `zforge run status {}`",
         dead[0].split_whitespace().next().unwrap_or("<RUN>")
     ))
+}
+
+/// The store this project reads agents and skills from (`paths.skills`'s
+/// parent — the global store in shared mode) against this binary
+/// (`crate::shipped`). Local mode copies them into `.zforge/`, which
+/// `zforge init --local` refreshes; nothing to check here then.
+pub fn global_store(ctx: &Ctx<'_>) -> Check {
+    let skills = ctx.config.skills_dir();
+    let store = skills.parent().unwrap_or(&skills);
+    if store == ctx.root.join(".zforge") {
+        return Check::new(
+            STORE,
+            false,
+            Level::Configured,
+            "local mode: agents and skills are copied into .zforge/",
+        )
+        .not_checked("the copies' version (`zforge init --local` refreshes them)");
+    }
+    store_check(store)
+}
+
+const STORE: &str = "global store";
+
+fn store_check(store: &Path) -> Check {
+    let shown = store.display();
+    if !store.join("agents").is_dir() {
+        return Check::new(
+            STORE,
+            false,
+            Level::Missing,
+            format!("{shown} has no agents"),
+        )
+        .fix("zforge install");
+    }
+    let status = crate::cli::install::store_status(store);
+    let this = env!("CARGO_PKG_VERSION");
+    let Some(version) = &status.version else {
+        return Check::new(
+            STORE,
+            false,
+            Level::Present,
+            format!(
+                "{shown}: written by a zforge from before {this}, no record of what it wrote — \
+                 its agents and skills may be stale"
+            ),
+        )
+        .fix("zforge install (updates them, archiving the old copies)");
+    };
+    if !status.is_current() {
+        let mut detail = format!("{shown}: written by zforge {version}, this is {this}");
+        if !status.outdated.is_empty() {
+            detail.push_str(&format!("; {} file(s) outdated", status.outdated.len()));
+        }
+        if !status.missing.is_empty() {
+            detail.push_str(&format!("; missing: {}", status.missing.join(", ")));
+        }
+        return Check::new(STORE, false, Level::Present, detail).fix("zforge install");
+    }
+    if status.edited.is_empty() {
+        return Check::new(
+            STORE,
+            false,
+            Level::Working,
+            format!("{shown}: every agent and skill is zforge {this}'s"),
+        );
+    }
+    Check::new(
+        STORE,
+        false,
+        Level::Present,
+        format!(
+            "{shown}: zforge {this}; kept your edits: {} (`zforge install --force` replaces \
+             them, archiving a copy)",
+            status.edited.join(", ")
+        ),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_store_check_follows_the_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path();
+        assert_eq!(store_check(store).level, Level::Missing);
+
+        crate::cli::install::install_into(store, false, true).unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Working, "{}", check.detail);
+        assert!(check.fix.is_none());
+
+        // A kept edit: still current, listed, nothing to fix.
+        std::fs::write(store.join("skills/intake.md"), "MY INTAKE").unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Present);
+        assert!(
+            check.detail.contains("skills/intake.md"),
+            "{}",
+            check.detail
+        );
+        assert!(check.fix.is_none());
+
+        // An older manifest asks for `zforge install`.
+        let manifest = store.join(crate::shipped::MANIFEST);
+        let mut m = crate::shipped::Manifest::load(&manifest).unwrap();
+        m.version = "0.0.1".into();
+        std::fs::write(&manifest, serde_json::to_vec(&m).unwrap()).unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Present);
+        assert!(check.detail.contains("0.0.1"), "{}", check.detail);
+        assert_eq!(check.fix.as_deref(), Some("zforge install"));
+
+        // No manifest at all: a store from before it.
+        std::fs::remove_file(&manifest).unwrap();
+        let check = store_check(store);
+        assert_eq!(check.level, Level::Present);
+        assert!(check.fix.unwrap().starts_with("zforge install"));
+    }
 }

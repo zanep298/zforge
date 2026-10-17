@@ -4,13 +4,13 @@ zforge's working directory for this project.
 
 | Path | What it holds | Edit it? |
 |------|---------------|----------|
-| `config.yaml` | Test command, runner, execution policy (`budget_usd`, `max_iterations`, `review`), knowledge baseline | yes |
+| `config.yaml` | Test command, runner, execution policy (`budget_usd`, `max_iterations`, `review`, `keep_worktrees`), knowledge baseline | yes |
 | `models.yaml` | Which model runs each phase (`code`, `review`); `zforge models` shows and sets it | yes |
 | `intakes/<ID>/` | An intake: `01-outcome.md` … `04-breakdown.md`, `tasks/`, `changes/` | yes — then send for review |
 | `intakes/<ID>/.records/` | Revisions, decisions, handover manifests | no — written by zforge |
 | `runs/RUN-nnn/` | A run: `run.yaml`, `events.jsonl` (the source of truth), `progress.md`, `result.md` | no |
-| `worktrees/<RUN>/` | A run's worktree, on branch `zforge/<task>/<run>` | no — `zforge run clean <RUN>` |
-| `knowledge/` | `index.md` / `index.json`: each requirement, decided and built | no — `zforge knowledge index` |
+| `worktrees/<RUN>/` | A run's worktree, on branch `zforge/<task>/<run>`; removed once the run is verified, kept when it stops otherwise | no — `zforge run clean <RUN>` or `--all`; `zforge run prune-branches` drops merged branches |
+| `knowledge/` | `commitments.json`: each requirement, decided and built (`commitments.md` and the project knowledge's `INDEX.md` live in `knowledge.dir`) | no — `zforge knowledge index` |
 
 ## Workflow
 

@@ -72,6 +72,12 @@ pub struct KnowledgeFile {
     pub revision: u32,
 }
 
+/// How many commands and files [`Observed`] keeps.
+pub const MAX_RECORDED: usize = 300;
+
+/// A recorded command is cut to this many characters.
+pub const MAX_COMMAND_CHARS: usize = 200;
+
 /// What the client reported during the run.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Observed {
@@ -94,6 +100,15 @@ pub struct Observed {
     /// Skills invoked through the `Skill` tool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_calls: Vec<String>,
+    /// First line of each shell command the agent ran (`Bash`), in order,
+    /// at most [`MAX_RECORDED`] — what `zforge run compare` reads to tell
+    /// whether it ran the tests, a linter, a formatter or a generator.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+    /// Files the agent opened with `Read`, first time each, at most
+    /// [`MAX_RECORDED`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files_read: Vec<String>,
     /// `subagent_type` of every subagent started.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<String>,
@@ -129,6 +144,19 @@ pub struct RunResult {
     /// example an expired login) — shortened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
+}
+
+/// Tokens a call used, as Claude's `result` reports them.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
 }
 
 /// Who a finding points at, so a reviewer can tell a broken setup from a

@@ -19,7 +19,7 @@ Evidence-first: confirm the cause before touching code.
 
 ## Expected Outputs
 
-A `debug-report.md` containing:
+In your final message (never a file in the worktree — a run commits everything there):
 
 - **Reproduction** — confirmed repro with exact steps or test
 - **Isolation** — smallest failing case identified

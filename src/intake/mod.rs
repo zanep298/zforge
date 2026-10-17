@@ -9,10 +9,16 @@
 //! reviewed revision and an append-only decision log. A file's status is
 //! derived from the log and the file's current hash ([`status`]).
 
+pub mod amend;
+pub mod batch;
+pub mod crossref;
 pub mod graph;
 pub mod handover;
 pub mod hash;
+pub mod items;
 pub mod lint;
+pub mod pack;
+pub mod questions;
 pub mod readability;
 pub mod readiness;
 
@@ -116,8 +122,10 @@ impl crate::knowledge::docs::DocSet for Intake {
     }
 
     fn lint(&self, rel: &str, text: &str) -> Vec<lint::Issue> {
-        let mut issues = lint::lint(rel, text, &self.id, &review::known(self));
-        issues.extend(readability::check(rel, text));
+        let known = review::known(self);
+        let mut issues = lint::lint(rel, text, &self.id, &known);
+        issues.extend(crossref::lint(self, rel, text));
+        issues.extend(readability::check_profile(rel, text, known.small));
         issues
     }
 

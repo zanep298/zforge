@@ -9,7 +9,7 @@
 
 use crate::cli::confirm;
 use crate::config;
-use crate::intake::{hash, lint, review, status::DocState, Intake};
+use crate::intake::{batch, hash, lint, review, status::DocState, Intake};
 use anyhow::{anyhow, bail, Result};
 use clap::{Args, Subcommand};
 use colored::Colorize;
@@ -17,23 +17,76 @@ use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Debug, Subcommand)]
 pub enum IntakeCmd {
-    /// Create `.zforge/intakes/<ID>/` with templates for every stage.
-    New { id: String },
+    /// Create `.zforge/intakes/<ID>/` with templates for 01-outcome,
+    /// 02-behavior, 03-solution, 04-breakdown and `brief.md`, and empty
+    /// `tasks/` and `changes/`.
+    New {
+        /// The intake ID, e.g. FEAT-001.
+        id: String,
+        /// Small profile: compact 02-behavior and 03-solution (one table
+        /// each), for a change of at most two tasks in one module with no
+        /// new interface.
+        #[arg(long)]
+        small: bool,
+        /// Tiny profile: one task, TASK-001, created with the intake; 02/03/04
+        /// are standard text pointing at it (its acceptance criteria are the
+        /// behavior, its Constraints the binding decisions). For one task in
+        /// one module with no new interface.
+        #[arg(long, conflicts_with = "small")]
+        tiny: bool,
+    },
+    /// A new intake amending one already integrated: its stages and tasks
+    /// start as drafts copied from the source's accepted revisions.
+    Amend {
+        /// The new intake's ID.
+        id: String,
+        /// The intake it amends.
+        #[arg(long)]
+        from: String,
+        /// The source handover to record (default: its latest).
+        #[arg(long)]
+        handover: Option<String>,
+        /// A few contained fixes: a short 01-outcome with new requirements,
+        /// 02/03 saying only what changes from the source's accepted
+        /// revisions, and one task — instead of copies of every file.
+        #[arg(long)]
+        fixup: bool,
+    },
     /// Add a leaf task contract `tasks/<TASK_ID>.md` from the template.
-    Task { id: String, task_id: String },
+    Task {
+        /// The intake ID, e.g. FEAT-001.
+        id: String,
+        /// The task ID, e.g. TASK-001.
+        task_id: String,
+    },
     /// Every file's review state, open questions and structural issues.
     Status {
+        /// The intake ID, e.g. FEAT-001.
         id: String,
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
     },
     /// The task dependency graph as Mermaid, from each task's `depends_on`.
-    Graph { id: String },
-    /// Send a file's current content for review as a new revision.
-    Review(FileArgs),
-    /// Accept the revision under review. Interactive terminal only.
-    Accept(FileArgs),
-    /// Ask for changes to the revision under review. Interactive terminal only.
+    Graph {
+        /// The intake ID, e.g. FEAT-001.
+        id: String,
+    },
+    /// Send a file's current content for review as a new revision — or,
+    /// with `--all`, every file that needs the user, in dependency order.
+    Review(ReviewArgs),
+    /// Accept the revision under review — or, with `--all`, every file
+    /// under review, in dependency order. Needs an interactive terminal (in
+    /// Claude Code the user types `/accept`).
+    Accept(BatchArgs),
+    /// Print the review pack: the brief, then each file under review with
+    /// its summary and changes, the warnings, and how to decide.
+    Pack {
+        /// The intake ID, e.g. FEAT-001.
+        id: String,
+    },
+    /// Ask for changes to the revision under review. Needs an interactive
+    /// terminal (in Claude Code the user types `/revise`).
     Revise {
         #[command(flatten)]
         file: FileArgs,
@@ -44,7 +97,32 @@ pub enum IntakeCmd {
 }
 
 #[derive(Debug, Args)]
+pub struct BatchArgs {
+    /// The intake ID, e.g. FEAT-001.
+    pub id: String,
+    /// Intake-relative file: `01-outcome.md` … `04-breakdown.md`,
+    /// `tasks/TASK-001.md`.
+    #[arg(required_unless_present = "all", conflicts_with = "all")]
+    pub file: Option<String>,
+    /// Every file, in dependency order (stages, then tasks).
+    #[arg(long)]
+    pub all: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewArgs {
+    #[command(flatten)]
+    pub batch: BatchArgs,
+    /// What changed since the last revision and why — e.g. what the user
+    /// asked for in chat. Recorded on the review; with `--all`, on every
+    /// new revision. Warned about when a later revision is sent without it.
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct FileArgs {
+    /// The intake ID, e.g. FEAT-001.
     pub id: String,
     /// Intake-relative file: `01-outcome.md` … `04-breakdown.md`,
     /// `tasks/TASK-001.md`.
@@ -52,13 +130,77 @@ pub struct FileArgs {
 }
 
 pub fn run(cmd: IntakeCmd) -> Result<()> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     let root = config.project_root();
     match cmd {
-        IntakeCmd::New { id } => {
-            let i = review::create(&root, &id)?;
-            println!("{} created {}", "✓".green(), i.dir.display());
-            println!("Next: fill 01-outcome.md, then `zforge intake review {id} 01-outcome.md`");
+        IntakeCmd::New { id, small, tiny } => {
+            let profile = review::NewProfile::from_flags(small, tiny)?;
+            let i = review::create_profile(&root, &id, profile)?;
+            println!(
+                "{} created {}{}",
+                "✓".green(),
+                i.dir.display(),
+                profile.label()
+            );
+            if profile == review::NewProfile::Tiny {
+                println!(
+                    "Next: draft 01-outcome.md and tasks/{}.md (02/03/04 are standard text — \
+                     leave them unless the task cannot hold something), then `zforge intake \
+                     review {id} --all` and `zforge intake pack {id}`",
+                    review::TINY_TASK
+                );
+            } else {
+                println!(
+                    "Next: draft 01-outcome.md … 04-breakdown.md and the tasks, then \
+                     `zforge intake review {id} --all` and `zforge intake pack {id}`"
+                );
+            }
+            Ok(())
+        }
+        IntakeCmd::Amend {
+            id,
+            from,
+            handover,
+            fixup: true,
+        } => {
+            let f = crate::intake::amend::fixup(&root, &id, &from, handover.as_deref())?;
+            println!(
+                "{} created {id}, a fixup of {}",
+                "✓".green(),
+                f.origin.intake
+            );
+            for file in &f.written {
+                let rev = f.refers_to.iter().find(|(s, _)| s == file).map(|(_, r)| *r);
+                match rev {
+                    Some(r) => println!("  {file:<28} draft, refers to {from} rev {r}"),
+                    None => println!("  {file:<28} draft"),
+                }
+            }
+            println!(
+                "Next: write 01-outcome's problem and requirements (from {}), what changes in \
+                 02/03 if anything, TASK-001 and brief.md, then `zforge intake review {id} \
+                 --all` and `zforge intake pack {id}`; the user accepts them — `/accept {id} \
+                 all` in Claude Code.",
+                f.first_requirement
+            );
+            Ok(())
+        }
+        IntakeCmd::Amend {
+            id, from, handover, ..
+        } => {
+            let a = crate::intake::amend::amend(&root, &id, &from, handover.as_deref())?;
+            println!("{} created {id}, amending {}", "✓".green(), a.origin.intake);
+            for (file, rev) in &a.copied {
+                println!("  {file:<28} draft, from {from} rev {rev}");
+            }
+            for file in &a.skipped {
+                println!("  {file:<28} not copied: {from} has no accepted revision");
+            }
+            println!(
+                "Next: change only what changes and update brief.md, then `zforge intake review \
+                 {id} --all` and `zforge intake pack {id}`; the user accepts them — \
+                 `/accept {id} all` in Claude Code."
+            );
             Ok(())
         }
         IntakeCmd::Task { id, task_id } => {
@@ -73,18 +215,41 @@ pub fn run(cmd: IntakeCmd) -> Result<()> {
             print!("{}", crate::intake::graph::mermaid(&nodes));
             Ok(())
         }
-        IntakeCmd::Review(a) => send_for_review(&Intake::open(&root, &a.id)?, &a.file),
-        IntakeCmd::Accept(a) => decide(&Intake::open(&root, &a.id)?, &a.file, None),
+        IntakeCmd::Review(r) => {
+            let i = Intake::open(&root, &r.batch.id)?;
+            let note = r.note.as_deref().unwrap_or("");
+            match r.batch.file {
+                Some(f) => send_for_review(&i, &f, note),
+                None => send_all_for_review(&i, note),
+            }
+        }
+        IntakeCmd::Accept(a) => {
+            let i = Intake::open(&root, &a.id)?;
+            match a.file {
+                Some(f) => decide(&i, &f, None),
+                None => accept_all(&i),
+            }
+        }
+        IntakeCmd::Pack { id } => {
+            print!(
+                "{}",
+                crate::intake::pack::render(&Intake::open(&root, &id)?)?
+            );
+            Ok(())
+        }
         IntakeCmd::Revise { file, note } => {
             decide(&Intake::open(&root, &file.id)?, &file.file, Some(&note))
         }
     }
 }
 
-fn send_for_review(i: &Intake, rel: &str) -> Result<()> {
-    let r = review::review(i, rel)?;
+fn send_for_review(i: &Intake, rel: &str, note: &str) -> Result<()> {
+    let r = review::review_noted(i, rel, note)?;
     for w in &r.warnings {
         eprintln!("{} {}: {}", "⚠".yellow(), w.file, w.message);
+    }
+    if let Some(w) = r.note_warning(rel) {
+        eprintln!("{} {w}", "⚠".yellow());
     }
     if r.unchanged {
         println!(
@@ -103,14 +268,115 @@ fn send_for_review(i: &Intake, rel: &str) -> Result<()> {
             Some(d) if !d.trim().is_empty() => {
                 println!("\nChanges since the accepted revision:\n{d}")
             }
-            Some(_) => {}
+            Some(_) => {
+                // Unchanged: sent again because something it rests on
+                // changed (D6). Say what.
+                if let Some(why) = crate::intake::readiness::stale_reasons(i)
+                    .ok()
+                    .and_then(|r| r.get(rel).cloned())
+                {
+                    println!("Unchanged; to confirm again because {}", why.join("; "));
+                }
+            }
             None => println!("No accepted revision yet to compare with."),
         }
     }
     println!(
-        "The user decides at a terminal: `zforge intake accept {} {rel}` or `zforge intake revise {} {rel} --note …`",
-        i.id, i.id
+        "The user decides: `/accept {} {rel}` or `/revise {} {rel}: <note>` (at a terminal: `zforge intake accept|revise {} {rel}`)",
+        i.id, i.id, i.id
     );
+    Ok(())
+}
+
+/// `zforge intake review <ID> --all`.
+fn send_all_for_review(i: &Intake, note: &str) -> Result<()> {
+    let r = batch::review_all_noted(i, note)?;
+    for (f, rev) in &r.sent {
+        for w in &rev.warnings {
+            eprintln!("{} {}: {}", "⚠".yellow(), w.file, w.message);
+        }
+        if let Some(w) = rev.note_warning(f) {
+            eprintln!("{} {w}", "⚠".yellow());
+        }
+        if rev.unchanged {
+            println!(
+                "  {f} revision {} already under review ({})",
+                rev.revision,
+                hash::short(&rev.sha256)
+            );
+        } else {
+            println!(
+                "{} {f} sent for review as revision {} ({})",
+                "✓".green(),
+                rev.revision,
+                hash::short(&rev.sha256)
+            );
+        }
+    }
+    if !r.kept.is_empty() {
+        println!("  accepted and unchanged: {}", r.kept.join(", "));
+    }
+    if r.sent.is_empty() {
+        println!("Nothing needs the user's review.");
+        return Ok(());
+    }
+    println!(
+        "Show the user `zforge intake pack {}`; they decide with `/accept {} all` or \
+         `/revise {} <file>: <note>` (at a terminal: `zforge intake accept {} --all`)",
+        i.id, i.id, i.id, i.id
+    );
+    Ok(())
+}
+
+/// `zforge intake accept <ID> --all`: every file under review, in
+/// dependency order, after one typed confirmation.
+fn accept_all(i: &Intake) -> Result<()> {
+    confirm::require_terminal("zforge intake accept")?;
+    let files = batch::under_review(i)?;
+    if files.is_empty() {
+        bail!("nothing of {} is under review", i.id);
+    }
+    let statuses = review::statuses(i)?;
+    println!("{} {}, in this order:", "ACCEPT".bold(), i.id);
+    for f in &files {
+        match statuses
+            .iter()
+            .find(|s| &s.file == f)
+            .and_then(|s| s.in_review.as_ref())
+        {
+            Some(r) => println!("  {f} revision {} ({})", r.revision, hash::short(&r.sha256)),
+            None => println!("  {f}"),
+        }
+    }
+    confirm::type_to_confirm("accept")?;
+    let by = std::env::var("USER").ok().filter(|u| !u.is_empty());
+    let mut failed = false;
+    for (f, result) in batch::accept_all(i, &files, &crate::intake::record::Decider::terminal(by))?
+    {
+        match result {
+            Ok(rev) => println!(
+                "{} accepted {f} revision {} ({})",
+                "✓".green(),
+                rev.revision,
+                hash::short(&rev.sha256)
+            ),
+            Err(e) => {
+                failed = true;
+                eprintln!("{} {f}: {e:#}", "✗".red());
+            }
+        }
+    }
+    if let Some(root) = i
+        .dir
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    {
+        refresh_knowledge(root);
+    }
+    if failed {
+        bail!("some files were not accepted");
+    }
     Ok(())
 }
 
@@ -170,7 +436,10 @@ fn status(i: &Intake, json: bool) -> Result<()> {
             let text = std::fs::read_to_string(i.dir.join(&status.file)).unwrap_or_default();
             FileView {
                 open_questions: lint::open_questions(&text),
-                issues: lint::lint(&status.file, &text, &i.id, &known),
+                issues: lint::lint(&status.file, &text, &i.id, &known)
+                    .into_iter()
+                    .chain(crate::intake::crossref::lint(i, &status.file, &text))
+                    .collect(),
                 status,
             }
         })
@@ -180,6 +449,9 @@ fn status(i: &Intake, json: bool) -> Result<()> {
         return Ok(());
     }
     println!("{}  ({})", i.id.bold(), i.dir.display());
+    if let Some(hint) = review::profile_hint(i) {
+        println!("  {} {hint}", "ℹ".cyan());
+    }
     for v in &views {
         let s = &v.status;
         let state = match s.state {
@@ -216,7 +488,7 @@ fn status(i: &Intake, json: bool) -> Result<()> {
 /// `zforge readiness <ID>`: check what a handover would pin (§6.2), write
 /// the `readiness.md` view, fail when not ready.
 pub fn readiness(id: &str, tasks: &[String], json: bool) -> Result<()> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     let root = config.project_root();
     let i = Intake::open(&root, id)?;
     let r = crate::intake::readiness::check(&i, &root, tasks, &config)?
@@ -244,7 +516,7 @@ pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
              it cannot be run by an agent or from a script"
         );
     }
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     let root = config.project_root();
     let i = Intake::open(&root, id)?;
     let r = crate::intake::readiness::check(&i, &root, tasks, &config)?
@@ -285,10 +557,15 @@ pub fn handover(id: &str, tasks: &[String]) -> Result<()> {
 }
 
 /// `zforge knowledge index`: regenerate `commitments.md` (in
-/// `knowledge.dir`) and `.zforge/knowledge/commitments.json`.
+/// `knowledge.dir`) and `.zforge/knowledge/commitments.json`, and the
+/// project knowledge's `INDEX.md`.
 pub fn knowledge_index(json: bool) -> Result<()> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     let entries = crate::knowledge::commitments::write(&config)?;
+    let (index, _) = crate::knowledge::index::write(&config)?;
+    if !json {
+        eprintln!("{} {}", "✓".green(), index.display());
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {

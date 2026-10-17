@@ -232,6 +232,7 @@ mod tests {
                 name: "p".into(),
                 language: "go".into(),
                 test_command: format!("sh {}", tmp.path().join("fake_go_test.sh").display()),
+                integration_command: None,
             },
             paths: Default::default(),
             runner: Default::default(),

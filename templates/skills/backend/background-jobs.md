@@ -1,5 +1,10 @@
 # Skill: backend-background-jobs
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Design and implement reliable background jobs, queues, schedulers, and async
 workers. Use this before touching retry loops, cron jobs, or message consumers.

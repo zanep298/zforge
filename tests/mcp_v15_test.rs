@@ -121,8 +121,11 @@ fn the_transport_offers_no_way_to_decide() {
         "intake_new",
         "intake_status",
         "intake_review",
+        "intake_pack",
         "readiness",
         "knowledge_index",
+        "knowledge_get",
+        "questions_status",
         "run_start",
         "run_status",
         "run_cancel",
@@ -137,6 +140,42 @@ fn the_transport_offers_no_way_to_decide() {
         json!({"intake_id": "F", "file": "01-outcome.md"}),
     )]);
     assert!(text(&frames[0]).contains("unknown tool"), "{:?}", frames[0]);
+}
+
+/// `knowledge_get` is read-only: nothing accepted yet answers nothing, and
+/// `include_extra` searches the reference docs `knowledge.extra` names.
+#[test]
+fn knowledge_get_reads_accepted_items_and_reference_docs() {
+    let p = Project::new();
+    std::fs::write(
+        p.root.join(".zforge/config.yaml"),
+        "project:\n  name: t\n  language: shell\n  test_command: \"true\"\n\
+         knowledge:\n  extra: [team-docs]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(p.root.join("team-docs/services")).unwrap();
+    std::fs::write(
+        p.root.join("team-docs/services/billing.md"),
+        "# Billing\n\n## Ledger\n\nEvery invoice posts to the ledger.\n",
+    )
+    .unwrap();
+    let frames = p.mcp(&[
+        call(1, "knowledge_get", json!({"ids": ["DOM-001"]})),
+        call(
+            2,
+            "knowledge_get",
+            json!({"grep": "ledger", "include_extra": true}),
+        ),
+        call(3, "knowledge_get", json!({})),
+    ]);
+    let first = json_result(&frames[0]);
+    assert_eq!(first["items"], json!([]), "{first}");
+    assert_eq!(first["missing"], json!(["DOM-001"]), "{first}");
+    let second = json_result(&frames[1]);
+    let hit = &second["extra"]["hits"][0];
+    assert_eq!(hit["path"], "team-docs/services/billing.md", "{second}");
+    assert_eq!(hit["heading"], "Ledger", "{second}");
+    assert!(text(&frames[2]).contains("--module"), "{:?}", frames[2]);
 }
 
 /// Preparing an intake over MCP: create, fill, review, see the state.
@@ -208,6 +247,86 @@ fn an_agent_prepares_an_intake_and_stops_at_the_decision() {
     assert_eq!(readiness["ready"], false);
     let problems = readiness["checks"].to_string();
     assert!(problems.contains("has no accepted revision"), "{problems}");
+}
+
+/// The whole intake over MCP: a small intake, sent with `all: true`, shown
+/// as one pack — and still nothing accepted: the pack only says how the
+/// user decides.
+#[test]
+fn an_agent_sends_the_whole_intake_and_shows_the_pack() {
+    let p = Project::new();
+    let frames = p.mcp(&[
+        call(1, "intake_new", json!({"intake_id": "F", "small": true})),
+        call(
+            2,
+            "intake_task",
+            json!({"intake_id": "F", "task_id": "TASK-001"}),
+        ),
+    ]);
+    assert!(
+        text(&frames[0]).contains("small profile"),
+        "{:?}",
+        frames[0]
+    );
+    let d = p.root.join(".zforge/intakes/F");
+    let outcome = std::fs::read_to_string(d.join("01-outcome.md")).unwrap();
+    assert!(outcome.starts_with("---\nprofile: small\n---"), "{outcome}");
+    for (f, text) in [
+        (
+            "01-outcome.md",
+            "---\nprofile: small\n---\n# F\n\n## Summary\nFilter.\n\n## Requirements\n\n- REQ-001: filter\n\n## Open questions\n".to_string(),
+        ),
+        (
+            "02-behavior.md",
+            "# B\n\n## Situations\n| 1 | normal | x | y | REQ-001 |\n".to_string(),
+        ),
+        (
+            "03-solution.md",
+            "# S\n\n## Binding decisions\nNone.\n".to_string(),
+        ),
+        (
+            "04-breakdown.md",
+            "# K\n\n## Summary\nOne task.\n\n## Tasks\nTASK-001\n\n## Integration verification\ntrue\n\n## Open questions\n".to_string(),
+        ),
+        (
+            "tasks/TASK-001.md",
+            "---\nid: TASK-001\nparent: F\nrequirements: [REQ-001]\ndepends_on: []\n---\n\n# TASK-001\n\n\
+             ## Goal\nFilter.\n## Input\nCode.\n## Output\nRight.\n## Constraints\nShape.\n## Autonomy\nAny.\n\
+             ## Acceptance and verification\n- AC-01: test pass\n## Delivery\nLocal.\n## Amend the contract when\nShape.\n## Open questions\n".to_string(),
+        ),
+    ] {
+        std::fs::write(d.join(f), text).unwrap();
+    }
+
+    let frames = p.mcp(&[
+        call(1, "intake_review", json!({"intake_id": "F", "all": true})),
+        call(2, "intake_pack", json!({"intake_id": "F"})),
+    ]);
+    let review = json_result(&frames[0]);
+    let sent: Vec<&str> = review["sent"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["file"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            "01-outcome.md",
+            "02-behavior.md",
+            "03-solution.md",
+            "04-breakdown.md",
+            "tasks/TASK-001.md"
+        ]
+    );
+    assert!(review["next"].as_str().unwrap().contains("/accept F all"));
+
+    let pack = text(&frames[1]);
+    assert!(pack.contains("### 01-outcome.md — revision 1"), "{pack}");
+    assert!(pack.contains("Filter."), "{pack}");
+    assert!(pack.contains("/accept F all"), "{pack}");
+    let decisions = std::fs::read_to_string(d.join(".records/decisions.jsonl")).unwrap_or_default();
+    assert!(!decisions.contains("\"accepted\""), "{decisions}");
 }
 
 /// Runs over MCP: start in the background, watch, cancel.
@@ -404,4 +523,42 @@ fn status_shows_each_intake_and_its_next_step() {
             .contains("zforge intake review F"),
         "{s}"
     );
+}
+
+/// `intake_new` with `tiny: true` writes the one task with the intake;
+/// `small` and `tiny` together are refused; `intake_status` hints at the
+/// tiny profile for a full intake with one task.
+#[test]
+fn an_agent_creates_a_tiny_intake() {
+    let p = Project::new();
+    let frames = p.mcp(&[
+        call(1, "intake_new", json!({"intake_id": "T", "tiny": true})),
+        call(
+            2,
+            "intake_new",
+            json!({"intake_id": "U", "tiny": true, "small": true}),
+        ),
+        call(3, "intake_new", json!({"intake_id": "F"})),
+        call(
+            4,
+            "intake_task",
+            json!({"intake_id": "F", "task_id": "TASK-001"}),
+        ),
+        call(5, "intake_status", json!({"intake_id": "F"})),
+        call(6, "intake_status", json!({"intake_id": "T"})),
+    ]);
+    assert!(text(&frames[0]).contains("tiny profile"), "{:?}", frames[0]);
+    let d = p.root.join(".zforge/intakes/T");
+    assert!(d.join("tasks/TASK-001.md").is_file());
+    let outcome = std::fs::read_to_string(d.join("01-outcome.md")).unwrap();
+    assert!(outcome.starts_with("---\nprofile: tiny\n---"), "{outcome}");
+    assert!(text(&frames[1]).contains("not both"), "{:?}", frames[1]);
+    assert!(!p.root.join(".zforge/intakes/U").exists());
+    let status: Value = serde_json::from_str(&text(&frames[4])).unwrap();
+    assert!(
+        status["hint"].as_str().unwrap().contains("--tiny"),
+        "{status}"
+    );
+    let status: Value = serde_json::from_str(&text(&frames[5])).unwrap();
+    assert!(status["hint"].is_null(), "{status}");
 }

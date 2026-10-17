@@ -1,8 +1,13 @@
 # Skill: go-patterns
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
-Enforce idiomatic Go in this project: error handling, interfaces, composition,
-and package organization. Read this before implementing any Go task.
+Idiomatic Go — error handling, interfaces, composition and package
+organization — for where the project's conventions and nearby code are silent.
 
 ## Error Handling
 

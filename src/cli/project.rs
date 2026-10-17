@@ -11,37 +11,49 @@ use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCmd {
+    /// Register a project that already has `.zforge/`.
     Add(AddArgs),
+    /// Every registered project.
     List(ListArgs),
+    /// Unregister a project; `--purge` also deletes its `.zforge/`.
     Remove(RemoveArgs),
+    /// Make a registered project the current one.
     Switch(SwitchArgs),
+    /// Print the current project.
     Current,
 }
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
+    /// The project's root directory (the one holding `.zforge/`).
     pub path: PathBuf,
+    /// The name to register it under.
     #[arg(long)]
     pub name: String,
 }
 
 #[derive(Debug, Args)]
 pub struct ListArgs {
+    /// Machine-readable list.
     #[arg(long)]
     pub json: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct RemoveArgs {
+    /// The registered project name.
     pub name: String,
+    /// Also delete the project's `.zforge/` directory.
     #[arg(long)]
     pub purge: bool,
+    /// With `--purge`: do not ask for confirmation.
     #[arg(long)]
     pub yes: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct SwitchArgs {
+    /// The registered project name.
     pub name: String,
 }
 

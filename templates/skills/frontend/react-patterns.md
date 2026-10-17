@@ -1,5 +1,10 @@
 # Skill: frontend-react-patterns
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
 Implement React UI with clear component boundaries, predictable state, and
 accessible interactions. Use this for React, Next.js, Remix, or similar projects.

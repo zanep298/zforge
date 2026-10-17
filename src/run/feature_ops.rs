@@ -10,7 +10,9 @@
 //!   blocked, and tasks that do not depend on it go on;
 //! - a task whose latest run was interrupted (its worker died) or cancelled
 //!   gets a new run (`retry_of`), with what is left of its budget; a run
-//!   that failed or was blocked is a verdict and stays until the user acts;
+//!   that failed or was blocked is a verdict and stays until the user acts —
+//!   except an integration that failed on the environment
+//!   ([`integrate::INFRA`]), which is run again like an interrupted one;
 //! - within one invocation a task gets at most one new run, so a run the
 //!   user cancels by id is not restarted behind their back;
 //! - a task that has not run in this handover reuses its verified output
@@ -172,7 +174,11 @@ pub fn next_step(f: &FeatureState, own: &BTreeSet<String>, refused: &BTreeSet<St
 fn resumable(status: RunStatus, reason: Option<&str>) -> bool {
     match status {
         RunStatus::Cancelled => true,
-        RunStatus::Failed => reason.is_some_and(|r| r.starts_with(reconcile::INTERRUPTED)),
+        // An integration that failed on the environment was not a verdict
+        // on the code either (`integrate::INFRA`).
+        RunStatus::Failed => reason.is_some_and(|r| {
+            r.starts_with(reconcile::INTERRUPTED) || r.starts_with(integrate::INFRA)
+        }),
         _ => false,
     }
 }
@@ -207,12 +213,16 @@ fn drive(project_root: &Path, handover: &str) -> Result<FeatureState> {
     let h = contract::load_handover(project_root, handover)?;
     let mut own = BTreeSet::new();
     let mut refused = BTreeSet::new();
+    let mut stacked = BTreeSet::new();
     loop {
         if crate::process::take_interrupt().is_some() {
             return Err(Interrupted.into());
         }
         let f = feature::load(project_root, handover)?;
-        let (what, retry_of, created) = match next_step(&f, &own, &refused) {
+        let step = next_step(&f, &own, &refused);
+        let (what, retry_of, created) = match stack(project_root, &h, handover, &f, &step, &mut stacked)? {
+            Some((task, created)) => (task, None, created),
+            None => match step {
             Step::Done => return Ok(f),
             Step::Busy { what, run } => bail!(
                 "{what} is being run by {run} outside this command; wait for it or `zforge run cancel {run}`"
@@ -229,6 +239,7 @@ fn drive(project_root: &Path, handover: &str) -> Result<FeatureState> {
                 let r = integrate::create(project_root, handover, retry_of.as_deref());
                 (integrate::TASK.to_string(), retry_of, r)
             }
+            },
         };
         let run = match created {
             Ok(run) => run,
@@ -277,6 +288,60 @@ fn drive(project_root: &Path, handover: &str) -> Result<FeatureState> {
             return Err(Interrupted.into());
         }
     }
+}
+
+/// Before a step merges verified outputs — the integration's leaves, or a
+/// task's dependencies — check they merge. When one conflicts with an
+/// earlier one, record a run that does the later task again on top of the
+/// earlier outputs (`execute::create_stacked`), so its new output contains
+/// them and the merge goes through; the agent does the reconciling and the
+/// test command checks it. At most once per task per invocation, and only
+/// for a task no verified task has built on yet; otherwise the step runs and
+/// fails on the conflict as before.
+fn stack(
+    project_root: &Path,
+    h: &contract::Handover,
+    handover: &str,
+    f: &FeatureState,
+    step: &Step,
+    stacked: &mut BTreeSet<String>,
+) -> Result<Option<(String, Result<record::Run>)>> {
+    let sources = match step {
+        Step::Integration { retry_of: None } => integrate::leaf_outputs(project_root, h).ok(),
+        Step::Task {
+            task,
+            retry_of: None,
+        } => {
+            let deps = h.depends_on(task)?;
+            super::start::plan(project_root, &h.intake, &h.manifest.id, task, &deps)
+                .ok()
+                .flatten()
+                .map(|s| s.from)
+        }
+        _ => None,
+    };
+    let Some(sources) = sources.filter(|s| s.len() > 1) else {
+        return Ok(None);
+    };
+    let Some(c) = super::start::conflicts(project_root, &sources)? else {
+        return Ok(None);
+    };
+    let later = &c.later.task;
+    let built_on = f.tasks.iter().any(|t| match &t.progress {
+        Progress::Verified { from, .. } => from.contains(&c.later),
+        _ => false,
+    });
+    if built_on || !stacked.insert(later.clone()) {
+        return Ok(None);
+    }
+    let onto: Vec<&str> = c.earlier.iter().map(|e| e.task.as_str()).collect();
+    eprintln!(
+        "↻ {later}'s output does not merge with {}'s ({}): running {later} again on top of it",
+        onto.join(", "),
+        c.files.join(", ")
+    );
+    let created = execute::create_stacked(project_root, handover, &c);
+    Ok(Some((later.clone(), created)))
 }
 
 /// Reuse `task`'s verified output from another handover when nothing it
@@ -548,6 +613,38 @@ mod tests {
             ready(),
         );
         assert_eq!(next_step(&s, &none(), &none()), task("B", Some("RUN-002")));
+    }
+
+    /// An integration that failed on the environment is run again on the
+    /// next invocation, once; one that failed its checks is a verdict.
+    #[test]
+    fn an_integration_failed_on_the_environment_is_resumed() {
+        let s = f(
+            vec![("A", verified("RUN-001"))],
+            stopped(
+                "RUN-002",
+                RunStatus::Failed,
+                "infra: integration check `go test ./test/...` failed twice on the environment",
+            ),
+        );
+        assert_eq!(
+            next_step(&s, &none(), &none()),
+            Step::Integration {
+                retry_of: Some("RUN-002".into())
+            }
+        );
+        let own = BTreeSet::from(["RUN-002".to_string()]);
+        assert_eq!(next_step(&s, &own, &none()), Step::Done);
+
+        let s = f(
+            vec![("A", verified("RUN-001"))],
+            stopped(
+                "RUN-002",
+                RunStatus::Failed,
+                "integration check `go test ./test/...` failed (exit 1):\nconnection refused",
+            ),
+        );
+        assert_eq!(next_step(&s, &none(), &none()), Step::Done);
     }
 
     #[test]

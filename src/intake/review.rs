@@ -11,13 +11,70 @@ use super::record::{self, Decider, Decision, DecisionKind, CHANNEL_CLI};
 use super::status::{self, DocStatus, Rev};
 use super::{hash, templates, validate_id, Intake, CHANGES_DIR, STAGES, TASKS_DIR};
 use crate::knowledge::docs::DocSet;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Create `.zforge/intakes/<id>/` with a template for every stage.
 pub fn create(project_root: &Path, id: &str) -> Result<Intake> {
+    create_with(project_root, id, false)
+}
+
+/// The profile a new intake starts with (`zforge intake new [--small|--tiny]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NewProfile {
+    #[default]
+    Full,
+    /// `profile: small`: 02-behavior / 03-solution start from the compact
+    /// templates (one table each).
+    Small,
+    /// `profile: tiny`: one task, TASK-001, created with the intake;
+    /// 02/03/04 are standard text pointing at it
+    /// (`templates::is_standard`).
+    Tiny,
+}
+
+impl NewProfile {
+    /// The profile from the `--small` / `--tiny` switches; both is an error.
+    pub fn from_flags(small: bool, tiny: bool) -> Result<Self> {
+        match (small, tiny) {
+            (true, true) => bail!("choose one profile: --small or --tiny, not both"),
+            (true, false) => Ok(Self::Small),
+            (false, true) => Ok(Self::Tiny),
+            (false, false) => Ok(Self::Full),
+        }
+    }
+
+    /// How `intake new` names it after the path it created.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "",
+            Self::Small => " (small profile)",
+            Self::Tiny => " (tiny profile: one task, TASK-001)",
+        }
+    }
+}
+
+/// The one task a tiny intake has.
+pub const TINY_TASK: &str = "TASK-001";
+
+/// [`create`], with the small profile when `small`.
+pub fn create_with(project_root: &Path, id: &str, small: bool) -> Result<Intake> {
+    create_profile(
+        project_root,
+        id,
+        if small {
+            NewProfile::Small
+        } else {
+            NewProfile::Full
+        },
+    )
+}
+
+/// [`create`] with `profile`. Every stage file still exists, so readiness,
+/// handovers and runs treat the intake like any other.
+pub fn create_profile(project_root: &Path, id: &str, profile: NewProfile) -> Result<Intake> {
     validate_id(id)?;
     let dir = super::intakes_dir(project_root).join(id);
     if dir.exists() {
@@ -27,16 +84,43 @@ pub fn create(project_root: &Path, id: &str) -> Result<Intake> {
         std::fs::create_dir_all(dir.join(sub))?;
     }
     for stage in STAGES {
-        let body = templates::stage(stage, id).expect("template for every stage");
+        let body = match profile {
+            NewProfile::Full => templates::stage(stage, id),
+            NewProfile::Small => templates::small_stage(stage, id),
+            NewProfile::Tiny => templates::tiny_stage(stage, id),
+        }
+        .expect("template for every stage");
         crate::fs::write_atomic(&dir.join(stage), body.as_bytes())?;
     }
     crate::fs::write_atomic(
         &dir.join(super::BRIEF_FILE),
         templates::brief(id).as_bytes(),
     )?;
-    Ok(Intake {
+    let intake = Intake {
         id: id.to_string(),
         dir,
+    };
+    if profile == NewProfile::Tiny {
+        create_task(&intake, TINY_TASK)?;
+    }
+    Ok(intake)
+}
+
+/// A hint for an intake of the full profile with exactly one task: the
+/// tiny profile would spare the user 02/03/04 that restate it. Never an
+/// error — the full profile stays valid.
+pub fn profile_hint(intake: &Intake) -> Option<String> {
+    let outcome = std::fs::read_to_string(intake.dir.join(lint::OUTCOME)).unwrap_or_default();
+    let tasks = intake
+        .files()
+        .iter()
+        .filter(|f| f.starts_with("tasks/"))
+        .count();
+    (lint::profile(&outcome).is_none() && tasks == 1).then(|| {
+        "one task: for a change this size, `zforge intake new <ID> --tiny` writes 02/03/04 as \
+         standard text pointing at the task (its acceptance criteria are the behavior, its \
+         Constraints the binding decisions), so the user reads only 01-outcome and the task"
+            .to_string()
     })
 }
 
@@ -70,6 +154,8 @@ pub fn known(intake: &Intake) -> Known {
             })
             .collect(),
         knowledge_ids: knowledge_ids(intake),
+        small: lint::is_small(&outcome),
+        tiny: lint::is_tiny(&outcome),
     }
 }
 
@@ -126,6 +212,22 @@ pub struct Reviewed {
     pub warnings: Vec<Issue>,
     /// `git diff` against the accepted revision; `None` for a first review.
     pub diff: Option<String>,
+    /// A new revision after the first, with different text, sent without
+    /// a note saying what changed and why: worth a warning, not an error.
+    pub note_missing: bool,
+}
+
+impl Reviewed {
+    /// The warning for [`Self::note_missing`], or `None`.
+    pub fn note_warning(&self, rel: &str) -> Option<String> {
+        self.note_missing.then(|| {
+            format!(
+                "{rel} revision {} was sent without a note: pass --note \"<what changed and \
+                 why>\" so the decision log says why it changed",
+                self.revision
+            )
+        })
+    }
 }
 
 pub(crate) fn lock<D: DocSet>(doc: &D) -> Result<crate::lock::LockGuard> {
@@ -134,31 +236,64 @@ pub(crate) fn lock<D: DocSet>(doc: &D) -> Result<crate::lock::LockGuard> {
 
 /// Send the file's current content for review as a new revision.
 pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
+    review_noted(doc, rel, "")
+}
+
+/// [`review`], recording `note` — what changed since the last revision and
+/// why — on the review record. A note on content already under review is
+/// not recorded: no new revision is made.
+pub fn review_noted<D: DocSet>(doc: &D, rel: &str, note: &str) -> Result<Reviewed> {
     let path = doc.file(rel)?;
     let _lock = lock(doc)?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let warnings = lint_for_review(doc, rel, &text)
+        .map_err(|errors| anyhow!("{rel} is not ready for review:\n{}", errors.join("\n")))?;
+    review_locked(doc, rel, &text, warnings, false, note)
+}
 
-    let issues = doc.lint(rel, &text);
-    let (errors, warnings): (Vec<Issue>, Vec<Issue>) = issues
+/// Lint `text` as `rel` would be sent for review: its warnings, or every
+/// error as a `  - message` line.
+pub(crate) fn lint_for_review<D: DocSet>(
+    doc: &D,
+    rel: &str,
+    text: &str,
+) -> std::result::Result<Vec<Issue>, Vec<String>> {
+    let (errors, warnings): (Vec<Issue>, Vec<Issue>) = doc
+        .lint(rel, text)
         .into_iter()
         .partition(|i| i.severity == Severity::Error);
-    if !errors.is_empty() {
-        let list: Vec<String> = errors
+    if errors.is_empty() {
+        Ok(warnings)
+    } else {
+        Err(errors
             .iter()
             .map(|i| format!("  - {}", i.message))
-            .collect();
-        bail!("{rel} is not ready for review:\n{}", list.join("\n"));
+            .collect())
     }
+}
 
+/// [`review`] with the lock held and `text` linted. `reconfirm` sends an
+/// accepted, unchanged file again even though nothing it builds on has
+/// been accepted since: a batch ([`super::batch::review_all`]) is sending
+/// something it builds on, so the user confirms both in the same pass.
+pub(crate) fn review_locked<D: DocSet>(
+    doc: &D,
+    rel: &str,
+    text: &str,
+    warnings: Vec<Issue>,
+    reconfirm: bool,
+    note: &str,
+) -> Result<Reviewed> {
     let log = record::read(doc)?;
-    let st = status::derive(rel, &log, Some(&text));
-    let current = hash::sha256(&text);
+    let st = status::derive(rel, &log, Some(text));
+    let current = hash::sha256(text);
     // Unchanged since it was accepted: nothing to review — unless something
     // it builds on was accepted since (D6), when the user confirms it again
     // as a new revision with the same text.
+    let reconfirming = st.accepted.as_ref().is_some_and(|a| a.sha256 == current);
     if let Some(a) = st.accepted.as_ref().filter(|a| a.sha256 == current) {
-        if !doc.reconfirm_needed(rel)? {
+        if !reconfirm && !doc.reconfirm_needed(rel)? {
             bail!(
                 "{rel} is already accepted as revision {}; edit it first",
                 a.revision
@@ -172,11 +307,12 @@ pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
             unchanged: true,
             warnings,
             diff: None,
+            note_missing: false,
         });
     }
 
     let revision = st.last_revision + 1;
-    record::write_snapshot(doc, rel, revision, &hash::normalize(&text))?;
+    record::write_snapshot(doc, rel, revision, &hash::normalize(text))?;
     record::append(
         doc,
         &Decision {
@@ -188,7 +324,7 @@ pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
             channel: CHANNEL_CLI.into(),
             by: None,
             session: None,
-            note: String::new(),
+            note: note.trim().to_string(),
         },
     )?;
     let diff = st
@@ -201,6 +337,7 @@ pub fn review<D: DocSet>(doc: &D, rel: &str) -> Result<Reviewed> {
         unchanged: false,
         warnings,
         diff,
+        note_missing: revision > 1 && !reconfirming && note.trim().is_empty(),
     })
 }
 
@@ -285,6 +422,18 @@ fn decide<D: DocSet>(
     note: String,
 ) -> Result<Rev> {
     let _lock = lock(doc)?;
+    decide_locked(doc, rel, kind, who, note, Utc::now())
+}
+
+/// [`decide`] with the lock held, recorded at `at`.
+pub(crate) fn decide_locked<D: DocSet>(
+    doc: &D,
+    rel: &str,
+    kind: DecisionKind,
+    who: &Decider,
+    note: String,
+    at: chrono::DateTime<Utc>,
+) -> Result<Rev> {
     let pending = pending_review(doc, rel)?;
     if kind == DecisionKind::Accepted {
         // Checked here, under the lock, on the exact revision this call is
@@ -297,7 +446,7 @@ fn decide<D: DocSet>(
     record::append(
         doc,
         &Decision {
-            at: Utc::now(),
+            at,
             file: rel.to_string(),
             revision: pending.revision,
             sha256: pending.sha256.clone(),
@@ -400,6 +549,46 @@ mod tests {
             st.accepted.unwrap().revision,
             1,
             "revision 1 stays in force"
+        );
+    }
+
+    /// A later revision should say why it changed; one confirmed again
+    /// unchanged (D6) has nothing to explain.
+    #[test]
+    fn a_later_revision_without_a_note_is_flagged_not_refused() {
+        let (_t, i) = setup();
+        let r = review(&i, "01-outcome.md").unwrap();
+        assert!(!r.note_missing, "a first revision needs no note");
+        accept(&i, "01-outcome.md", None).unwrap();
+
+        let r = review_locked(&i, "01-outcome.md", OUTCOME, Vec::new(), true, "").unwrap();
+        assert_eq!(r.revision, 2);
+        assert!(!r.note_missing, "unchanged, confirmed again");
+        accept(&i, "01-outcome.md", None).unwrap();
+
+        std::fs::write(
+            i.dir.join("01-outcome.md"),
+            OUTCOME.replace("lọc", "lọc nhanh"),
+        )
+        .unwrap();
+        let r = review(&i, "01-outcome.md").unwrap();
+        assert!(r.note_missing);
+        assert!(r
+            .note_warning("01-outcome.md")
+            .unwrap()
+            .contains("revision 3 was sent without a note"));
+
+        std::fs::write(
+            i.dir.join("01-outcome.md"),
+            OUTCOME.replace("lọc", "lọc gọn"),
+        )
+        .unwrap();
+        let r = review_noted(&i, "01-outcome.md", "  shorter, as asked  ").unwrap();
+        assert!(!r.note_missing && r.note_warning("01-outcome.md").is_none());
+        let last = record::read(&i).unwrap().pop().unwrap();
+        assert_eq!(
+            (last.decision, last.revision, last.note.as_str()),
+            (DecisionKind::Review, 4, "shorter, as asked")
         );
     }
 

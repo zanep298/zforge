@@ -33,7 +33,7 @@ pub const FORBIDDEN: [&str; 9] = [
 ];
 
 fn root() -> Result<PathBuf> {
-    let config = config::load().map_err(|_| anyhow!("config not found — run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("config not found — run: zforge init"))?;
     Ok(config.project_root())
 }
 
@@ -65,12 +65,16 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
     let handler = match name {
         "intake_new" => intake_new,
         "intake_task" => intake_task,
+        "intake_amend" => intake_amend,
         "intake_status" => intake_status,
         "intake_review" => intake_review,
         "intake_diff" => intake_diff,
+        "intake_pack" => intake_pack,
         "change_new" => change_new,
         "readiness" => readiness_report,
         "knowledge_index" => knowledge_index,
+        "knowledge_get" => knowledge_get,
+        "questions_status" => questions_status,
         "onboard_probe" => onboard_probe,
         "onboard_status" => onboard_status,
         "onboard_review" => onboard_review,
@@ -86,11 +90,46 @@ pub fn dispatch(name: &str, args: &Value) -> Option<Result<String>> {
 
 fn intake_new(args: &Value) -> Result<String> {
     let id = str_arg(args, "intake_id")?;
-    let i = review::create(&root()?, &id)?;
+    let flag = |k: &str| args.get(k).and_then(Value::as_bool).unwrap_or(false);
+    let profile = review::NewProfile::from_flags(flag("small"), flag("tiny"))?;
+    let i = review::create_profile(&root()?, &id, profile)?;
+    let next = if profile == review::NewProfile::Tiny {
+        format!(
+            "draft 01-outcome.md and tasks/{}.md (02/03/04 are standard text: leave them unless the task cannot hold something)",
+            review::TINY_TASK
+        )
+    } else {
+        "draft every stage and task".to_string()
+    };
     Ok(format!(
-        "created {}; fill 01-outcome.md, then call intake_review",
-        i.dir.display()
+        "created {}{}; {next}, then call intake_review with all: true and show the user intake_pack",
+        i.dir.display(),
+        profile.label()
     ))
+}
+
+/// A new intake amending an integrated one: drafts only, copied from the
+/// source's accepted revisions. Nothing is reviewed or accepted (D1).
+fn intake_amend(args: &Value) -> Result<String> {
+    let id = str_arg(args, "intake_id")?;
+    let from = str_arg(args, "from")?;
+    if args.get("fixup").and_then(Value::as_bool).unwrap_or(false) {
+        let f = intake::amend::fixup(&root()?, &id, &from, opt_str(args, "handover").as_deref())?;
+        return Ok(serde_json::to_string_pretty(&json!({
+            "fixup": f,
+            "next": format!(
+                "write 01-outcome's problem and requirements (from {}), what changes in 02/03 if anything, TASK-001 and brief.md, then intake_review with all: true and show intake_pack; the user accepts them (`/accept {id} all`)",
+                f.first_requirement
+            ),
+        }))?);
+    }
+    let a = intake::amend::amend(&root()?, &id, &from, opt_str(args, "handover").as_deref())?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "amended": a,
+        "next": format!(
+            "change only what changes and update brief.md, then intake_review each file; the user accepts them (`/accept {id} all`)"
+        ),
+    }))?)
 }
 
 fn intake_task(args: &Value) -> Result<String> {
@@ -110,7 +149,10 @@ fn intake_status(args: &Value) -> Result<String> {
             json!({
                 "status": status,
                 "open_questions": intake::lint::open_questions(&text),
-                "issues": intake::lint::lint(&status.file, &text, &i.id, &known),
+                "issues": intake::lint::lint(&status.file, &text, &i.id, &known)
+                    .into_iter()
+                    .chain(intake::crossref::lint(&i, &status.file, &text))
+                    .collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -119,26 +161,64 @@ fn intake_status(args: &Value) -> Result<String> {
         "dir": i.dir,
         "files": files,
         "decides": "the user accepts at a terminal: zforge intake accept <INTAKE> <FILE>",
+        "hint": review::profile_hint(&i),
     }))?)
 }
 
-/// Send a file for the user's review (this is not acceptance).
+/// Send a file — or, with `all`, every file that needs the user — for the
+/// user's review (this is not acceptance).
 fn intake_review(args: &Value) -> Result<String> {
     let i = Intake::open(&root()?, &str_arg(args, "intake_id")?)?;
+    let note = opt_str(args, "note").unwrap_or_default();
+    if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        let r = intake::batch::review_all_noted(&i, &note)?;
+        let sent: Vec<Value> = r
+            .sent
+            .iter()
+            .map(|(f, rev)| {
+                json!({
+                    "file": f,
+                    "revision": rev.revision,
+                    "sha256": rev.sha256,
+                    "already_under_review": rev.unchanged,
+                    "warnings": rev.warnings,
+                    "note_missing": rev.note_warning(f),
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&json!({
+            "sent": sent,
+            "kept": r.kept,
+            "next": format!(
+                "show the user intake_pack; they decide by typing /accept {} all or /revise {} <file>: <note>",
+                i.id, i.id
+            ),
+        }))?);
+    }
     let file = str_arg(args, "file")?;
-    let r = review::review(&i, &file)?;
+    let r = review::review_noted(&i, &file, &note)?;
+    let stale_why = readiness::stale_reasons(&i)?.remove(&file);
     Ok(serde_json::to_string_pretty(&json!({
         "file": file,
         "revision": r.revision,
         "sha256": r.sha256,
         "already_under_review": r.unchanged,
         "warnings": r.warnings,
+        "note_missing": r.note_warning(&file),
         "diff": r.diff,
+        "rests_on_changed": stale_why,
         "next": format!(
             "tell the user what to look at, then they run: zforge intake accept {} {file}",
             i.id
         ),
     }))?)
+}
+
+/// The review pack: brief, each file under review with summary and diff,
+/// warnings, and how the user decides. Read-only.
+fn intake_pack(args: &Value) -> Result<String> {
+    let i = Intake::open(&root()?, &str_arg(args, "intake_id")?)?;
+    intake::pack::render(&i)
 }
 
 fn intake_diff(args: &Value) -> Result<String> {
@@ -186,7 +266,7 @@ fn change_new(args: &Value) -> Result<String> {
 fn readiness_report(args: &Value) -> Result<String> {
     let root = root()?;
     let i = Intake::open(&root, &str_arg(args, "intake_id")?)?;
-    let config = config::load().map_err(|_| anyhow!("config not found — run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("config not found — run: zforge init"))?;
     let r = readiness::check(&i, &root, &string_list(args, "tasks"), &config)?
         .with(readiness::runtime(&root))
         .with_project(&config);
@@ -199,8 +279,43 @@ fn knowledge_index(_args: &Value) -> Result<String> {
     )?)
 }
 
+/// Accepted knowledge items in full — by ID, module or text — and, with
+/// `include_extra`, matching sections of the reference docs. Read-only.
+fn knowledge_get(args: &Value) -> Result<String> {
+    let config = load_config()?;
+    let k = Knowledge::open(&config);
+    let mut ids = string_list(args, "ids");
+    if let Some(one) = opt_str(args, "ids") {
+        ids.extend(
+            one.split([',', ' '])
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        );
+    }
+    let q = knowledge::lookup::Query {
+        ids,
+        module: opt_str(args, "module"),
+        grep: opt_str(args, "grep"),
+        extra: args
+            .get("include_extra")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
+    let answer = knowledge::lookup::get(&k, &q, &config.knowledge_extra())?;
+    Ok(serde_json::to_string_pretty(&answer)?)
+}
+
 fn load_config() -> Result<config::Config> {
-    config::load().map_err(|_| anyhow!("config not found — run: zf init"))
+    config::load().map_err(|_| anyhow!("config not found — run: zforge init"))
+}
+
+/// Shared stakeholder questions: each open or answered, and who cites it.
+/// Read-only; the answers are written into the file by people.
+fn questions_status(args: &Value) -> Result<String> {
+    Ok(serde_json::to_string_pretty(&intake::questions::status(
+        &root()?,
+        opt_str(args, "name").as_deref(),
+    )?)?)
 }
 
 /// Probe the project (no model call): language, docs, baseline test run.
@@ -250,13 +365,15 @@ fn onboard_review(args: &Value) -> Result<String> {
     let config = load_config()?;
     let k = Knowledge::open(&config);
     let file = str_arg(args, "file")?;
-    let r = knowledge::review(&root, &k, &file)?;
+    let note = opt_str(args, "note").unwrap_or_default();
+    let r = knowledge::review_noted(&root, &k, &file, &note)?;
     Ok(serde_json::to_string_pretty(&json!({
         "file": file,
         "revision": r.revision,
         "sha256": r.sha256,
         "already_under_review": r.unchanged,
         "warnings": r.warnings,
+        "note_missing": r.note_warning(&file),
         "diff": r.diff,
         "next": format!(
             "tell the user what to look at, then they run: zforge onboard accept {file}"
@@ -363,7 +480,9 @@ pub fn definitions() -> Vec<Value> {
             "name": "intake_new",
             "description": "v1.5: create an intake — outcome, behavior, solution, breakdown and a tasks/ folder — for a request that should be clarified before implementation. You fill the files; the user accepts them at a terminal.",
             "inputSchema": { "type": "object", "properties": {
-                "intake_id": { "type": "string", "description": "e.g. FEATURE-001" }
+                "intake_id": { "type": "string", "description": "e.g. FEATURE-001" },
+                "small": { "type": "boolean", "description": "Small profile: compact 02-behavior and 03-solution, for at most two tasks in one module with no new interface" },
+                "tiny": { "type": "boolean", "description": "Tiny profile: one task (TASK-001, created with the intake) in one module with no new interface; 02/03/04 are standard text pointing at it — its acceptance criteria are the behavior, its Constraints the binding decisions. Not with small" }
             }, "required": ["intake_id"] }
         }),
         json!({
@@ -382,12 +501,31 @@ pub fn definitions() -> Vec<Value> {
             }, "required": ["intake_id"] }
         }),
         json!({
+            "name": "intake_amend",
+            "description": "v1.5: create a new intake amending one whose handover is already integrated or merged: its stages and tasks start as drafts copied from the source's accepted revisions, marked `amends`. Change only what changes, then intake_review each file; only the user accepts. When the source handover is not merged yet, prefer editing the source intake in place and handing over again — unchanged tasks are reused.",
+            "inputSchema": { "type": "object", "properties": {
+                "intake_id": { "type": "string", "description": "The new intake" },
+                "from": { "type": "string", "description": "The intake it amends" },
+                "handover": { "type": "string", "description": "The source handover to record (default: its latest)" },
+                "fixup": { "type": "boolean", "description": "A few contained fixes: instead of copies, a short 01-outcome with new REQ IDs, 02/03 saying only what changes from the source's accepted revisions, a breakdown with one task and that task's stub" }
+            }, "required": ["intake_id", "from"] }
+        }),
+        json!({
             "name": "intake_review",
-            "description": "v1.5: send a file's current content for the user's review as a new revision. Refuses while structural errors remain. This is not acceptance: only the user accepts, at a terminal. Editing the file afterwards voids the review.",
+            "description": "v1.5: send a file's current content for the user's review as a new revision — or, with all: true, every stage and task that needs the user, in dependency order (nothing is sent while any file has a structural error; all problems are listed). This is not acceptance: only the user accepts, by typing /accept or at a terminal. Editing a file afterwards voids its review.",
             "inputSchema": { "type": "object", "properties": {
                 "intake_id": { "type": "string" },
-                "file": { "type": "string", "description": "01-outcome.md … 04-breakdown.md, tasks/TASK-001.md, changes/CHANGE-x.md" }
-            }, "required": ["intake_id", "file"] }
+                "file": { "type": "string", "description": "01-outcome.md … 04-breakdown.md, tasks/TASK-001.md, changes/CHANGE-x.md" },
+                "all": { "type": "boolean", "description": "Every file that needs the user's decision, instead of `file`" },
+                "note": { "type": "string", "description": "What changed since the last revision and why (e.g. what the user asked for in chat); recorded on every new revision. Always pass it when re-sending a file" }
+            }, "required": ["intake_id"] }
+        }),
+        json!({
+            "name": "intake_pack",
+            "description": "v1.5: the review pack, read-only — the brief, then each file under review with its revision, summary and changes since the accepted revision, the warnings, and the exact words the user types to decide. Show it to the user instead of each file.",
+            "inputSchema": { "type": "object", "properties": {
+                "intake_id": { "type": "string" }
+            }, "required": ["intake_id"] }
         }),
         json!({
             "name": "intake_diff",
@@ -421,6 +559,23 @@ pub fn definitions() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {} }
         }),
         json!({
+            "name": "knowledge_get",
+            "description": "The project's accepted knowledge items (domain, conventions, rules) in full, with their citations — by ID, by module (a domain section name or a path the items cite) or by text; filters given together must all match. Read docs/knowledge/INDEX.md first and fetch only what the change touches instead of reading whole files. With include_extra and grep, also returns matching sections of the reference docs (knowledge.extra), bounded.",
+            "inputSchema": { "type": "object", "properties": {
+                "ids": { "type": "array", "items": { "type": "string" }, "description": "e.g. [\"DOM-004\", \"RULE-001\"]" },
+                "module": { "type": "string", "description": "A section name (case-insensitive) or a cited path prefix, e.g. billing or src/billing" },
+                "grep": { "type": "string", "description": "Case-insensitive text in the item" },
+                "include_extra": { "type": "boolean", "description": "Also search the reference docs (needs grep)" }
+            } }
+        }),
+        json!({
+            "name": "questions_status",
+            "description": "Shared stakeholder questions (.zforge/questions/<NAME>.md, cited from intake files as Q:<NAME>/Q-<n>): each question open or answered with its answer, and which intake files cite it. Readiness refuses a handover while a question it cites is open. The file is not reviewed: people record answers in it (`- [x] Q-1: question => answer`); never invent an answer.",
+            "inputSchema": { "type": "object", "properties": {
+                "name": { "type": "string", "description": "One questions file (default: all)" }
+            } }
+        }),
+        json!({
             "name": "onboard_probe",
             "description": "ONBOARD: probe the project without calling a model — language and toolchain, repository size, existing docs, CodeGraph index state, and one run of the test command (pass/fail, failing tests, duration). Refuses on an uncommitted working tree; the knowledge is pinned to a commit.",
             "inputSchema": { "type": "object", "properties": {} }
@@ -434,7 +589,8 @@ pub fn definitions() -> Vec<Value> {
             "name": "onboard_review",
             "description": "ONBOARD: send a knowledge file's (domain.md, conventions.md, rules.md) current content for the user's review as a new revision. Refuses while structural errors remain (missing evidence, an ID reused for a different item). This is not acceptance: only the user accepts, revises or records known baseline failures, at a terminal.",
             "inputSchema": { "type": "object", "properties": {
-                "file": { "type": "string", "description": "domain.md, conventions.md or rules.md" }
+                "file": { "type": "string", "description": "domain.md, conventions.md or rules.md" },
+                "note": { "type": "string", "description": "What changed since the last revision and why; recorded on the review" }
             }, "required": ["file"] }
         }),
         json!({

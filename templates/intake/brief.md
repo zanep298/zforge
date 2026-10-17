@@ -13,7 +13,8 @@
      Solution        the approach in two or three sentences
      Choices         a table "Choice | Consequence": what the user should
                      understand before accepting
-     Work split      a mermaid flowchart of the phases (not every task)
+     Work split      a mermaid flowchart of the groups of tasks and their
+                     order (not every task)
      Done when       what will have been proven
      Still unclear   open points, and any place where the files disagree
                      with each other

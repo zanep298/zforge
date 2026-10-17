@@ -19,7 +19,7 @@ profile first, change one thing, measure again.
 
 ## Expected Outputs
 
-A `perf-report.md` containing:
+In your final message (never a file in the worktree — a run commits everything there):
 
 - **Baseline** — measured before any change (numbers, not impressions)
 - **Hotspot** — specific function or query identified as the bottleneck

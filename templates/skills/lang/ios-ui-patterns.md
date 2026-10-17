@@ -1,8 +1,13 @@
 # Skill: ios-ui-patterns
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
-Guide SwiftUI implementation from Figma designs.
-Read this alongside `figma.md` (if present) before implementing any UI task.
+Guide SwiftUI implementation from Figma designs. Use it with
+zforge-figma-to-ui when the task includes a Figma design.
 
 ## Figma → SwiftUI Mapping
 

@@ -11,7 +11,9 @@
 //! its `skills:` frontmatter; only the catalog is visible. That gap is
 //! recorded as not observable rather than guessed.
 
-use super::schema::{Expected, Finding, FindingKind, McpServer, Observed, RunResult};
+use super::schema::{
+    Expected, Finding, FindingKind, McpServer, Observed, RunResult, MAX_COMMAND_CHARS, MAX_RECORDED,
+};
 use serde_json::Value;
 
 /// Stderr lines Claude prints when it drops configuration for the run.
@@ -124,6 +126,18 @@ fn read_init(event: &Value, expected: &Expected, observed: &mut Observed, catalo
         .collect();
 }
 
+/// Keep the first line of a shell command, cut to [`MAX_COMMAND_CHARS`].
+fn record_command(observed: &mut Observed, command: &str) {
+    if observed.commands.len() >= MAX_RECORDED {
+        return;
+    }
+    let line = command.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let line: String = line.trim().chars().take(MAX_COMMAND_CHARS).collect();
+    if !line.is_empty() {
+        observed.commands.push(line);
+    }
+}
+
 fn read_tool_uses(event: &Value, observed: &mut Observed) {
     let blocks = event
         .pointer("/message/content")
@@ -138,6 +152,20 @@ fn read_tool_uses(event: &Value, observed: &mut Observed) {
         *observed.tool_calls.entry(name.to_string()).or_default() += 1;
         let input = block.get("input").unwrap_or(&Value::Null);
         match name {
+            "Bash" => {
+                if let Some(command) = str_at(input, "command") {
+                    record_command(observed, command);
+                }
+            }
+            "Read" => {
+                if let Some(file) = str_at(input, "file_path") {
+                    if observed.files_read.len() < MAX_RECORDED
+                        && !observed.files_read.iter().any(|f| f == file)
+                    {
+                        observed.files_read.push(file.to_string());
+                    }
+                }
+            }
             "Skill" => {
                 if let Some(skill) = str_at(input, "skill") {
                     observed.skill_calls.push(skill.to_string());
@@ -175,6 +203,9 @@ fn read_result(event: &Value) -> RunResult {
         duration_ms: event.get("duration_ms").and_then(Value::as_u64),
         terminal_reason: str_at(event, "terminal_reason").map(str::to_string),
         cost_usd: event.get("total_cost_usd").and_then(Value::as_f64),
+        usage: event
+            .get("usage")
+            .and_then(|u| serde_json::from_value(u.clone()).ok()),
     }
 }
 
@@ -368,10 +399,28 @@ mod tests {
         assert_eq!(o.tool_calls.get("Read"), Some(&2));
         assert_eq!(o.tool_calls.get("Edit"), Some(&1));
         assert_eq!(o.tool_calls.get("Bash"), Some(&3));
+        assert_eq!(
+            o.commands,
+            [
+                "find /work/proj -name \"lib.sh\" -o -name \"test.sh\"",
+                "ls -la",
+                "sh ./test.sh"
+            ]
+        );
+        assert_eq!(o.files_read, ["/work/proj/lib.sh", "/work/proj/test.sh"]);
         assert_eq!(o.permission_denials, vec!["Bash", "Bash"]);
         let r = o.result.expect("result");
         assert_eq!(r.subtype, "success");
         assert_eq!(r.num_turns, Some(9));
+        assert_eq!(
+            r.usage,
+            Some(crate::trace::schema::Usage {
+                input_tokens: 75,
+                output_tokens: 1540,
+                cache_read_input_tokens: 541183,
+                cache_creation_input_tokens: 69200,
+            })
+        );
     }
 
     #[test]

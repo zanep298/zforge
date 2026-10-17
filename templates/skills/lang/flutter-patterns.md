@@ -1,8 +1,13 @@
 # Skill: flutter-patterns
 
+> General checklist. The project's own conventions — its accepted `conventions.md`
+> and `rules.md` (a run's prompt shows the ones that apply) — and the nearest
+> existing code in the module you change override it. Follow it only where the
+> project is silent; never restructure code to match it.
+
 ## Purpose
-Enforce maintainable Flutter and Dart patterns. Use this before implementing any
-Flutter feature or refactor.
+Maintainable Flutter and Dart patterns, for where the project's conventions
+and nearby code are silent.
 
 ## Architecture
 

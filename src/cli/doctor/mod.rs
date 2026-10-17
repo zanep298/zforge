@@ -22,7 +22,8 @@ use checks::Ctx;
 use report::Report;
 
 pub fn run(json: bool) -> Result<OperationOutcome> {
-    let config = config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zf init"))?;
+    let config =
+        config::load().map_err(|_| anyhow::anyhow!("Config not found. Run: zforge init"))?;
     let ctx = Ctx {
         root: config.project_root(),
         config: &config,
@@ -35,6 +36,7 @@ pub fn run(json: bool) -> Result<OperationOutcome> {
             checks::runner(&ctx),
             checks::agents(&ctx),
             checks::skills(&ctx),
+            checks::global_store(&ctx),
             checks::zforge_mcp(&ctx),
             checks::codegraph_mcp(&ctx),
             checks::rtk_hook(&ctx),

@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::intake::record::Decider;
 use crate::intake::status::DocState;
 use crate::intake::status::Rev;
-use crate::intake::{handover, hash, readiness, review, Intake};
+use crate::intake::{batch, handover, hash, readiness, review, Intake};
 use crate::knowledge::Knowledge;
 use anyhow::{anyhow, bail, Result};
 use std::path::Path;
@@ -53,10 +53,16 @@ impl Target {
             .collect())
     }
 
-    fn accept(&self, rel: &str, who: &Decider) -> Result<Rev> {
+    /// Accept `files`: an intake's as one batch in dependency order
+    /// (`batch::accept_all`), so none rests on a file of the batch
+    /// accepted after it; the knowledge's one by one.
+    fn accept(&self, files: &[String], who: &Decider) -> Result<Vec<(String, Result<Rev>)>> {
         match self {
-            Self::Intake(i) => review::accept_as(i, rel, who),
-            Self::Knowledge(k) => review::accept_as(k, rel, who),
+            Self::Intake(i) => batch::accept_all(i, files, who),
+            Self::Knowledge(k) => Ok(files
+                .iter()
+                .map(|f| (f.clone(), review::accept_as(k, f, who)))
+                .collect()),
         }
     }
 
@@ -92,8 +98,8 @@ fn accept(root: &Path, config: &Config, words: &[String], who: &Decider) -> Resu
         bail!("nothing of {} is under review", target.label());
     }
     let mut out = outcome(&target);
-    for f in files {
-        match target.accept(&f, who) {
+    for (f, result) in target.accept(&files, who)? {
+        match result {
             Ok(rev) => {
                 out.recorded = true;
                 out.lines.push(format!(
@@ -188,10 +194,17 @@ fn outcome(target: &Target) -> Outcome {
 /// Keep the commitments current after a decision on an intake, as the CLI
 /// does; a failure is reported, not fatal.
 fn after_decision(config: &Config, target: &Target, out: &Outcome) {
-    if out.recorded && matches!(target, Target::Intake(_)) {
-        if let Err(e) = crate::knowledge::commitments::write(config) {
-            eprintln!("warning: commitments not updated: {e:#}");
+    if !out.recorded {
+        return;
+    }
+    match target {
+        Target::Intake(_) => {
+            if let Err(e) = crate::knowledge::commitments::write(config) {
+                eprintln!("warning: commitments not updated: {e:#}");
+            }
         }
+        // An accepted knowledge file changes what `INDEX.md` lists.
+        Target::Knowledge(_) => crate::knowledge::index::refresh(config),
     }
 }
 

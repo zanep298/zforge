@@ -64,6 +64,9 @@ pub struct InitOptions {
     /// Install missing tools (rtk, codegraph, caveman). `--no-install`
     /// clears it; tools already present are still configured.
     pub install_missing: bool,
+    /// List what init writes in the repository's `info/exclude`
+    /// (`git_exclude`). A block from an earlier init is refreshed anyway.
+    pub git_exclude: bool,
 }
 
 pub fn run(opts: InitOptions) -> Result<()> {
@@ -182,38 +185,37 @@ pub fn run_for(targets: &[&'static str], opts: InitOptions) -> Result<()> {
     // each file can be customized standalone. Shared mode skips these
     // writes; the global store already holds them.
     if local {
-        let tmpl_dir = zforge_dir.join("agents");
-        std::fs::create_dir_all(&tmpl_dir)?;
-        for (name, raw) in agent_templates() {
-            let rendered = apply_vars(raw, &vars);
-            let created = write_safe(&tmpl_dir.join(name), &rendered, force)?;
-            stats.record(created);
-        }
-        println!(
-            "{} .zforge/agents/ — agent definitions",
-            label(stats.created > 0)
+        // Brought to this version like the global store (`crate::shipped`),
+        // recorded in `.zforge/.shipped.json`: what zforge wrote and the
+        // project left alone is updated, edits are kept. A file from before
+        // the manifest is kept too — local mode exists to customize them.
+        let mut files: Vec<(String, String)> = agent_templates()
+            .iter()
+            .map(|(name, raw)| (format!(".zforge/agents/{name}"), apply_vars(raw, &vars)))
+            .collect();
+        files.extend(
+            skill_templates()
+                .iter()
+                .map(|(name, raw)| (format!(".zforge/skills/{name}"), apply_vars(raw, &vars))),
         );
-
-        let skills_dir = zforge_dir.join("skills");
-        std::fs::create_dir_all(&skills_dir)?;
-        for (name, raw) in skill_templates() {
-            let rendered = apply_vars(raw, &vars);
-            let created = write_safe(&skills_dir.join(name), &rendered, force)?;
-            stats.record(created);
-        }
-        let lang_count = lang_skills.len();
-        for (name, raw) in &lang_skills {
-            let rendered = apply_vars(raw, &vars);
-            let created = write_safe(&skills_dir.join(name), &rendered, force)?;
-            stats.record(created);
+        files.extend(
+            lang_skills
+                .iter()
+                .map(|(name, raw)| (format!(".zforge/skills/{name}"), apply_vars(raw, &vars))),
+        );
+        let report = sync_project(&cwd, &files, force, &|_| crate::shipped::Unrecorded::Keep)?;
+        for _ in 0..report.written() {
+            stats.record(true);
         }
         println!(
-            "{} .zforge/skills/ — {} base/supplementary + {} {} skills",
-            label(stats.created > 0),
+            "{} .zforge/agents/, .zforge/skills/ — {} base/supplementary + {} {} skills: {}",
+            label(report.written() > 0),
             SKILLS.len(),
-            lang_count,
-            vars.language
+            lang_skills.len(),
+            vars.language,
+            report.counts()
         );
+        report_kept(&report, "zforge init --local --force");
     } else {
         println!(
             "{} agents + skills resolved from {}",
@@ -275,6 +277,7 @@ pub fn run_for(targets: &[&'static str], opts: InitOptions) -> Result<()> {
 
     setup_rtk(&targets, tool_opts);
     setup_codegraph(&cwd, &targets, tool_opts);
+    report_git_exclude(&cwd, opts.git_exclude);
 
     println!();
     println!(
@@ -304,7 +307,8 @@ pub fn run_for(targets: &[&'static str], opts: InitOptions) -> Result<()> {
     if !local {
         println!();
         println!(
-            "  {} Templates + skills served from the global store; refresh with {}",
+            "  {} Agents + skills served from the global store; every init refreshes it \
+             (your edits kept — {} replaces them)",
             "ℹ".cyan(),
             "zforge install --force".cyan()
         );
@@ -403,6 +407,22 @@ fn register_project(cwd: &Path, targets: &[&str], name: Option<&str>, switch: bo
     }
 }
 
+/// `knowledge.extra` directories that exist, absolute and canonical, for
+/// Claude's `additionalDirectories`. A config that cannot be read yields
+/// none — settings are still written.
+fn reference_dirs(zforge_dir: &Path) -> Vec<String> {
+    let Ok(config) = crate::config::load_from(&zforge_dir.join("config.yaml")) else {
+        return Vec::new();
+    };
+    config
+        .knowledge_extra()
+        .into_iter()
+        .filter_map(|(_, p)| std::fs::canonicalize(p).ok())
+        .filter(|p| p.is_dir())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
 // --- per-agent scaffolders ---
 
 fn scaffold_claude(
@@ -424,8 +444,10 @@ fn scaffold_claude(
     std::fs::create_dir_all(&claude_dir)?;
     let settings_path = claude_dir.join("settings.json");
     // Shared with the user and other tools: `--force` merges zforge's
-    // allow entries in instead of replacing the file.
-    match write_settings(&settings_path, force)? {
+    // allow entries in instead of replacing the file. The reference docs
+    // (`knowledge.extra`) that exist become additionalDirectories.
+    let extra_dirs = reference_dirs(zforge_dir);
+    match write_settings(&settings_path, force, &extra_dirs)? {
         SettingsWrite::Created => {
             stats.record(true);
             print_file_status(true, ".claude/settings.json");
@@ -448,7 +470,7 @@ fn scaffold_claude(
     let claude_agents_dir = claude_dir.join("agents");
     std::fs::create_dir_all(&claude_agents_dir)?;
     let language = vars_with_lang.vars.language.clone();
-    let (agent_count, target_label) = materialize_agents_for(
+    let (claude_agents, target_label) = materialize_agents_for(
         "claude",
         cwd,
         zforge_dir,
@@ -459,10 +481,11 @@ fn scaffold_claude(
     )?;
     println!(
         "{} .claude/agents/ — {} files (model resolved per claude) ← {}",
-        label(agent_count > 0),
-        agent_count,
+        label(claude_agents.written() > 0),
+        claude_agents.written(),
         target_label
     );
+    report_kept(&claude_agents, "zforge init --force");
 
     // .claude/skills/ — native skills (IMP-004)
     let skills = claude_skills::write(cwd, vars_with_lang.vars, force)?;
@@ -479,6 +502,7 @@ fn scaffold_claude(
             format!("; removed stale: {}", skills.removed.join(", "))
         }
     );
+    report_kept(&skills.sync, "zforge init --force");
 
     // .claude/commands/ — /accept, /revise, /handover, recorded by the
     // prompt hook in .claude/settings.json
@@ -534,7 +558,7 @@ fn scaffold_codex(
     std::fs::create_dir_all(&codex_dir)?;
     let codex_agents_dir = codex_dir.join("agents");
     std::fs::create_dir_all(&codex_agents_dir)?;
-    let (codex_agent_count, target_label) = materialize_agents_for(
+    let (codex_agents, target_label) = materialize_agents_for(
         "codex",
         cwd,
         zforge_dir,
@@ -545,10 +569,11 @@ fn scaffold_codex(
     )?;
     println!(
         "{} .codex/agents/ — {} files (model resolved per codex) ← {}",
-        label(codex_agent_count > 0),
-        codex_agent_count,
+        label(codex_agents.written() > 0),
+        codex_agents.written(),
         target_label
     );
+    report_kept(&codex_agents, "zforge init --force");
 
     // .codex/README.md
     let codex_readme = apply_vars(include_str!("../../templates/codex-readme.md"), vars);
@@ -588,7 +613,7 @@ fn scaffold_opencode(
     std::fs::create_dir_all(&opencode_dir)?;
     let opencode_agents_dir = opencode_dir.join("agents");
     std::fs::create_dir_all(&opencode_agents_dir)?;
-    let (opencode_agent_count, target_label) = materialize_agents_for(
+    let (opencode_agents, target_label) = materialize_agents_for(
         "opencode",
         cwd,
         zforge_dir,
@@ -599,10 +624,11 @@ fn scaffold_opencode(
     )?;
     println!(
         "{} .opencode/agents/ — {} files (model resolved per opencode) ← {}",
-        label(opencode_agent_count > 0),
-        opencode_agent_count,
+        label(opencode_agents.written() > 0),
+        opencode_agents.written(),
         target_label
     );
+    report_kept(&opencode_agents, "zforge init --force");
 
     // Auto-register OpenCode MCP server in ~/.config/opencode/opencode.json
     println!();
@@ -615,6 +641,47 @@ fn scaffold_opencode(
     }
 
     Ok(())
+}
+
+/// Bring files init renders into the project (path relative to it →
+/// content) to this version, recorded in `.zforge/.shipped.json`
+/// (`crate::shipped`): `force` replaces every differing file, archiving the
+/// old copy in `.zforge/archive/<ts>/`; otherwise only what zforge wrote
+/// and nobody changed since is updated.
+pub(crate) fn sync_project(
+    project: &Path,
+    files: &[(String, String)],
+    force: bool,
+    unrecorded: &dyn Fn(&str) -> crate::shipped::Unrecorded,
+) -> Result<crate::shipped::Report> {
+    let mode = if force {
+        crate::shipped::Mode::Force
+    } else {
+        crate::shipped::Mode::Refresh
+    };
+    crate::shipped::sync(
+        project,
+        &project.join(".zforge").join(crate::shipped::MANIFEST),
+        files,
+        mode,
+        unrecorded,
+    )
+}
+
+/// Name the files a sync kept because they were edited, and where an
+/// archive went.
+fn report_kept(report: &crate::shipped::Report, force_cmd: &str) {
+    for rel in &report.kept {
+        println!(
+            "  {} kept {rel}: edited, or written before zforge recorded what it writes \
+             (zforge ships a newer version; `{force_cmd}` replaces it, keeping a copy in \
+             .zforge/archive/<ts>/)",
+            "!".yellow()
+        );
+    }
+    if let Some(dir) = &report.archive_dir {
+        println!("  old copies archived in {}", dir.display());
+    }
 }
 
 // --- helpers ---
@@ -668,6 +735,7 @@ mod claude_settings;
 pub(crate) mod claude_skills;
 pub(crate) mod config_file;
 mod detect;
+mod git_exclude;
 pub(crate) mod instructions;
 mod lang_skills;
 mod registry;
@@ -745,10 +813,11 @@ pub(crate) fn rerender_agents(
         };
         agent_render::materialize_agents_into(
             client,
+            project_root,
             &src,
             &dst,
             models.as_ref(),
-            true,
+            crate::shipped::Mode::Overwrite,
             &claude_skills,
         )?;
         done.push(rel);
@@ -764,7 +833,7 @@ fn materialize_agents_for(
     global_store: Option<&Path>,
     force: bool,
     extra_frontmatter: &dyn Fn(&str) -> String,
-) -> Result<(usize, String)> {
+) -> Result<(crate::shipped::Report, String)> {
     let models = crate::config::load_models_from_root(cwd);
     let (src_dir, label): (PathBuf, String) = if let Some(global) = global_store {
         let agents = global.join("agents");
@@ -779,15 +848,61 @@ fn materialize_agents_for(
     } else {
         (zforge_dir.join("agents"), ".zforge/agents/".to_string())
     };
-    let count = agent_render::materialize_agents_into(
+    let mode = if force {
+        crate::shipped::Mode::Force
+    } else {
+        crate::shipped::Mode::Refresh
+    };
+    let report = agent_render::materialize_agents_into(
         target_agent,
+        cwd,
         &src_dir,
         dst_dir,
         models.as_ref(),
-        force,
+        mode,
         extra_frontmatter,
     )?;
-    Ok((count, label))
+    Ok((report, label))
+}
+
+/// Write or refresh the `info/exclude` block and say what it did. Never
+/// fails init: the scaffold is done by now.
+fn report_git_exclude(cwd: &Path, enable: bool) {
+    match git_exclude::apply(cwd, enable) {
+        Ok(git_exclude::Outcome::Off) => {}
+        Ok(git_exclude::Outcome::NotRepo) => println!(
+            "{} --git-exclude: not a git repository — nothing excluded",
+            "⚠".yellow()
+        ),
+        Ok(git_exclude::Outcome::Written {
+            file,
+            entries,
+            tracked,
+        }) => {
+            println!(
+                "{} {} — {} zforge paths excluded from git",
+                "✓".green(),
+                file.display(),
+                entries.len()
+            );
+            if !tracked.is_empty() {
+                println!(
+                    "  {} already tracked, so still in git: {}",
+                    "⚠".yellow(),
+                    tracked.join(", ")
+                );
+                println!(
+                    "    to stop tracking them (keeps the files): git rm -r --cached -- {}",
+                    tracked
+                        .iter()
+                        .map(|t| t.trim_end_matches('/').replace('*', "\\*"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+            }
+        }
+        Err(e) => eprintln!("  {} --git-exclude: {e:#}", "⚠".yellow()),
+    }
 }
 
 fn install_rules_for_claude(rules_dir: &Path, force: bool, stats: &mut InitStats) -> Result<usize> {
@@ -942,7 +1057,7 @@ mod tests {
         ).unwrap();
 
         let codex_agents = root.join(".codex").join("agents");
-        let (count, _label) = materialize_agents_for(
+        let (report, _label) = materialize_agents_for(
             "codex",
             root,
             &zforge_dir,
@@ -952,7 +1067,7 @@ mod tests {
             &|_| String::new(),
         )
         .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(report.written(), 1);
         let written = std::fs::read_to_string(codex_agents.join("code-agent.md")).unwrap();
         assert!(written.contains("model: gpt-5-codex"));
         assert!(!written.contains("codex_model:"));
@@ -975,7 +1090,7 @@ mod tests {
         std::fs::create_dir_all(&codex_agents).unwrap();
         std::fs::write(codex_agents.join("code-agent.md"), "preexisting\n").unwrap();
 
-        let (count, _) = materialize_agents_for(
+        let (report, _) = materialize_agents_for(
             "codex",
             root,
             &zforge_dir,
@@ -985,7 +1100,7 @@ mod tests {
             &|_| String::new(),
         )
         .unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(report.written(), 0);
         assert_eq!(
             std::fs::read_to_string(codex_agents.join("code-agent.md"))
                 .unwrap()

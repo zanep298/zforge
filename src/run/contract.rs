@@ -54,11 +54,25 @@ pub struct Contract {
     pub depends_on: Vec<String>,
     /// Protected test files the contract lets it change (`run::guard`).
     pub tests_may_change: Vec<String>,
+    /// The task's own `review:`, overriding `execution.review`.
+    pub review: Option<bool>,
+    /// The `## Tests you must not change` section (`guard::Guard::brief`),
+    /// set once the worktree exists; empty until then.
+    pub protected_tests: String,
     /// Every file the manifest pins, verified.
     pub files: Vec<ContractFile>,
     /// The handover's pinned knowledge (ONBOARD TASK-007), verified; empty
     /// when the handover pinned none (AC-05).
     pub knowledge: Vec<KnowledgeFile>,
+    /// What changed since the earlier output this run continues from
+    /// ([`previous_attempt`]); `None` for a run that starts afresh.
+    pub previous_attempt: Option<String>,
+    /// For the reviewer of a continued run: where the whole task's change
+    /// starts (`start::review_scope`); `None` for a run that starts afresh.
+    pub review_scope: Option<String>,
+    /// `knowledge.extra` directories that exist, absolute: reference docs
+    /// the code prompt names (not pinned, not part of the contract).
+    pub reference_docs: Vec<std::path::PathBuf>,
 }
 
 /// The intake that holds `handover_id`. Handover ids are numbered per
@@ -116,6 +130,8 @@ pub struct Handover {
     /// on a handover that pinned none, including every manifest written
     /// before this field existed.
     pub knowledge: Vec<KnowledgeFile>,
+    /// See [`Contract::reference_docs`].
+    pub reference_docs: Vec<std::path::PathBuf>,
 }
 
 /// Load and verify the contract of `task` in handover `handover_id`
@@ -143,9 +159,92 @@ pub fn load(project_root: &Path, handover_id: &str, task: &str) -> Result<Contra
         task: task.to_string(),
         depends_on,
         tests_may_change: meta.tests_may_change,
+        review: meta.review,
+        protected_tests: String::new(),
         files: h.files,
         knowledge: h.knowledge,
+        previous_attempt: None,
+        review_scope: None,
+        reference_docs: h.reference_docs,
     })
+}
+
+/// The prompt section for a run continuing from `previous`, the verified
+/// output of the same task in an earlier handover: what changed in the
+/// task's contract since — the task file as a diff, and each stage item it
+/// rests on that differs (`reuse::rests_on`).
+pub fn previous_attempt(
+    project_root: &Path,
+    c: &Contract,
+    previous: &super::record::Previous,
+) -> Result<String> {
+    let old = load_handover(project_root, &format!("{}/{}", c.intake, previous.handover))?;
+    let file = format!("tasks/{}.md", c.task);
+    let mut out = format!(
+        "## Previous attempt\n\nThis worktree does not start from the baseline: it holds the verified \
+         output of {run} — {task} in {handover} — built on the contract as it was then. The \
+         contract has changed since. Adapt the work that is here to the contract below: keep \
+         what still holds, change what the changes require, and do not start over. The \
+         acceptance criteria are those below, not the old ones.\n\n",
+        run = previous.run,
+        task = c.task,
+        handover = previous.handover,
+    );
+    let old_task = old.files.iter().find(|f| f.file == file);
+    let new_task = c.task_file();
+    match old_task {
+        Some(o) if o.sha256 == new_task.sha256 => {
+            out.push_str("The task file itself did not change.\n\n");
+        }
+        Some(o) => {
+            let intake = Intake::open(project_root, &c.intake)?;
+            let diff =
+                crate::intake::review::diff_against(&intake, &file, o.revision, new_task.revision);
+            out.push_str(&format!(
+                "### {file}, revision {} → {}\n\n```diff\n{}\n```\n\n",
+                o.revision,
+                new_task.revision,
+                diff.trim_end()
+            ));
+        }
+        None => out.push_str(&format!("{} did not pin {file}.\n\n", previous.handover)),
+    }
+    let before = super::reuse::rests_on_files(&old.files, &old.manifest.id, &c.task)?;
+    let now = super::reuse::rests_on_files(&c.files, &c.manifest.id, &c.task)?;
+    let mut items = String::new();
+    for ((stage, b), (_, n)) in before.iter().zip(&now) {
+        for key in crate::intake::items::changed(b, n) {
+            let show = |v: &std::collections::BTreeMap<String, String>| {
+                v.get(&key)
+                    .map(|t| {
+                        t.lines()
+                            .map(|l| format!("    {l}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_else(|| "    (absent)".into())
+            };
+            if key == crate::intake::items::WHOLE {
+                items.push_str(&format!(
+                    "- {stage} changed; it is not readable as items, so compare it whole with the stage below\n"
+                ));
+                continue;
+            }
+            items.push_str(&format!(
+                "- {key} of {stage}\n  before:\n{}\n  now:\n{}\n",
+                show(b),
+                show(n)
+            ));
+        }
+    }
+    if items.is_empty() {
+        out.push_str("No stage item this task rests on changed.\n\n");
+    } else {
+        out.push_str(&format!(
+            "### Stage items this task rests on that changed\n\n{items}\n"
+        ));
+    }
+    Ok(out)
 }
 
 /// Load handover `handover_id` and verify every snapshot it pins.
@@ -208,6 +307,11 @@ pub fn load_handover(project_root: &Path, handover_id: &str) -> Result<Handover>
             text,
         })
         .collect();
+    let reference_docs = config
+        .knowledge_extra()
+        .into_iter()
+        .filter_map(|(_, p)| std::fs::canonicalize(p).ok())
+        .collect();
 
     Ok(Handover {
         intake: intake.id,
@@ -215,6 +319,7 @@ pub fn load_handover(project_root: &Path, handover_id: &str) -> Result<Handover>
         manifest_sha256: hash::sha256(&raw),
         files,
         knowledge,
+        reference_docs,
     })
 }
 
@@ -253,10 +358,11 @@ impl Handover {
             .collect())
     }
 
-    /// The integration check: the first code block under "Kiểm chứng tích
-    /// hợp" in the pinned breakdown, one command per non-empty, non-comment
-    /// line; without one, `test_command`.
-    pub fn checks(&self, test_command: &str) -> Result<Checks> {
+    /// The integration check: the first code block under "Integration
+    /// verification" in the pinned breakdown, one command per non-empty,
+    /// non-comment line; without one, `integration_command` (same lines),
+    /// else `test_command`.
+    pub fn checks(&self, integration_command: Option<&str>, test_command: &str) -> Result<Checks> {
         let breakdown = self.file(STAGES[3])?;
         let commands = integration_block(&breakdown.text);
         if !commands.is_empty() {
@@ -265,10 +371,17 @@ impl Handover {
                 commands,
             });
         }
+        let commands = command_lines(integration_command.unwrap_or_default().lines());
+        if !commands.is_empty() {
+            return Ok(Checks {
+                from: ChecksFrom::IntegrationCommand,
+                commands,
+            });
+        }
         let test_command = test_command.trim();
         if test_command.is_empty() {
             bail!(
-                "no integration check: {} has no code block under \"{}\" and no `project.test_command` is configured",
+                "no integration check: {} has no code block under \"{}\" and neither `project.integration_command` nor `project.test_command` is configured",
                 STAGES[3],
                 lint::INTEGRATION
             );
@@ -303,8 +416,12 @@ fn integration_block(breakdown: &str) -> Vec<String> {
             Some(_) => {}
         }
     }
+    command_lines(lines.take_while(|l| !fence(l)))
+}
+
+/// One command per non-empty line; `#` lines are comments.
+fn command_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     lines
-        .take_while(|l| !fence(l))
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(String::from)
@@ -368,8 +485,9 @@ impl Contract {
         let checklists = match checklists {
             [] => String::new(),
             files => format!(
-                "## Checklists\n\nRead these before writing code or tests; they are how this project \
-                 does both:\n\n{}\n\n",
+                "## Checklists\n\nRead these before writing code or tests. They are general: where \
+                 the project knowledge below or the code around your change does it differently, \
+                 the project wins.\n\n{}\n\n",
                 files
                     .iter()
                     .map(|f| format!("- `{}`", f.display()))
@@ -385,7 +503,13 @@ impl Contract {
             .replace("{{handover_id}}", &self.manifest.id)
             .replace("{{change_request_path}}", change_request_path)
             .replace("{{verifier_feedback}}\n", &feedback)
+            .replace(
+                "{{previous_attempt}}\n",
+                self.previous_attempt.as_deref().unwrap_or(""),
+            )
             .replace("{{project_knowledge}}\n", &Self::knowledge_block(knowledge))
+            .replace("{{reference_docs}}\n", &self.reference_block())
+            .replace("{{protected_tests}}\n", &self.protected_tests)
             .replace("{{task_contract}}", self.task_file().text.trim_end())
             .replace("{{stage_context}}", &self.stage_context())
     }
@@ -400,6 +524,10 @@ impl Contract {
         knowledge: &select::Selection,
     ) -> String {
         REVIEW_TEMPLATE
+            .replace(
+                "{{review_scope}}\n",
+                self.review_scope.as_deref().unwrap_or(""),
+            )
             .replace("{{test_command}}", test_command)
             .replace("{{start}}", start)
             .replace("{{task_id}}", &self.task)
@@ -413,10 +541,12 @@ impl Contract {
     /// What this task's agents get from the project's accepted knowledge
     /// (ONBOARD REQ-008): every pinned `rules.md`/`conventions.md` item and
     /// the `domain.md` items this task's contract and stages name, within
-    /// `limit` bytes (`knowledge.prompt_limit`) — drawn only from the
-    /// pinned snapshots (AC-01, AC-02, AC-03). Empty when the handover
-    /// pinned no knowledge (AC-05).
-    pub fn knowledge_selection(&self, limit: usize) -> select::Selection {
+    /// `limit` bytes (`knowledge.prompt_limit`), of which conventions and
+    /// rules unrelated to the task take at most `general_limit`
+    /// (`knowledge.general_limit`) — drawn only from the pinned snapshots
+    /// (AC-01, AC-02, AC-03). Empty when the handover pinned no knowledge
+    /// (AC-05).
+    pub fn knowledge_selection(&self, limit: usize, general_limit: usize) -> select::Selection {
         if self.knowledge.is_empty() {
             return select::Selection::default();
         }
@@ -431,7 +561,7 @@ impl Contract {
                 snapshot_path: &k.snapshot_path,
             })
             .collect();
-        select::for_task(&pins, &search_text, limit)
+        select::for_task(&pins, &search_text, limit, general_limit)
     }
 
     /// The `## Project knowledge` block for a prompt; empty (so the whole
@@ -441,6 +571,22 @@ impl Contract {
             return String::new();
         }
         format!("## Project knowledge\n\n{}\n\n", knowledge.text.trim_end())
+    }
+
+    /// `knowledge.extra` named for the agent; empty (the line disappears)
+    /// when none is configured or none exists.
+    fn reference_block(&self) -> String {
+        if self.reference_docs.is_empty() {
+            return String::new();
+        }
+        format!(
+            "Reference docs (read only what applies; not part of the contract): {}\n\n",
+            self.reference_docs
+                .iter()
+                .map(|p| format!("`{}`", p.display()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     /// The accepted stages, as pinned, in order.
@@ -636,13 +782,29 @@ pub(crate) mod tests {
         let h = load_handover(&f.root, "HANDOVER-001").unwrap();
         assert_eq!(h.leaves().unwrap(), ["TASK-002"]);
         assert_eq!(
-            h.checks("cargo test").unwrap(),
+            h.checks(None, "cargo test").unwrap(),
             Checks {
                 from: ChecksFrom::Config,
                 commands: vec!["cargo test".into()]
             }
         );
-        let err = h.checks("  ").unwrap_err().to_string();
+        // `project.integration_command` comes before the test command.
+        assert_eq!(
+            h.checks(
+                Some("# integration\nmake it\n\n  go test ./test/...  \n"),
+                "cargo test"
+            )
+            .unwrap(),
+            Checks {
+                from: ChecksFrom::IntegrationCommand,
+                commands: vec!["make it".into(), "go test ./test/...".into()]
+            }
+        );
+        assert_eq!(
+            h.checks(Some("  "), "cargo test").unwrap().from,
+            ChecksFrom::Config
+        );
+        let err = h.checks(None, "  ").unwrap_err().to_string();
         assert!(err.contains("no integration check"), "{err}");
     }
 
@@ -718,6 +880,53 @@ pub(crate) mod tests {
             .prompt(None, "CR.md", &[], "cargo test", &empty)
             .contains("## Checklists"));
         assert!(!p.contains("{{checklists}}"));
+    }
+
+    /// The protected-tests section lands before the change request
+    /// section it points to; without one the slot leaves no trace.
+    #[test]
+    fn prompt_carries_the_protected_tests_section() {
+        let f = handed_over();
+        let empty = select::Selection::default();
+        let mut c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        assert!(
+            !p.contains("Tests you must not change") && !p.contains("{{"),
+            "{p}"
+        );
+
+        let tracked = vec!["internal/audit/writer_test.rs".to_string()];
+        c.protected_tests = crate::run::guard::Guard::new(None, "cargo test", &[], &f.root)
+            .brief(&tracked, &c.task_file().text);
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        let at = p.find("## Tests you must not change").expect("section");
+        assert!(at < p.find("## When the contract itself must change").unwrap());
+        assert!(p.contains("- `internal/audit/writer_test.rs`"), "{p}");
+    }
+
+    #[test]
+    fn prompt_names_existing_reference_docs_only_when_configured() {
+        let f = handed_over();
+        let empty = select::Selection::default();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        assert!(!p.contains("Reference docs") && !p.contains("{{"), "{p}");
+
+        std::fs::create_dir_all(f.root.join("team-docs")).unwrap();
+        std::fs::write(
+            f.root.join(".zforge/config.yaml"),
+            "project:\n  name: t\n  test_command: \"true\"\nexecution:\n  budget_usd: 2.0\n\
+             knowledge:\n  extra: [team-docs, gone-docs]\n",
+        )
+        .unwrap();
+        let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let p = c.prompt(None, "CR.md", &[], "cargo test", &empty);
+        let want = format!(
+            "Reference docs (read only what applies; not part of the contract): `{}`\n",
+            f.root.join("team-docs").display()
+        );
+        assert!(p.contains(&want), "{p}");
+        assert!(!p.contains("gone-docs"), "{p}");
     }
 
     #[test]
@@ -839,8 +1048,8 @@ pub(crate) mod tests {
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         assert_eq!(c.knowledge.len(), 3, "{:?}", c.knowledge);
 
-        let s = c.knowledge_selection(10_000);
-        assert_eq!(s.items, ["RULE-001", "CONV-001", "DOM-001", "DOM-002"]);
+        let s = c.knowledge_selection(10_000, usize::MAX);
+        assert_eq!(s.items, ["CONV-001", "RULE-001", "DOM-001", "DOM-002"]);
         assert!(s.omitted.is_empty());
         assert!(!s.items.contains(&"DOM-003".to_string()));
         assert!(!s.text.contains("DOM-003"), "{}", s.text);
@@ -851,7 +1060,7 @@ pub(crate) mod tests {
     fn code_and_review_prompts_carry_the_same_knowledge() {
         let f = handed_over_with_full_knowledge();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
-        let s = c.knowledge_selection(10_000);
+        let s = c.knowledge_selection(10_000, usize::MAX);
         let code_prompt = c.prompt(None, "CR.md", &[], "cargo test", &s);
         let review_prompt = c.review_prompt("abc123", "cargo test", &s);
         assert!(code_prompt.contains("## Project knowledge") && code_prompt.contains("RULE-001"));
@@ -879,7 +1088,7 @@ pub(crate) mod tests {
         let f = handed_over_with_full_knowledge();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         // Room for the first item only.
-        let s = c.knowledge_selection(80);
+        let s = c.knowledge_selection(80, usize::MAX);
         assert!(!s.items.is_empty());
         assert!(!s.omitted.is_empty(), "{:?}", s);
         assert!(!s.snapshots.is_empty());
@@ -905,11 +1114,32 @@ pub(crate) mod tests {
         let f = handed_over();
         let c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
         assert!(c.knowledge.is_empty());
-        let s = c.knowledge_selection(10_000);
+        let s = c.knowledge_selection(10_000, usize::MAX);
         assert_eq!(s, select::Selection::default());
         let p = c.prompt(None, "CR.md", &[], "cargo test", &s);
         assert!(!p.contains("## Project knowledge"), "{p}");
         let rp = c.review_prompt("abc123", "cargo test", &s);
         assert!(!rp.contains("## Project knowledge"), "{rp}");
+    }
+
+    /// A continued run's reviewer is told where the whole task's change
+    /// starts; a fresh run's prompt carries no trace of the slot.
+    #[test]
+    fn a_continued_runs_review_names_the_whole_task_diff() {
+        let f = handed_over();
+        let mut c = load(&f.root, "HANDOVER-001", "TASK-001").unwrap();
+        let s = select::Selection::default();
+        let fresh = c.review_prompt("abc123", "cargo test", &s);
+        assert!(!fresh.contains("review_scope"), "{fresh}");
+        assert!(!fresh.contains("continues"), "{fresh}");
+
+        c.review_scope = Some(
+            "This run continues RUN-001's verified output, so `git diff {{start}}` shows only \
+             this run. Review the whole task with `git diff base0`.\n"
+                .into(),
+        );
+        let rp = c.review_prompt("abc123", "cargo test", &s);
+        assert!(rp.contains("`git diff abc123` shows only this run"), "{rp}");
+        assert!(rp.contains("`git diff base0`"), "{rp}");
     }
 }

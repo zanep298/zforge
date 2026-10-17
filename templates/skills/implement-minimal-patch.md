@@ -8,7 +8,7 @@ directly required by the current task.
 
 ## When to Use
 
-- During every coding step
+- While implementing any task
 - When reviewing whether a changeset is appropriately scoped
 - When deciding whether to include a "while I'm here" fix
 
@@ -30,6 +30,10 @@ A changeset that:
 ## Checklist
 
 - [ ] Every changed file is needed for the agreed output
+- [ ] New code follows the project's conventions and the nearest existing code
+      in the module: layout, naming, error/response handling, logging
+- [ ] Generated files regenerated with the project's command, not hand-edited
+- [ ] Formatter and linter the project uses pass on the changed files
 - [ ] No public function signatures changed without that being agreed
 - [ ] No error types renamed or removed without that being agreed
 - [ ] No unrelated files modified

@@ -12,10 +12,13 @@
 pub mod commitments;
 pub mod docs;
 pub mod draft;
+pub mod index;
 pub mod items;
 pub mod known;
 pub mod lint;
+pub mod lookup;
 pub mod probe;
+pub mod reference;
 pub mod select;
 pub mod stale;
 
@@ -130,6 +133,8 @@ pub fn lint_issues(rel: &str, text: &str) -> Vec<Issue> {
             message: format!("has no \"{}\" section", intake_lint::OPEN_QUESTIONS),
         });
     }
+    issues.extend(lint::size_warnings(rel, text));
+    issues.extend(lint::single_module_conventions(rel, text));
     issues
 }
 
@@ -181,7 +186,17 @@ pub fn pending_review(k: &Knowledge, rel: &str) -> Result<Rev> {
 /// for the decision log — a refused review (lint errors, an unknown file)
 /// leaves it byte-identical (Output, AC-04).
 pub fn review(project_root: &Path, k: &Knowledge, rel: &str) -> Result<intake_review::Reviewed> {
-    let reviewed = intake_review::review(k, rel)?;
+    review_noted(project_root, k, rel, "")
+}
+
+/// [`review`], recording `note` — what changed and why — on the review.
+pub fn review_noted(
+    project_root: &Path,
+    k: &Knowledge,
+    rel: &str,
+    note: &str,
+) -> Result<intake_review::Reviewed> {
+    let reviewed = intake_review::review_noted(k, rel, note)?;
     ensure_gitattributes(project_root, &k.dir)?;
     Ok(reviewed)
 }
@@ -231,15 +246,42 @@ pub fn read_pinned(k: &Knowledge, pinned: &[Pinned]) -> Result<Vec<(String, Stri
 /// contributes nothing rather than erroring: an unonboarded project's
 /// intakes still lint, they just cite nothing yet.
 pub fn accepted_item_ids(k: &Knowledge) -> Result<BTreeSet<String>> {
-    let mut ids = BTreeSet::new();
+    Ok(accepted_texts(k)?
+        .iter()
+        .flat_map(|(_, text)| items::items(text))
+        .map(|it| it.id)
+        .collect())
+}
+
+/// `(file, text)` of each of [`FILES`]'s accepted revision, in
+/// [`FILES`]' order; a file never accepted is left out.
+pub fn accepted_texts(k: &Knowledge) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
     for file in FILES {
         let status = intake_review::file_status(k, file)?;
         if let Some(rev) = status.accepted {
-            let text = record::read_snapshot(k, file, rev.revision)?;
-            ids.extend(items::items(&text).into_iter().map(|it| it.id));
+            out.push((
+                file.to_string(),
+                record::read_snapshot(k, file, rev.revision)?,
+            ));
         }
     }
-    Ok(ids)
+    Ok(out)
+}
+
+/// A warning when the accepted `conventions.md` and `rules.md` together
+/// take more of a prompt than `knowledge.prompt_limit` allows
+/// ([`select::fit_warning`]); `None` when they fit or cannot be read.
+pub fn fit_warning(config: &Config) -> Option<String> {
+    let texts = accepted_texts(&Knowledge::open(config)).ok()?;
+    let refs: Vec<(&str, &str)> = texts
+        .iter()
+        .map(|(f, t)| (f.as_str(), t.as_str()))
+        .collect();
+    select::fit_warning(
+        select::always_on_bytes(&refs),
+        config.knowledge.prompt_limit,
+    )
 }
 
 /// Add the union-merge line for `<dir>/.records/decisions.jsonl` to

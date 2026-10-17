@@ -31,6 +31,14 @@ pub const SKILLS: &[(&str, &str)] = &[
     ),
     ("debug.md", include_str!("../templates/skills/debug.md")),
     ("intake.md", include_str!("../templates/skills/intake.md")),
+    (
+        "intake-writing.md",
+        include_str!("../templates/skills/intake-writing.md"),
+    ),
+    (
+        "intake-change.md",
+        include_str!("../templates/skills/intake-change.md"),
+    ),
     ("onboard.md", include_str!("../templates/skills/onboard.md")),
     (
         "security-review.md",
@@ -119,6 +127,10 @@ pub fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
                 "go-testing.md".into(),
                 include_str!("../templates/skills/lang/go-testing.md"),
             ),
+            (
+                "go-memory.md".into(),
+                include_str!("../templates/skills/lang/go-memory.md"),
+            ),
         ],
         "typescript" => vec![
             (
@@ -194,6 +206,21 @@ pub fn lang_skill_templates(language: &str) -> Vec<(String, &'static str)> {
     }
 }
 
+/// Every file the global store holds, by path under the store root:
+/// agent definitions, base skills and every language's skills.
+pub fn store_files() -> Vec<(String, &'static str)> {
+    AGENTS
+        .iter()
+        .map(|(n, b)| (format!("agents/{n}"), *b))
+        .chain(SKILLS.iter().map(|(n, b)| (format!("skills/{n}"), *b)))
+        .chain(
+            all_lang_skills()
+                .into_iter()
+                .map(|(n, b)| (format!("skills/{n}"), b)),
+        )
+        .collect()
+}
+
 /// The global store (`~/.zforge`, or `$ZFORGE_HOME`). Same resolution as
 /// the registry, so a custom `ZFORGE_HOME` moves templates, agents and
 /// skills together with `registry.yaml` instead of splitting them.
@@ -254,14 +281,63 @@ mod tests {
             assert!(code.contains(h.name), "code-agent lacks {h}");
             assert!(contract.contains(h.name), "contract.tmpl lacks {h}");
         }
-        for rule in ["tests_may_change", "push", "Binding decisions"] {
+        for rule in [
+            "tests_may_change",
+            "write a change request rather than editing",
+            "push",
+            "Binding decisions",
+            "nearest existing code",
+        ] {
             assert!(code.contains(rule) && contract.contains(rule), "{rule}");
         }
 
         let review = agent("review-agent.md");
         let prompt = include_str!("../templates/review_contract.tmpl");
-        for rule in ["VERDICT: APPROVE", "VERDICT: CHANGES", "Binding decisions"] {
+        for rule in [
+            "VERDICT: APPROVE",
+            "VERDICT: CHANGES",
+            "Binding decisions",
+            "nearest existing code",
+        ] {
             assert!(review.contains(rule) && prompt.contains(rule), "{rule}");
+        }
+        // The checklist the reviewer preloads says the same, and so do the
+        // code phase's checklists.
+        let review_skill = include_str!("../templates/skills/review-patch.md");
+        for rule in [
+            "VERDICT: APPROVE",
+            "VERDICT: CHANGES",
+            "nearest existing code",
+            "actually runs",
+            "regenerated with the project's command",
+        ] {
+            assert!(review_skill.contains(rule), "review-patch lacks {rule}");
+        }
+        for rule in ["actually runs", "regenerated with the project's command"] {
+            assert!(prompt.contains(rule), "review_contract.tmpl lacks {rule}");
+        }
+        let minimal = include_str!("../templates/skills/implement-minimal-patch.md");
+        assert!(minimal.contains("nearest existing code"));
+        for rule in ["Generated files", "formatter and linter"] {
+            assert!(code.contains(rule) && contract.contains(rule), "{rule}");
+        }
+    }
+
+    /// Every general checklist yields to the project's conventions.
+    #[test]
+    fn general_checklists_yield_to_the_project() {
+        for lang in [
+            "rust",
+            "go",
+            "typescript",
+            "python",
+            "ios",
+            "android",
+            "flutter",
+        ] {
+            for (file, body) in lang_skill_templates(lang) {
+                assert!(body.contains("General checklist."), "{file}");
+            }
         }
     }
 

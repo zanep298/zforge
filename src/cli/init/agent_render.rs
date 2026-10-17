@@ -21,10 +21,11 @@
 //! and stays in sync with the profile model.
 
 use crate::config::ModelsConfig;
+use crate::shipped::{self, Mode};
 use anyhow::{Context, Result};
 use std::path::Path;
 
-/// Pipeline phases that have an agent file. Mirrors `AGENT_NAMES` in the
+/// Run phases (code, review) that have an agent file. Mirrors `AGENT_NAMES` in the
 /// init scaffold but keyed by phase rather than filename.
 use crate::config::PHASES;
 
@@ -185,19 +186,33 @@ pub fn model_line_for(target: &str, resolved: Option<String>) -> Option<String> 
     }
 }
 
-/// Render per-target agent files into `dst_dir`. Returns the count of files
-/// written. Source files are read from `src_agents_dir`; missing source
-/// files for a given phase are skipped.
+/// Render per-target agent files into `dst_dir`, a directory of the
+/// project at `project`. Source files are read from `src_agents_dir`;
+/// missing source files for a given phase are skipped. The files are
+/// brought to this version like every file init renders
+/// (`super::sync_project`, `crate::shipped`): with [`Mode::Refresh`] what
+/// zforge wrote and nobody changed since is updated, edits — and files
+/// from before the project's manifest — are kept; [`Mode::Force`] replaces
+/// them after archiving a copy; [`Mode::Overwrite`] (a re-render after a
+/// model change) replaces them as they are.
 pub fn materialize_agents_into(
     target: &str,
+    project: &Path,
     src_agents_dir: &Path,
     dst_dir: &Path,
     models: Option<&ModelsConfig>,
-    force: bool,
+    mode: Mode,
     extra_frontmatter: &dyn Fn(&str) -> String,
-) -> Result<usize> {
+) -> Result<shipped::Report> {
     std::fs::create_dir_all(dst_dir).with_context(|| format!("create {}", dst_dir.display()))?;
-    let mut count = 0;
+    let rel_dir = dst_dir.strip_prefix(project).with_context(|| {
+        format!(
+            "{} is not inside the project {}",
+            dst_dir.display(),
+            project.display()
+        )
+    })?;
+    let mut files = Vec::new();
     for phase in PHASES {
         let filename = format!("{phase}-agent.md");
         let src = src_agents_dir.join(&filename);
@@ -211,18 +226,16 @@ pub fn materialize_agents_into(
         } else {
             without_claude_keys(&rewritten)
         };
-        let dst = dst_dir.join(&filename);
-        if dst.exists() {
-            if force {
-                std::fs::remove_file(&dst).with_context(|| format!("remove {}", dst.display()))?;
-            } else {
-                continue;
-            }
-        }
-        std::fs::write(&dst, rewritten).with_context(|| format!("write {}", dst.display()))?;
-        count += 1;
+        let rel = rel_dir.join(&filename).to_string_lossy().into_owned();
+        files.push((rel, rewritten));
     }
-    Ok(count)
+    shipped::sync(
+        project,
+        &project.join(".zforge").join(shipped::MANIFEST),
+        &files,
+        mode,
+        &|_| shipped::Unrecorded::Keep,
+    )
 }
 
 #[cfg(test)]
@@ -240,7 +253,10 @@ mod tests {
         std::fs::write(src.join("review-agent.md"), tmpl).unwrap();
         for (target, kept) in [("claude", true), ("codex", false), ("opencode", false)] {
             let dst = tmp.path().join(target);
-            materialize_agents_into(target, &src, &dst, None, true, &|_| String::new()).unwrap();
+            materialize_agents_into(target, tmp.path(), &src, &dst, None, Mode::Force, &|_| {
+                String::new()
+            })
+            .unwrap();
             let out = std::fs::read_to_string(dst.join("review-agent.md")).unwrap();
             assert_eq!(
                 out.contains("disallowedTools: Edit, Write\n"),
@@ -357,8 +373,17 @@ text\n"
         let dst = tmp.path().join("dst");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("code-agent.md"), template_with_three_keys()).unwrap();
-        let n =
-            materialize_agents_into("codex", &src, &dst, None, false, &|_| String::new()).unwrap();
+        let n = materialize_agents_into(
+            "codex",
+            tmp.path(),
+            &src,
+            &dst,
+            None,
+            Mode::Refresh,
+            &|_| String::new(),
+        )
+        .unwrap()
+        .written();
         assert_eq!(n, 1);
         let written = std::fs::read_to_string(dst.join("code-agent.md")).unwrap();
         assert!(written.contains("model: gpt-5-codex"));
@@ -374,8 +399,17 @@ text\n"
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(src.join("code-agent.md"), template_with_three_keys()).unwrap();
         std::fs::write(dst.join("code-agent.md"), "preexisting").unwrap();
-        let n =
-            materialize_agents_into("codex", &src, &dst, None, false, &|_| String::new()).unwrap();
+        let n = materialize_agents_into(
+            "codex",
+            tmp.path(),
+            &src,
+            &dst,
+            None,
+            Mode::Refresh,
+            &|_| String::new(),
+        )
+        .unwrap()
+        .written();
         assert_eq!(n, 0);
         assert_eq!(
             std::fs::read_to_string(dst.join("code-agent.md")).unwrap(),
@@ -393,7 +427,11 @@ text\n"
         std::fs::write(src.join("code-agent.md"), template_with_three_keys()).unwrap();
         std::fs::write(dst.join("code-agent.md"), "preexisting").unwrap();
         let n =
-            materialize_agents_into("codex", &src, &dst, None, true, &|_| String::new()).unwrap();
+            materialize_agents_into("codex", tmp.path(), &src, &dst, None, Mode::Force, &|_| {
+                String::new()
+            })
+            .unwrap()
+            .written();
         assert_eq!(n, 1);
         assert!(std::fs::read_to_string(dst.join("code-agent.md"))
             .unwrap()

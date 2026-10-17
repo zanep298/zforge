@@ -20,7 +20,7 @@
      sequenceDiagram
        User->>CLI: filter --status done
        CLI->>Store: list(status)
-       Store-->>CLI: tasks
+       Store->>CLI: tasks
      ``` -->
 
 ## Binding decisions

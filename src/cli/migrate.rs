@@ -41,6 +41,7 @@ pub fn run(dry_run: bool, yes: bool) -> Result<()> {
                 switch: false,
                 default_runner: default_runner.filter(|r| plan.clients.contains(&r.as_str())),
                 install_missing: false,
+                git_exclude: false,
             },
         )?;
     }

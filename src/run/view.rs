@@ -205,14 +205,35 @@ pub fn summary(meta: &RunMeta, state: &RunState) -> String {
             .unwrap_or_default()
     );
     let _ = writeln!(out, "  branch {}", meta.branch);
-    let _ = writeln!(out, "  worktree {}", meta.worktree.display());
+    let _ = writeln!(
+        out,
+        "  worktree {}{}",
+        meta.worktree.display(),
+        if meta.worktree.exists() {
+            ""
+        } else {
+            " (removed; the branch keeps the work)"
+        }
+    );
     if let Some(start) = &meta.start {
         let from: Vec<String> = start
             .from
             .iter()
             .map(|s| format!("{} ({}, {})", s.task, s.run, short(&s.commit)))
             .collect();
-        let _ = writeln!(out, "  starts from {}", from.join(" + "));
+        if !from.is_empty() {
+            let _ = writeln!(out, "  starts from {}", from.join(" + "));
+        }
+        if let Some(p) = &start.previous {
+            let _ = writeln!(
+                out,
+                "  continues from {} ({} of {}, {})",
+                p.task,
+                p.run,
+                p.handover,
+                short(&p.commit)
+            );
+        }
     }
     if let Some(checks) = &meta.checks {
         let from = format!("{:?}", checks.from).to_lowercase();

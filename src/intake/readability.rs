@@ -35,6 +35,12 @@ fn budget(rel: &str) -> Option<usize> {
 
 /// Readability warnings for the intake file `rel`.
 pub fn check(rel: &str, text: &str) -> Vec<Issue> {
+    check_profile(rel, text, false)
+}
+
+/// [`check`] for an intake of the small profile when `small`: its
+/// 02-behavior and 03-solution are one table each and need no summary.
+pub fn check_profile(rel: &str, text: &str, small: bool) -> Vec<Issue> {
     let Some(budget) = budget(rel) else {
         return Vec::new();
     };
@@ -42,7 +48,8 @@ pub fn check(rel: &str, text: &str) -> Vec<Issue> {
     let body = strip_comments(body);
     let mut issues = Vec::new();
 
-    if STAGES.contains(&rel) {
+    let relaxed = small && super::lint::SMALL_STAGES.contains(&rel);
+    if STAGES.contains(&rel) && !relaxed {
         match section(&sections(&body), SUMMARY) {
             None => issues.push(Issue::warning(
                 rel,

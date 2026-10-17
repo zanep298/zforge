@@ -27,7 +27,11 @@ pub struct LoopOutcome {
 /// Returns the first passing outcome along with the iteration count. Bails
 /// when `max_iterations` is exhausted without a pass — the final failure
 /// outcome is included in the error message so the caller (or operator)
-/// can see which tests held out.
+/// can see which tests held out. Bails early, with a `stuck:` message, when
+/// two attempts in a row fail on exactly the same tests: the agent had the
+/// failure as feedback and changed nothing that mattered, so another
+/// attempt on the same contract rarely helps — the contract or the test
+/// is the likelier problem.
 pub fn iterate<C, V>(
     max_iterations: u32,
     mut code_runner: C,
@@ -59,9 +63,35 @@ where
                 outcome.failed_names.join(", "),
             ));
         }
+        if prev_failure
+            .as_ref()
+            .is_some_and(|prev| same_failure(prev, &outcome))
+        {
+            return Err(anyhow!(
+                "stuck: attempts {} and {} failed on the same {} test(s): {} — another attempt \
+                 on this contract is unlikely to help; check the task's tests and contract, \
+                 then amend the intake (or have the agent write a change request)",
+                attempt - 1,
+                attempt,
+                outcome.failed_names.len(),
+                outcome.failed_names.join(", "),
+            ));
+        }
         prev_failure = Some(outcome);
     }
     unreachable!("loop returned without exit; range was 1..={max_iterations}")
+}
+
+/// Two failures on the same named tests. A timeout or a failure without
+/// names says nothing about which tests held out, so it never matches.
+fn same_failure(a: &VerifyOutcome, b: &VerifyOutcome) -> bool {
+    if a.timed_out || b.timed_out || a.failed_names.is_empty() {
+        return false;
+    }
+    fn names(o: &VerifyOutcome) -> std::collections::BTreeSet<&str> {
+        o.failed_names.iter().map(String::as_str).collect()
+    }
+    names(a) == names(b)
 }
 
 /// What one verification found.
@@ -196,6 +226,7 @@ mod tests {
     #[test]
     fn feedback_chains_across_attempts() {
         let code_calls = RefCell::new(Vec::new());
+        let verify_calls = RefCell::new(0);
 
         let _ = iterate(
             3,
@@ -205,7 +236,12 @@ mod tests {
                     .push((attempt, prev.map(|p| p.failed_names.clone())));
                 Ok(())
             },
-            || Ok(outcome(false, &["a", "b"])),
+            || {
+                *verify_calls.borrow_mut() += 1;
+                // A different failure each time: progress, not stuck.
+                let name = format!("t{}", verify_calls.borrow());
+                Ok(outcome(false, &[name.as_str()]))
+            },
         );
 
         let calls = code_calls.borrow();
@@ -213,5 +249,56 @@ mod tests {
         assert!(calls[0].1.is_none(), "attempt 1: no prior");
         assert!(calls[1].1.is_some(), "attempt 2: has feedback");
         assert!(calls[2].1.is_some(), "attempt 3: has feedback");
+    }
+
+    #[test]
+    fn stops_when_two_attempts_fail_on_the_same_tests() {
+        let code_calls = RefCell::new(0);
+        let err = iterate(
+            5,
+            |_, _| {
+                *code_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            || Ok(outcome(false, &["b", "a"])),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.starts_with("stuck: attempts 1 and 2"), "{msg}");
+        assert!(msg.contains("b, a"), "{msg}");
+        assert_eq!(*code_calls.borrow(), 2, "no third attempt");
+    }
+
+    #[test]
+    fn the_same_tests_in_another_order_count_as_the_same_failure() {
+        let calls = RefCell::new(0);
+        let err = iterate(
+            3,
+            |_, _| Ok(()),
+            || {
+                *calls.borrow_mut() += 1;
+                if *calls.borrow() == 1 {
+                    Ok(outcome(false, &["a", "b"]))
+                } else {
+                    Ok(outcome(false, &["b", "a"]))
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().starts_with("stuck:"), "{err}");
+    }
+
+    #[test]
+    fn timeouts_and_unnamed_failures_are_never_stuck() {
+        let timed_out = || {
+            let mut o = outcome(false, &["a"]);
+            o.timed_out = true;
+            Ok(o)
+        };
+        let err = iterate(3, |_, _| Ok(()), timed_out).unwrap_err();
+        assert!(err.to_string().contains("budget exhausted"), "{err}");
+
+        let err = iterate(3, |_, _| Ok(()), || Ok(outcome(false, &[]))).unwrap_err();
+        assert!(err.to_string().contains("budget exhausted"), "{err}");
     }
 }

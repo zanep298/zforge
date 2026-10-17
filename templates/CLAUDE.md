@@ -13,16 +13,18 @@ Work is agreed before it is built. zforge keeps the agreement in an **intake**
 worktree, so the user's checkout is never touched.
 
 ```
-intake new → write 01-outcome … 04-breakdown + tasks/ → review → [USER accepts]
+intake new → write 01-outcome … 04-breakdown + tasks/ → review --all → pack → [USER: /accept all]
           → readiness → [USER hands over] → run (code → verify, per task)
-          → integration check → merge → knowledge index
+          → integration check → [USER merges the integration branch] → knowledge index
 ```
 
 | Stage | Command | Who |
 |-------|---------|-----|
-| Start an intake | `zforge intake new <ID>`, `zforge intake task <ID> <TASK>` | agent or user |
-| Send a file for review | `zforge intake review <ID> <file>` | agent or user |
-| Accept or ask for changes | type `/accept all`, `/accept <file>…`, `/revise <file>: <note>` here — or `zforge intake accept\|revise <ID> <file>` in a terminal | **user** |
+| Start an intake | `zforge intake new <ID> [--small|--tiny]`, `zforge intake task <ID> <TASK>` | agent or user |
+| A few fixes to an integrated intake | `zforge intake amend <NEW> --from <ID> --fixup` | agent or user |
+| Send the whole intake for review | `zforge intake review <ID> --all` (or one `<file>`); when re-sending, add `--note "<what changed and why>"` | agent or user |
+| Show what is to be decided | `zforge intake pack <ID>` — brief, summaries, diffs, warnings | agent or user |
+| Accept or ask for changes | type `/accept all` once for the whole intake (accepted in dependency order), `/accept <file>…` or `/revise <file>: <note>` here — or `zforge intake accept <ID> --all` / `zforge intake accept\|revise <ID> <file>` in a terminal | **user** |
 | Check it can be handed over | `zforge readiness <ID>` | agent or user |
 | Hand over | type `/handover` here — or `zforge handover <ID>` in a terminal | **user** |
 | Build every task, then check integration | `zforge run <HANDOVER> [--async]` | agent or user |
@@ -57,16 +59,25 @@ zforge status
 statement citing `path:line` — and probes the test suite's baseline. It is
 separate from `init`: a project can skip it and intakes and runs still
 work, with a warning at readiness. Once a file is accepted (same review as
-an intake file: `zforge onboard review\|accept\|revise`, the user's
-decision at a terminal), intakes read and cite it (`zforge-intake` skill)
+an intake file: `zforge onboard review <file>`, then the user's
+decision — `/accept knowledge <file>` or `/revise knowledge <file>: <note>`
+typed here, or `zforge onboard accept\|revise` in a terminal), intakes read and cite it (`zforge-intake` skill)
 and runs get the parts that apply to their task. `zforge onboard status`
 shows each file's state and any citation gone stale since it was accepted.
+
+Reading it: `docs/knowledge/INDEX.md` lists every accepted item in one line
+(regenerated on accept). Read the index, then fetch only the items the work
+touches — `zforge knowledge get <ID…>`, `--module <section|path>`,
+`--grep <text>` (MCP `knowledge_get`). Never read `domain.md` whole.
+Reference docs outside the project (`knowledge.extra` in
+`.zforge/config.yaml`) are listed in the index; search them with
+`zforge knowledge get --grep <text> --extra` and read only what applies.
 
 | Stage | Command | Who |
 |-------|---------|-----|
 | Probe and draft the knowledge | `zforge onboard`, `zforge onboard draft` | agent or user |
-| Send a knowledge file for review | `zforge onboard review <file>` | agent or user |
-| Accept or ask for changes | `zforge onboard accept\|revise <file>` | **user, in a terminal** |
+| Send a knowledge file for review | `zforge onboard review <file> [--note …]` | agent or user |
+| Accept or ask for changes | type `/accept knowledge <file>` or `/revise knowledge <file>: <note>` here — or `zforge onboard accept\|revise <file>` in a terminal | **user** |
 | Redraft what changed since | `zforge onboard refresh` | agent or user |
 
 ## When You Are Asked To Build Something
@@ -106,11 +117,14 @@ tools prepare and observe; none of them accepts, revises or hands over.
 | `status` | Every intake, its handovers and runs, and the next step (`global` for all projects) |
 | `intake_new`, `intake_task` | Start an intake or a task contract |
 | `intake_status`, `intake_diff` | Files, their review state, open questions, lint issues; what changed |
-| `intake_review` | Send a file for the user's review |
+| `intake_review` | Send a file — or `all: true`, the whole intake in dependency order — for the user's review; pass `note` (what changed and why) when re-sending |
+| `intake_pack` | The review pack to show the user: brief, each file's summary and diff, warnings, how to decide |
 | `change_new` | Start a change request for an intake |
 | `readiness` | Can the accepted files be handed over, and why not |
+| `questions_status` | Shared stakeholder questions (`Q:<NAME>/Q-<n>`): open or answered, and who cites them — never invent an answer |
 | `run_start`, `run_status`, `run_log`, `run_list`, `run_cancel` | Build a handover or one task, and follow it |
-| `knowledge_index` | Rebuild `.zforge/knowledge/` from accepted intakes and runs |
+| `knowledge_index` | Regenerate `commitments.md` (what each requirement's decision and build state is) and `INDEX.md` in the knowledge dir |
+| `knowledge_get` | Accepted knowledge items in full by ID, module or text (and reference docs with `include_extra`) |
 | `onboard_probe` | Probe the project (language, docs, baseline test run) — no model call |
 | `onboard_status` | Each knowledge file's review state, open questions and stale citations |
 | `onboard_review` | Send a knowledge file for the user's review |
@@ -118,8 +132,9 @@ tools prepare and observe; none of them accepts, revises or hands over.
 
 Accepting a knowledge file, asking for changes, and recording known baseline
 failures are the user's decisions too — no `onboard_accept`, `onboard_revise`
-or `onboard_baseline` tool exists; they are terminal-only, like
-`intake_accept` and `handover`.
+or `onboard_baseline` tool exists. The user decides by typing `/accept`
+or `/revise knowledge …` here or at a terminal; recording known failures
+(`zforge onboard baseline`) is terminal-only.
 
 ### codegraph
 Semantic code search over the pre-built codebase index. `zforge init` registers
@@ -160,6 +175,8 @@ change it with `zforge models set <phase> <model>`.
 
 - **Tests first** — write the failing test before any production code
 - **Minimal patch** — only change what the task contract requires
+- **Fit the codebase** — the project's conventions and the nearest existing code decide structure, naming and error handling; general checklists only fill gaps
+- **Generated code** — regenerate with the project's command; never hand-edit `DO NOT EDIT` files
 - **No scope creep** — work outside the contract's scope needs an amendment first
 - **Never weaken a test** — protected tests stay as they were; add new ones instead
 - **No silent errors** — propagate errors explicitly; never swallow them

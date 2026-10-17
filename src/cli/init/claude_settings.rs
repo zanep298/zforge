@@ -13,7 +13,9 @@
 //!   hook runs it yet: it records the decisions the user types in chat
 //!   (`/accept`, `/revise`, `/handover`) — never the model;
 //! - entries zforge itself used to write and no longer does
-//!   ([`RETIRED_ALLOW`]) are removed — no other entry is ever dropped.
+//!   ([`RETIRED_ALLOW`]) are removed — no other entry is ever dropped;
+//! - each existing `knowledge.extra` directory is appended to
+//!   `permissions.additionalDirectories` (see [`write_settings`]).
 //!
 //! Every allowed zforge tool prepares or observes; the user's decisions are
 //! denied (D1).
@@ -31,12 +33,15 @@ pub(crate) const CLAUDE_SETTINGS_JSON: &str = r#"{
       "mcp__zforge__status",
       "mcp__zforge__intake_new",
       "mcp__zforge__intake_task",
+      "mcp__zforge__intake_amend",
       "mcp__zforge__intake_status",
       "mcp__zforge__intake_diff",
       "mcp__zforge__intake_review",
+      "mcp__zforge__intake_pack",
       "mcp__zforge__change_new",
       "mcp__zforge__readiness",
       "mcp__zforge__knowledge_index",
+      "mcp__zforge__knowledge_get",
       "mcp__zforge__onboard_probe",
       "mcp__zforge__onboard_status",
       "mcp__zforge__onboard_review",
@@ -116,26 +121,68 @@ pub(crate) enum SettingsWrite {
     Skipped,
 }
 
-pub(crate) fn write_settings(path: &Path, force: bool) -> Result<SettingsWrite> {
+/// `extra_dirs` are the reference-doc directories (`knowledge.extra`) that
+/// exist, absolute: they go into `permissions.additionalDirectories` so
+/// reading them asks nothing. They are merged like the allow entries —
+/// the user's own entries kept, missing ones appended — and, being the
+/// project's own configuration rather than zforge's defaults, also into
+/// an existing file without `--force` (only that key is touched then).
+pub(crate) fn write_settings(
+    path: &Path,
+    force: bool,
+    extra_dirs: &[String],
+) -> Result<SettingsWrite> {
+    let wanted_dirs: Vec<Value> = extra_dirs.iter().map(|d| Value::from(d.as_str())).collect();
     if !path.exists() {
-        crate::fs::write_atomic(path, CLAUDE_SETTINGS_JSON.as_bytes())?;
+        if wanted_dirs.is_empty() {
+            crate::fs::write_atomic(path, CLAUDE_SETTINGS_JSON.as_bytes())?;
+        } else {
+            let mut template: Value =
+                serde_json::from_str(CLAUDE_SETTINGS_JSON).expect("valid template");
+            merge_list(&mut template, "additionalDirectories", &wanted_dirs)?;
+            write_json(path, &template)?;
+        }
         return Ok(SettingsWrite::Created);
     }
-    if !force {
+    if !force && wanted_dirs.is_empty() {
         return Ok(SettingsWrite::Skipped);
     }
     let raw = std::fs::read_to_string(path).with_context(|| format!("read {path:?}"))?;
-    let existing: Value = serde_json::from_str(&raw).with_context(|| {
-        format!("{path:?} is not valid JSON; fix or delete it before re-running init")
-    })?;
-    let merged = merge(&existing).with_context(|| format!("{path:?}"))?;
-    if merged == existing {
-        return Ok(SettingsWrite::Unchanged);
+    let existing: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        // Without --force an existing file is the user's; a broken one is
+        // left for them to fix, as before.
+        Err(_) if !force => return Ok(SettingsWrite::Skipped),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!("{path:?} is not valid JSON; fix or delete it before re-running init")
+            })
+        }
+    };
+    let mut merged = if force {
+        merge(&existing).with_context(|| format!("{path:?}"))?
+    } else {
+        existing.clone()
+    };
+    if !wanted_dirs.is_empty() {
+        merge_list(&mut merged, "additionalDirectories", &wanted_dirs)
+            .with_context(|| format!("{path:?}"))?;
     }
-    let mut out = serde_json::to_string_pretty(&merged)?;
-    out.push('\n');
-    crate::fs::write_atomic(path, out.as_bytes())?;
+    if merged == existing {
+        return Ok(if force {
+            SettingsWrite::Unchanged
+        } else {
+            SettingsWrite::Skipped
+        });
+    }
+    write_json(path, &merged)?;
     Ok(SettingsWrite::Merged)
+}
+
+fn write_json(path: &Path, value: &Value) -> Result<()> {
+    let mut out = serde_json::to_string_pretty(value)?;
+    out.push('\n');
+    crate::fs::write_atomic(path, out.as_bytes())
 }
 
 fn merge(existing: &Value) -> Result<Value> {
@@ -231,7 +278,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         assert_eq!(
-            write_settings(&path, false).unwrap(),
+            write_settings(&path, false, &[]).unwrap(),
             SettingsWrite::Created
         );
         assert_eq!(read(&path)["permissions"]["allow"], json!(template_allow()));
@@ -243,7 +290,7 @@ mod tests {
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{\"mine\": true}\n").unwrap();
         assert_eq!(
-            write_settings(&path, false).unwrap(),
+            write_settings(&path, false, &[]).unwrap(),
             SettingsWrite::Skipped
         );
         assert_eq!(
@@ -268,7 +315,10 @@ mod tests {
         });
         std::fs::write(&path, serde_json::to_string_pretty(&user).unwrap()).unwrap();
 
-        assert_eq!(write_settings(&path, true).unwrap(), SettingsWrite::Merged);
+        assert_eq!(
+            write_settings(&path, true, &[]).unwrap(),
+            SettingsWrite::Merged
+        );
 
         let out = read(&path);
         assert_eq!(out["env"], user["env"]);
@@ -311,10 +361,10 @@ mod tests {
     fn force_on_an_up_to_date_file_does_not_rewrite_it() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
-        write_settings(&path, false).unwrap();
+        write_settings(&path, false, &[]).unwrap();
         let before = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
-            write_settings(&path, true).unwrap(),
+            write_settings(&path, true, &[]).unwrap(),
             SettingsWrite::Unchanged
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
@@ -325,7 +375,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{ not json").unwrap();
-        let err = write_settings(&path, true).unwrap_err();
+        let err = write_settings(&path, true, &[]).unwrap_err();
         assert!(format!("{err:#}").contains("not valid JSON"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
     }
@@ -335,7 +385,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{\"permissions\": {\"allow\": \"everything\"}}").unwrap();
-        let err = write_settings(&path, true).unwrap_err();
+        let err = write_settings(&path, true, &[]).unwrap_err();
         assert!(format!("{err:#}").contains("not an array"), "{err:#}");
     }
 
@@ -347,7 +397,7 @@ mod tests {
     fn onboard_tools_allowed_and_onboard_decisions_denied() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
-        write_settings(&path, false).unwrap();
+        write_settings(&path, false, &[]).unwrap();
         let out = read(&path);
         let allow = out["permissions"]["allow"].as_array().unwrap();
         for tool in [
@@ -381,7 +431,7 @@ mod tests {
         ]}});
         std::fs::write(&path, theirs.to_string()).unwrap();
 
-        write_settings(&path, true).unwrap();
+        write_settings(&path, true, &[]).unwrap();
         let out = read(&path);
         let entries = out["hooks"]["UserPromptSubmit"].as_array().unwrap();
         assert_eq!(entries.len(), 2);
@@ -391,9 +441,81 @@ mod tests {
         assert!(deny.contains(&json!("Bash(zforge hook*)")), "{deny:?}");
 
         assert_eq!(
-            write_settings(&path, true).unwrap(),
+            write_settings(&path, true, &[]).unwrap(),
             SettingsWrite::Unchanged,
             "not added twice"
         );
+    }
+
+    /// `knowledge.extra` directories: in a new file, and merged into an
+    /// existing one — even without `--force` — keeping the user's entries
+    /// first and adding each directory once.
+    #[test]
+    fn extra_dirs_go_into_additional_directories_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        let dirs = vec!["/work/documents".to_string()];
+        assert_eq!(
+            write_settings(&path, false, &dirs).unwrap(),
+            SettingsWrite::Created
+        );
+        let out = read(&path);
+        assert_eq!(
+            out["permissions"]["additionalDirectories"],
+            json!(["/work/documents"])
+        );
+        assert_eq!(out["permissions"]["allow"], json!(template_allow()));
+
+        let theirs = json!({"permissions": {
+            "allow": ["Bash(make *)"],
+            "additionalDirectories": ["/mine"]
+        }});
+        std::fs::write(&path, theirs.to_string()).unwrap();
+        let dirs = vec!["/mine".to_string(), "/work/documents".to_string()];
+        assert_eq!(
+            write_settings(&path, false, &dirs).unwrap(),
+            SettingsWrite::Merged
+        );
+        let out = read(&path);
+        assert_eq!(
+            out["permissions"]["additionalDirectories"],
+            json!(["/mine", "/work/documents"])
+        );
+        assert_eq!(
+            out["permissions"]["allow"],
+            json!(["Bash(make *)"]),
+            "without --force only additionalDirectories changes"
+        );
+        assert_eq!(
+            write_settings(&path, false, &dirs).unwrap(),
+            SettingsWrite::Skipped,
+            "nothing to add the second time"
+        );
+
+        assert_eq!(
+            write_settings(&path, true, &dirs).unwrap(),
+            SettingsWrite::Merged
+        );
+        let out = read(&path);
+        assert_eq!(
+            out["permissions"]["additionalDirectories"],
+            json!(["/mine", "/work/documents"])
+        );
+        assert!(out["permissions"]["allow"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mcp__zforge__knowledge_get")));
+    }
+
+    #[test]
+    fn extra_dirs_leave_a_broken_file_alone_without_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert_eq!(
+            write_settings(&path, false, &["/d".to_string()]).unwrap(),
+            SettingsWrite::Skipped
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
     }
 }

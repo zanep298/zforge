@@ -13,16 +13,17 @@ Work is agreed before it is built. zforge keeps the agreement in an **intake**
 worktree, so the user's checkout is never touched.
 
 ```
-intake new → write 01-outcome … 04-breakdown + tasks/ → review → [USER accepts]
+intake new → write 01-outcome … 04-breakdown + tasks/ → review --all → pack → [USER accepts all]
           → readiness → [USER hands over] → run (code → verify, per task)
           → integration check → merge → knowledge index
 ```
 
 | Stage | Command | Who |
 |-------|---------|-----|
-| Start an intake | `zforge intake new <ID>`, `zforge intake task <ID> <TASK>` | agent or user |
-| Send a file for review | `zforge intake review <ID> <file>` | agent or user |
-| Accept or ask for changes | `zforge intake accept\|revise <ID> <file>` | **user, in a terminal** |
+| Start an intake | `zforge intake new <ID> [--small|--tiny]`, `zforge intake task <ID> <TASK>` | agent or user |
+| Send the whole intake for review | `zforge intake review <ID> --all` (or one `<file>`) | agent or user |
+| Show what is to be decided | `zforge intake pack <ID>` — brief, summaries, diffs, warnings | agent or user |
+| Accept or ask for changes | `zforge intake accept <ID> --all` (the whole intake, in dependency order), `zforge intake accept\|revise <ID> <file>` | **user, in a terminal** |
 | Check it can be handed over | `zforge readiness <ID>` | agent or user |
 | Hand over | `zforge handover <ID>` | **user, in a terminal** |
 | Build every task, then check integration | `zforge run <HANDOVER> [--async]` | agent or user |
@@ -56,6 +57,14 @@ that apply to their task. `zforge onboard status` shows each file's state
 and any citation gone stale since it was accepted; `zforge onboard refresh`
 redrafts only what is stale.
 
+Reading it: `docs/knowledge/INDEX.md` lists every accepted item in one line
+(regenerated on accept). Read the index, then fetch only the items the work
+touches — `zforge knowledge get <ID…>`, `--module <section|path>`,
+`--grep <text>` (MCP `knowledge_get`). Never read `domain.md` whole.
+Reference docs outside the project (`knowledge.extra` in
+`.zforge/config.yaml`) are listed in the index; search them with
+`zforge knowledge get --grep <text> --extra` and read only what applies.
+
 ---
 
 ## When You Are Asked To Build Something
@@ -78,6 +87,9 @@ Load the file before starting that work:
 | When | Skill file |
 |------|-----------|
 | Preparing an intake | `{{skills_dir}}/intake.md` |
+| Writing or revising intake files and the brief | `{{skills_dir}}/intake-writing.md` |
+| Changing an accepted intake or answering a change request | `{{skills_dir}}/intake-change.md` |
+| Drafting the project's knowledge (onboarding) | `{{skills_dir}}/onboard.md` |
 | Writing tests | `{{skills_dir}}/write-tests-first.md` |
 | Implementing a task | `{{skills_dir}}/implement-minimal-patch.md` |
 | Reviewing a change against its contract | `{{skills_dir}}/review-patch.md` |
@@ -95,7 +107,7 @@ Load these only when the task touches that area:
 | Fixing a performance problem | `{{skills_dir}}/performance-optimize.md` |
 | Backend API contract changes | `{{skills_dir}}/backend/api-contracts.md` |
 | Database schema or migration changes | `{{skills_dir}}/backend/database-migrations.md` |
-| Logs, metrics, traces, jobs | `{{skills_dir}}/backend/observability.md` |
+| Logs, metrics, traces | `{{skills_dir}}/backend/observability.md` |
 | Queue, cron, worker changes | `{{skills_dir}}/backend/background-jobs.md` |
 | React or route UI changes | `{{skills_dir}}/frontend/react-patterns.md` |
 | Frontend tests | `{{skills_dir}}/frontend/frontend-testing.md` |
@@ -115,11 +127,13 @@ The tools prepare and observe; none of them accepts, revises or hands over.
 | `status` | Every intake, its handovers and runs, and the next step (`global` for all projects) |
 | `intake_new`, `intake_task` | Start an intake or a task contract |
 | `intake_status`, `intake_diff` | Files, their review state, open questions, lint issues; what changed |
-| `intake_review` | Send a file for the user's review |
+| `intake_review` | Send a file — or `all: true`, the whole intake in dependency order — for the user's review |
+| `intake_pack` | The review pack to show the user: brief, each file's summary and diff, warnings, how to decide |
 | `change_new` | Start a change request for an intake |
 | `readiness` | Can the accepted files be handed over, and why not |
 | `run_start`, `run_status`, `run_log`, `run_list`, `run_cancel` | Build a handover or one task, and follow it |
 | `knowledge_index` | Rebuild `.zforge/knowledge/` from accepted intakes and runs |
+| `knowledge_get` | Accepted knowledge items in full by ID, module or text (and reference docs with `include_extra`) |
 | `onboard_probe` | Probe the project (language, docs, baseline test run) — no model call |
 | `onboard_status` | Each knowledge file's review state, open questions and stale citations |
 | `onboard_review` | Send a knowledge file for the user's review |
@@ -145,6 +159,8 @@ at minimum `zforge status`, `zforge intake …`, `zforge readiness`,
 
 - **Tests first** — write the failing test before any production code
 - **Minimal patch** — only change what the task contract requires
+- **Fit the codebase** — the project's conventions and the nearest existing code decide structure, naming and error handling; general checklists only fill gaps
+- **Generated code** — regenerate with the project's command; never hand-edit `DO NOT EDIT` files
 - **No scope creep** — work outside the contract's scope needs an amendment first
 - **Never weaken a test** — protected tests stay as they were; add new ones instead
 - **No silent errors** — propagate errors explicitly; never swallow them

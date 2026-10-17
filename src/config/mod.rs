@@ -6,7 +6,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("config file not found — run: zf init")]
+    #[error("config file not found — run: zforge init")]
     NotFound,
     #[error("invalid config: {field} is required")]
     #[allow(dead_code)]
@@ -48,10 +48,18 @@ pub struct RunnerConfig {
 /// committed with the code.
 ///
 /// `prompt_limit` bounds how many bytes of it a run's prompt carries
-/// (ONBOARD REQ-008, TASK-007): every accepted `rules.md` and
-/// `conventions.md` item, then the `domain.md` items the task's contract
-/// and stages name, up to this many bytes; what does not fit is named by
-/// ID with the accepted snapshot's path (`knowledge::select`).
+/// (ONBOARD REQ-008, TASK-007), default 40 000: accepted `conventions.md`
+/// and `rules.md` items and the `domain.md` items the task's contract and
+/// stages name, most relevant to the task first, up to this many bytes;
+/// what does not fit is indexed one line per item with the accepted
+/// snapshots' paths (`knowledge::select`). Conventions and rules larger
+/// than this are reported by readiness and `zforge onboard status`.
+///
+/// `general_limit` (default 8 000) caps, within that, the conventions and
+/// rules the task neither cites nor touches the paths of: a project with a
+/// hundred conventions would otherwise fill every prompt with ones about
+/// other modules. Beyond it they are indexed by ID and title like anything
+/// over `prompt_limit`; 0 shows none of them in full.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KnowledgeConfig {
     #[serde(default = "default_baseline")]
@@ -60,11 +68,20 @@ pub struct KnowledgeConfig {
     pub dir: PathBuf,
     #[serde(default = "default_prompt_limit")]
     pub prompt_limit: usize,
+    #[serde(default = "default_general_limit")]
+    pub general_limit: usize,
     /// `--max-budget-usd` of one headless `zforge onboard draft` /
     /// `refresh` agent call, when `--budget` does not override it (ONBOARD
     /// TASK-008).
     #[serde(default = "default_draft_budget_usd")]
     pub draft_budget_usd: f64,
+    /// Reference docs outside the reviewed knowledge — a team's
+    /// cross-service docs folder, say (`../documents`): relative to the
+    /// project root, absolute, or `~/…`. Never reviewed or pinned; listed
+    /// in `INDEX.md`, searched by `knowledge get --grep … --extra`, named
+    /// in a run's prompt and added to Claude's `additionalDirectories`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<PathBuf>,
 }
 
 impl Default for KnowledgeConfig {
@@ -73,7 +90,9 @@ impl Default for KnowledgeConfig {
             baseline: default_baseline(),
             dir: default_knowledge_dir(),
             prompt_limit: default_prompt_limit(),
+            general_limit: default_general_limit(),
             draft_budget_usd: default_draft_budget_usd(),
+            extra: Vec::new(),
         }
     }
 }
@@ -87,7 +106,11 @@ fn default_knowledge_dir() -> PathBuf {
 }
 
 fn default_prompt_limit() -> usize {
-    24_000
+    40_000
+}
+
+fn default_general_limit() -> usize {
+    8_000
 }
 
 fn default_draft_budget_usd() -> f64 {
@@ -118,6 +141,31 @@ pub struct ExecutionConfig {
     /// counts its whole allotment.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// Wall-clock limit on one run of the test command while verifying a
+    /// task. A suite killed at it fails the attempt with "test suite timed
+    /// out", which the agent cannot fix — raise it for slow suites.
+    #[serde(default = "default_test_timeout_secs")]
+    pub test_timeout_secs: u64,
+    /// Keep a verified run's worktree. Off by default: a verified run's
+    /// output is a sealed commit on its branch — what dependent tasks,
+    /// reuse and the integration start from — so its worktree is removed
+    /// once the run is verified (the branch stays). Failed, blocked and
+    /// cancelled runs always keep theirs for inspection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_worktrees: bool,
+    /// A task run again in a later handover of the same intake starts from
+    /// its last verified output, with what changed in its contract, rather
+    /// than from the baseline (`run::start::previous`) — when its
+    /// dependencies' outputs are the ones that output was built on.
+    #[serde(default = "default_true")]
+    pub continue_from_previous: bool,
+    /// Extra case-insensitive substrings, beside the built-in ones
+    /// (`run::integrate::INFRA_PATTERNS`), that mark a failing integration
+    /// check's output as the environment's fault: the check is run once
+    /// more, and failing again ends the run with an `infra: ` reason the
+    /// feature loop retries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra_patterns: Vec<String>,
 }
 
 impl Default for ExecutionConfig {
@@ -128,14 +176,26 @@ impl Default for ExecutionConfig {
             protected_tests: None,
             review: false,
             agent_timeout_secs: default_agent_timeout_secs(),
+            test_timeout_secs: default_test_timeout_secs(),
+            keep_worktrees: false,
+            continue_from_previous: true,
+            infra_patterns: Vec::new(),
         }
     }
 }
 
 /// One hour. A coding call on a real task routinely passes the ten minutes
 /// that once applied to every spawn.
+fn default_true() -> bool {
+    true
+}
+
 fn default_agent_timeout_secs() -> u64 {
     3600
+}
+
+fn default_test_timeout_secs() -> u64 {
+    300
 }
 
 /// Whether the project's own gaps (ONBOARD REQ-010) — not onboarded, a
@@ -175,6 +235,11 @@ pub struct ProjectConfig {
     pub language: String,
     #[serde(default = "default_test_command")]
     pub test_command: String,
+    /// What an integration run checks when the handover's breakdown has no
+    /// code block under "Integration verification" (`Handover::checks`):
+    /// one command per line. Absent, it is `test_command`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integration_command: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -234,6 +299,17 @@ impl Config {
     /// Where the project's knowledge lives (`knowledge.dir`), absolute.
     pub fn knowledge_dir(&self) -> PathBuf {
         self.resolve_path(&self.knowledge.dir)
+    }
+
+    /// `knowledge.extra`, each resolved like every other configured path,
+    /// paired with the value as written (what `INDEX.md` shows, so the
+    /// committed file names no machine-specific absolute path).
+    pub fn knowledge_extra(&self) -> Vec<(String, PathBuf)> {
+        self.knowledge
+            .extra
+            .iter()
+            .map(|p| (p.to_string_lossy().into_owned(), self.resolve_path(p)))
+            .collect()
     }
 
     #[allow(dead_code)]
@@ -497,6 +573,8 @@ mod tests {
         assert_eq!(cfg.execution.max_iterations, 3);
         assert_eq!(cfg.execution.budget_usd, None);
         assert_eq!(cfg.execution.agent_timeout_secs, 3600);
+        assert_eq!(cfg.execution.test_timeout_secs, 300);
+        assert!(!cfg.execution.keep_worktrees);
         assert_eq!(cfg.knowledge.draft_budget_usd, 2.0);
     }
 

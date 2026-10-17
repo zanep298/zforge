@@ -25,12 +25,7 @@ fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
     let worktree = p.root.join(".zforge/worktrees/RUN-001");
     let last = p.last("RUN-001");
     assert_eq!(last["event"], "verified");
-    let candidate = zforge::evidence::fingerprint(&worktree);
-    assert_eq!(
-        last["candidate"].as_str(),
-        candidate.hash(),
-        "evidence is the worktree's tree"
-    );
+    assert!(last["candidate"].as_str().is_some());
     assert_eq!(p.count("RUN-001", "attempt"), 1);
     let attempt = p
         .events("RUN-001")
@@ -39,11 +34,11 @@ fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
         .unwrap();
     assert!((attempt["cost_usd"].as_f64().unwrap() - 0.2003).abs() < 0.001);
 
-    // The work happened in the worktree, not in the user's checkout.
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("lib.sh")).unwrap(),
-        FIX
-    );
+    // The work happened in the worktree, not in the user's checkout; the
+    // verified run's worktree is gone, its branch holds the work.
+    assert!(!worktree.exists(), "a verified run releases its worktree");
+    assert!(p.git(&["worktree", "list"]).lines().count() == 1);
+    assert_eq!(p.git(&["show", "zforge/TASK-001/RUN-001:lib.sh"]), FIX);
     assert_eq!(std::fs::read_to_string(p.root.join("lib.sh")).unwrap(), BUG);
     assert_eq!(
         std::fs::read_to_string(p.marks.join("cwd")).unwrap().trim(),
@@ -80,6 +75,8 @@ fn a_run_fixes_the_task_in_its_worktree_and_is_verified() {
 #[test]
 fn a_verified_run_seals_the_tested_tree_as_its_output() {
     let p = Project::new(3.0, 3);
+    // The test looks at the worktree after the run.
+    p.keep_worktrees();
     // The stub leaves its fix uncommitted.
     p.stub(&fix_and_report());
 
@@ -163,11 +160,7 @@ fn a_dependent_task_starts_from_its_dependencys_output() {
         serde_json::json!([{"task": "TASK-001", "run": "RUN-001", "commit": output}])
     );
     assert_eq!(p.last("RUN-002")["event"], "verified");
-    let worktree = p.root.join(".zforge/worktrees/RUN-002");
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("lib.sh")).unwrap(),
-        FIX
-    );
+    assert_eq!(p.git(&["show", "zforge/TASK-002/RUN-002:lib.sh"]), FIX);
     // Its branch continues from TASK-001's output.
     p.git(&[
         "merge-base",
@@ -505,6 +498,162 @@ fn clean_removes_a_finished_worktree_and_keeps_the_work() {
     assert!(err(&out).contains("already cleaned"), "{}", err(&out));
 }
 
+// ─── Worktree housekeeping ──────────────────────────────────────────────────
+
+/// Two independent tasks, one verification per run.
+fn housekeeping_project() -> Project {
+    Project::with(3.0, 1, &[("TASK-001", ""), ("TASK-002", "")], "sh test.sh")
+}
+
+/// A verified run releases its worktree and keeps its branch; a failed one
+/// keeps both, for inspection.
+#[test]
+fn a_verified_run_releases_its_worktree_and_a_failed_one_keeps_it() {
+    let p = housekeeping_project();
+    p.stub(&fix_and_report());
+    let output = verify_task(&p, "TASK-001");
+    assert!(!p.worktree("RUN-001").exists());
+    assert_eq!(
+        p.git(&["rev-parse", "zforge/TASK-001/RUN-001"]).trim(),
+        output
+    );
+    assert!(
+        !p.git(&["worktree", "list"]).contains("RUN-001"),
+        "git forgot the worktree"
+    );
+    let status = p.zforge(&["run", "status", "RUN-001"]);
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("(removed; the branch keeps the work)"),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+
+    p.stub(&format!("cat {FIXTURE}"));
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert!(!out.status.success());
+    assert_eq!(p.last("RUN-002")["event"], "failed");
+    assert!(p.worktree("RUN-002").is_dir(), "kept for inspection");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("worktree kept at"));
+}
+
+/// `execution.keep_worktrees: true` keeps the old behaviour.
+#[test]
+fn keep_worktrees_keeps_a_verified_runs_worktree() {
+    let p = housekeeping_project();
+    p.keep_worktrees();
+    p.stub(&fix_and_report());
+    verify_task(&p, "TASK-001");
+    assert_eq!(
+        std::fs::read_to_string(p.worktree("RUN-001").join("lib.sh")).unwrap(),
+        FIX
+    );
+}
+
+/// `clean --all` removes every finished run's worktree (`--verified`: only
+/// the verified ones), never one in progress, and keeps every branch.
+#[test]
+fn clean_all_removes_every_finished_worktree() {
+    let p = housekeeping_project();
+    p.keep_worktrees();
+    p.stub(&fix_and_report());
+    verify_task(&p, "TASK-001"); // RUN-001 verified, worktree kept
+    p.stub(&format!("cat {FIXTURE}"));
+    assert!(!p
+        .zforge(&["run", "HANDOVER-001", "--task", "TASK-002"])
+        .status
+        .success()); // RUN-002 failed
+                     // RUN-003: created, not started, with a worktree.
+    let pending = zforge::run::execute::create(&p.root, "HANDOVER-001", "TASK-002", None).unwrap();
+    assert_eq!(pending.id, "RUN-003");
+    let baseline = p.git(&["rev-parse", "HEAD"]);
+    zforge::run::worktree::create(&p.root, "RUN-003", "TASK-002", baseline.trim()).unwrap();
+
+    let out = p.zforge(&["run", "clean", "--all", "--verified"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("RUN-001 worktree removed"), "{stdout}");
+    assert!(stdout.contains("1 worktree(s) removed"), "{stdout}");
+    assert!(!p.worktree("RUN-001").exists());
+    assert!(p.worktree("RUN-002").exists());
+
+    let out = p.zforge(&["run", "clean", "--all"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("RUN-002 worktree removed"), "{stdout}");
+    assert!(stdout.contains("1 worktree(s) removed"), "{stdout}");
+    assert!(!p.worktree("RUN-002").exists());
+    assert!(
+        p.worktree("RUN-003").exists(),
+        "a run in progress is untouched"
+    );
+    assert_eq!(
+        p.run_branches(),
+        [
+            "zforge/TASK-001/RUN-001",
+            "zforge/TASK-002/RUN-002",
+            "zforge/TASK-002/RUN-003"
+        ]
+    );
+
+    let out = p.zforge(&["run", "clean"]);
+    assert!(!out.status.success(), "a run or --all is required");
+}
+
+/// `prune-branches` deletes only branches of finished runs that hold no
+/// worktree and are already in the baseline.
+#[test]
+fn prune_branches_deletes_only_merged_branches_of_finished_runs() {
+    let p = housekeeping_project();
+    p.stub(&fix_and_report());
+    verify_task(&p, "TASK-001"); // RUN-001 verified, worktree released
+    verify_task(&p, "TASK-002"); // RUN-002 verified, not merged
+    merge_into_main(&p, &["--ff-only", "zforge/TASK-001/RUN-001"]);
+    p.stub(&format!("cat {FIXTURE}"));
+    // RUN-003 fails: its branch is at the baseline (so merged) but it keeps
+    // its worktree.
+    let _ = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert_eq!(p.last("RUN-003")["event"], "failed");
+    // RUN-004: not started, its branch left behind without a worktree.
+    zforge::run::execute::create(&p.root, "HANDOVER-001", "TASK-002", None).unwrap();
+    let baseline = p.git(&["rev-parse", "HEAD~1"]);
+    let wt =
+        zforge::run::worktree::create(&p.root, "RUN-004", "TASK-002", baseline.trim()).unwrap();
+    zforge::run::worktree::remove(&p.root, &wt, false).unwrap();
+    // A branch no run records.
+    p.git(&["branch", "zforge/mine", "main"]);
+
+    let out = p.zforge(&["run", "prune-branches", "--dry-run"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("would delete zforge/TASK-001/RUN-001"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 branch(es) would be deleted"), "{stdout}");
+    assert_eq!(p.run_branches().len(), 5, "a dry run deletes nothing");
+
+    let out = p.zforge(&["run", "prune-branches"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        p.run_branches(),
+        [
+            "zforge/TASK-001/RUN-003",
+            "zforge/TASK-002/RUN-002",
+            "zforge/TASK-002/RUN-004",
+            "zforge/mine"
+        ]
+    );
+    // The verified output stays reachable from main.
+    assert!(p.git(&["show", "main:lib.sh"]) == FIX);
+
+    // Cleaned, the failed run's branch goes too.
+    assert!(p.zforge(&["run", "clean", "RUN-003"]).status.success());
+    assert!(p.zforge(&["run", "prune-branches"]).status.success());
+    assert!(!p
+        .run_branches()
+        .contains(&"zforge/TASK-001/RUN-003".to_string()));
+}
+
 // ─── TASK-006: the contract must change ─────────────────────────────────────
 
 /// AC-01, AC-02 and AC-03: an agent that asks for an amendment stops the
@@ -708,6 +857,8 @@ fn an_incomplete_change_request_says_what_it_lacks() {
 #[test]
 fn a_verified_run_makes_its_requirement_verified() {
     let p = Project::new(3.0, 3);
+    // The candidate is compared with the worktree's fingerprint.
+    p.keep_worktrees();
 
     // Before any run: handed over, not built.
     let before = entry(&p.knowledge(), "REQ-001");
@@ -902,11 +1053,9 @@ fn an_integration_run_checks_the_leaf_output() {
         p.git(&["rev-parse", "zforge/F/integration/RUN-003"]).trim(),
         commit
     );
-    let worktree = p.root.join(".zforge/worktrees/RUN-003");
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("lib.sh")).unwrap(),
-        FIX
-    );
+    assert_eq!(p.git(&["show", &format!("{commit}:lib.sh")]), FIX);
+    // Verified: its worktree is released, its branch kept.
+    assert!(!p.worktree("RUN-003").exists());
     let log = std::fs::read_to_string(p.run_dir("RUN-003").join("checks.log")).unwrap();
     assert!(log.contains("$ sh test.sh") && log.contains("ok"), "{log}");
     // No agent was called.
@@ -1379,13 +1528,16 @@ fn an_amendment_reruns_only_what_it_touches() {
     assert_eq!(reused["from_run"], "RUN-001");
     assert_eq!(reused["from_handover"], "HANDOVER-001");
     assert_eq!(p.events("RUN-006").len(), 1, "no agent, no verification");
-    // TASK-003 starts from the output TASK-002 reuses.
+    // TASK-003 builds on the output TASK-002 reuses — and, that being what
+    // its own earlier run was built on, continues from that run's output.
     let task2_output = status_json(&p, "RUN-002")["state"]["output"].clone();
     assert_eq!(status_json(&p, "RUN-007")["state"]["output"], task2_output);
-    assert_eq!(
-        status_json(&p, "RUN-008")["meta"]["start"]["commit"],
-        task2_output
-    );
+    let start = status_json(&p, "RUN-008")["meta"]["start"].clone();
+    assert_eq!(start["from"][0]["commit"], task2_output);
+    let task3_output = status_json(&p, "RUN-003")["state"]["output"].clone();
+    assert_eq!(start["commit"], task3_output);
+    assert_eq!(start["previous"]["run"], "RUN-003");
+    assert_eq!(start["previous"]["handover"], "HANDOVER-001");
     assert_eq!(p.last("RUN-010")["event"], "verified", "integration ran");
     let text =
         String::from_utf8_lossy(&p.zforge(&["run", "status", "HANDOVER-002"]).stdout).into_owned();
@@ -1393,6 +1545,123 @@ fn an_amendment_reruns_only_what_it_touches() {
         text.contains("TASK-001     reused    RUN-006  reuses HANDOVER-001/RUN-001"),
         "{text}"
     );
+}
+
+/// D6 as amended 12/10/2026: a requirement only TASK-002 serves changes.
+/// Only what rests on it is confirmed again; TASK-001 is reused, and
+/// TASK-002 runs again from its own earlier output, told what changed.
+#[test]
+fn a_changed_requirement_reruns_only_its_task_from_its_earlier_output() {
+    let files = vec![
+        (
+            "01-outcome.md",
+            "# F — Outcome\n\n## Requirements\n\n- REQ-001: add returns the sum\n\
+             - REQ-002: add is fast\n\n## Open questions\n"
+                .to_string(),
+        ),
+        (
+            "02-behavior.md",
+            "# F — Behavior\n\n## Situations\n\n| # | Kind | When | Then | REQ |\n|---|---|---|---|---|\n\
+             | 1 | normal | add 2 3 | 5 | REQ-001 |\n| 2 | normal | add 1 1 | at once | REQ-002 |\n\n\
+             ## Open questions\n"
+                .to_string(),
+        ),
+        (
+            "03-solution.md",
+            "# F — Solution\n\n## Flow\n\nFix the arithmetic.\n\n## Binding decisions\n\nNone.\n\n\
+             ## Open questions\n"
+                .to_string(),
+        ),
+        (
+            "04-breakdown.md",
+            "# F — Breakdown\n\n## Tasks and dependencies\n\n| Task | Serves | Depends on | Output |\n\
+             |---|---|---|---|\n| TASK-001 Sum | REQ-001 | — | add |\n| TASK-002 Fast | REQ-002 | TASK-001 | add |\n\n\
+             ## Integration verification\n\nsh test.sh\n\n## Open questions\n"
+                .to_string(),
+        ),
+        ("tasks/TASK-001.md", task_for("TASK-001", "REQ-001", "")),
+        ("tasks/TASK-002.md", task_for("TASK-002", "REQ-002", "TASK-001")),
+    ];
+    let p = Project::with_files(3.0, 3, &files);
+    p.stub(&per_task(&p, ""));
+    let out = p.zforge(&["run", "HANDOVER-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+
+    p.amend(
+        "01-outcome.md",
+        "add is fast",
+        "add is fast, under a millisecond",
+    );
+    let i = zforge::intake::Intake::open(&p.root, "F").unwrap();
+    let stale: Vec<String> = zforge::intake::readiness::stale(&i)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        stale,
+        ["02-behavior.md", "04-breakdown.md", "tasks/TASK-002.md"]
+    );
+    p.hand_over_again();
+    let before = p.agent_calls();
+
+    let out = p.zforge(&["run", "HANDOVER-002"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        p.agent_calls(),
+        before + 1,
+        "only TASK-002 called the agent"
+    );
+    assert_eq!(
+        states(&p, "HANDOVER-002"),
+        expect(&[("TASK-001", "reused"), ("TASK-002", "verified")])
+    );
+    // RUN-004 reuses TASK-001; RUN-005 continues TASK-002 from RUN-002.
+    assert_eq!(p.last("RUN-004")["event"], "reused");
+    let start = status_json(&p, "RUN-005")["meta"]["start"].clone();
+    assert_eq!(start["previous"]["run"], "RUN-002");
+    assert_eq!(
+        start["commit"],
+        status_json(&p, "RUN-002")["state"]["output"]
+    );
+    assert_eq!(
+        start["from"][0]["commit"],
+        status_json(&p, "RUN-001")["state"]["output"]
+    );
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(prompt.contains("## Previous attempt"), "{prompt}");
+    assert!(
+        prompt.contains("output of RUN-002 — TASK-002 in HANDOVER-001"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("- REQ-002 of 01-outcome.md\n  before:\n    - REQ-002: add is fast\n  now:\n    - REQ-002: add is fast, under a millisecond"), "{prompt}");
+    assert_eq!(p.last("RUN-006")["event"], "verified", "integration ran");
+}
+
+/// `execution.continue_from_previous: false`: a task run again starts
+/// from the baseline, as before.
+#[test]
+fn continuing_from_previous_output_can_be_turned_off() {
+    let p = handed_over_twice(|p| {
+        p.amend(
+            "tasks/TASK-004.md",
+            "Chỉ sửa lib.sh.",
+            "Chỉ sửa lib.sh, cẩn thận.",
+        );
+        let config = p.root.join(".zforge/config.yaml");
+        let text = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(&config, text + "  continue_from_previous: false\n").unwrap();
+    });
+    assert!(p.zforge(&["run", "HANDOVER-002"]).status.success());
+    let runs: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "list", "--json"]).stdout).unwrap();
+    let run = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["meta"]["task"] == "TASK-004" && r["meta"]["handover"] == "HANDOVER-002")
+        .unwrap();
+    assert!(run["meta"].get("start").is_none(), "{run}");
+    assert_eq!(run["state"]["status"], "verified");
 }
 
 /// AC-04: amending a task reruns it and everything depending on it.
@@ -1459,6 +1728,19 @@ fn a_new_baseline_reruns_everything() {
     assert!(states(&p, "HANDOVER-002")
         .iter()
         .all(|(_, s)| s == "verified"));
+    // TASK-001 continues from its earlier output, with the new baseline
+    // merged in.
+    let runs: serde_json::Value =
+        serde_json::from_slice(&p.zforge(&["run", "list", "--json"]).stdout).unwrap();
+    let run = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["meta"]["task"] == "TASK-001" && r["meta"]["handover"] == "HANDOVER-002")
+        .unwrap();
+    assert_eq!(run["meta"]["start"]["previous"]["run"], "RUN-001", "{run}");
+    let output = run["state"]["output"].as_str().unwrap();
+    assert_eq!(p.git(&["show", &format!("{output}:README")]), "moved on\n");
 }
 
 // ─── MOC-C TASK-007: three levels of implementation ─────────────────────────
@@ -1664,6 +1946,8 @@ fn a_run_gets_the_ignored_claude_config_and_the_checklists() {
     std::fs::write(store.join("write-tests-first.md"), "# Tests first\n").unwrap();
     // The new baseline carries the ignore rule.
     p.hand_over_again();
+    // The test looks inside the worktree after the run.
+    p.keep_worktrees();
     p.stub(&fix_and_report());
 
     let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
@@ -1792,6 +2076,71 @@ fn an_approved_review_lets_the_run_be_verified() {
     assert!(prompt.contains("git diff "), "{prompt}");
 }
 
+/// A task's accepted `review: true` asks for a review in a project that
+/// has it off.
+#[test]
+fn a_task_can_ask_for_a_review_the_project_does_not() {
+    let p = Project::new(3.0, 2);
+    p.amend(
+        "tasks/TASK-001.md",
+        "depends_on: []",
+        "depends_on: []\nreview: true",
+    );
+    p.hand_over_again();
+    p.stub(&coder_and_reviewer(
+        &p,
+        "true",
+        "- lib.sh: correct\nVERDICT: APPROVE",
+    ));
+    let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(
+        p.count("RUN-001", "reviewed"),
+        1,
+        "{:?}",
+        p.events("RUN-001")
+    );
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+    assert_eq!(p.agent_calls(), 2);
+}
+
+/// A task's accepted `review: false` skips the review the project asks for.
+#[test]
+fn a_task_can_skip_the_review_the_project_asks_for() {
+    let p = Project::new(3.0, 2);
+    enable_review(&p);
+    p.amend(
+        "tasks/TASK-001.md",
+        "depends_on: []",
+        "depends_on: []\nreview: false",
+    );
+    p.hand_over_again();
+    p.stub(&coder_and_reviewer(&p, "true", "VERDICT: CHANGES"));
+    let out = p.zforge(&["run", "HANDOVER-002", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    assert_eq!(p.count("RUN-001", "review_started"), 0);
+    assert_eq!(p.last("RUN-001")["event"], "verified");
+    assert_eq!(p.agent_calls(), 1);
+}
+
+/// Before its first attempt the code agent is told which tests it may not
+/// change — here the script the test command names.
+#[test]
+fn the_first_prompt_names_the_tests_the_agent_must_not_change() {
+    let p = Project::new(3.0, 2);
+    p.stub(&fix_and_report());
+    let out = p.zforge(&["run", "HANDOVER-001", "--task", "TASK-001"]);
+    assert!(out.status.success(), "{}", err(&out));
+    let prompt = std::fs::read_to_string(p.marks.join("prompt")).unwrap();
+    assert!(prompt.contains("## Tests you must not change"), "{prompt}");
+    assert!(
+        prompt.contains("`test.sh` (named by the test command)"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("write a change request"), "{prompt}");
+    assert!(!prompt.contains("{{protected_tests}}"), "{prompt}");
+}
+
 /// The review's findings go back to the coder, whose next attempt is
 /// reviewed again.
 #[test]
@@ -1851,4 +2200,55 @@ fn a_reviewer_that_changes_files_is_not_an_approval() {
         "{reviewed}"
     );
     assert_eq!(p.count("RUN-001", "verified"), 0);
+}
+
+/// `run compare` lays two runs side by side from their records, traces and
+/// git — and `--check` runs a command on each output in a worktree it
+/// removes again.
+#[test]
+fn compare_shows_two_runs_side_by_side() {
+    let p = housekeeping_project();
+    p.stub(&fix_and_report());
+    let output = verify_task(&p, "TASK-001");
+    p.stub(&format!("cat {FIXTURE}"));
+    p.zforge(&["run", "HANDOVER-001", "--task", "TASK-002"]);
+    assert_eq!(p.last("RUN-002")["event"], "failed");
+
+    let out = p.zforge(&[
+        "run",
+        "compare",
+        "RUN-001",
+        "RUN-002",
+        "--check",
+        "grep -q . lib.sh",
+        "--json",
+    ]);
+    assert!(out.status.success(), "{}", err(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let (a, b) = (&v[0], &v[1]);
+    assert_eq!(a["status"], "verified");
+    assert_eq!(a["diff"]["commit"], output.as_str());
+    assert!(a["diff"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == "lib.sh" && f["status"] == "M"));
+    assert_eq!(a["check"]["exit_code"], 0);
+    assert!(a["agent"]["calls"].as_u64().unwrap() >= 1);
+    assert!(
+        a["agent"]["commands"]["test"].as_u64().unwrap_or(0) >= 1,
+        "{a}"
+    );
+    assert_eq!(b["status"], "failed");
+    assert!(b.get("diff").is_none() && b.get("check").is_none());
+    assert!(!p.worktree("compare-RUN-001").exists());
+
+    let text = p.zforge(&["run", "compare", "RUN-001", "RUN-002"]);
+    let text = String::from_utf8_lossy(&text.stdout);
+    for want in ["run ", "RUN-001", "RUN-002", "verify failed", "M lib.sh"] {
+        assert!(text.contains(want), "{want}:\n{text}");
+    }
+
+    let one = p.zforge(&["run", "compare", "RUN-001"]);
+    assert!(!one.status.success(), "one run is not a comparison");
 }

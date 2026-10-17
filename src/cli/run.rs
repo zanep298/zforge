@@ -8,7 +8,8 @@
 //! <HANDOVER>` does all of it: every task in order, then the integration,
 //! continuing where an earlier invocation stopped (TASK-005). `status`,
 //! `cancel`, `log` and `wait` take a handover as well as a run.
-//! `status`, `list`, `cancel`, `retry` and `clean` operate existing runs.
+//! `status`, `list`, `cancel`, `retry`, `clean` (one run or `--all`) and
+//! `prune-branches` operate existing runs.
 
 use crate::config;
 use crate::run::record::{Run, RunState, RunStatus};
@@ -25,14 +26,16 @@ pub struct RunArgs {
     pub cmd: Option<RunCmd>,
     /// `HANDOVER-001`, or `<INTAKE>/HANDOVER-001` when ambiguous.
     pub handover: Option<String>,
-    /// The leaf task to run.
-    #[arg(long, conflicts_with = "integration")]
+    /// Run only this task.
+    #[arg(long, value_name = "TASK", conflicts_with = "integration")]
     pub task: Option<String>,
     /// Check every task's verified output together, with the integration
-    /// check of the handed-over breakdown.
+    /// check of the handed-over breakdown (the project's test command when
+    /// it has none). No agent is called.
     #[arg(long)]
     pub integration: bool,
-    /// Run in the background; follow with `zforge run status <RUN>`.
+    /// Run in the background; follow with `zforge run status <RUN|HANDOVER>`,
+    /// `zforge run log <RUN|HANDOVER> --follow` or `zforge run wait`.
     #[arg(long = "async")]
     pub background: bool,
 }
@@ -43,7 +46,9 @@ pub enum RunCmd {
     /// given a handover, where each of its tasks and its integration stand.
     Status {
         /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
         run: String,
+        /// Machine-readable report.
         #[arg(long)]
         json: bool,
     },
@@ -52,22 +57,67 @@ pub enum RunCmd {
         /// Only runs of this handover.
         #[arg(long)]
         handover: Option<String>,
+        /// Machine-readable list.
         #[arg(long)]
         json: bool,
     },
-    /// Stop a run's agent and tests and record it cancelled.
-    Cancel { run: String },
+    /// Stop a run's agent and tests and record it cancelled; given a
+    /// handover, stop its loop and every unfinished run.
+    Cancel {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
+        run: String,
+    },
     /// Run the same task again as a new run, with what is left of the budget.
     Retry {
+        /// The run to retry, e.g. RUN-001.
         run: String,
+        /// Run in the background.
         #[arg(long = "async")]
         background: bool,
     },
     /// Remove a finished run's worktree; its branch is kept, with any
-    /// uncommitted work committed to it first.
-    Clean { run: String },
-    /// Print (or follow) a background run's log.
+    /// uncommitted work committed to it first. A verified run's worktree
+    /// is already removed unless `execution.keep_worktrees` is set.
+    Clean {
+        /// The run to clean; or `--all`.
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        run: Option<String>,
+        /// Every finished run (verified, failed, blocked, cancelled) that
+        /// still holds a worktree; a run in progress is never touched.
+        #[arg(long)]
+        all: bool,
+        /// With `--all`: only verified runs.
+        #[arg(long, requires = "all")]
+        verified: bool,
+    },
+    /// Delete local `zforge/*` branches already merged into
+    /// `knowledge.baseline` whose runs are finished and hold no worktree.
+    PruneBranches {
+        /// Only say what would be deleted.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// The same facts for two or more runs side by side — cost, attempts,
+    /// review verdicts, knowledge in the prompt, what the agent ran and
+    /// read, what the output changed — to judge a change to agents,
+    /// skills or prompts on work already done.
+    Compare {
+        /// Two or more runs, e.g. RUN-001 RUN-004.
+        #[arg(value_name = "RUN", num_args = 2.., required = true)]
+        runs: Vec<String>,
+        /// Also run this shell command (e.g. a linter) on each run's output,
+        /// in a throwaway worktree that is removed afterwards.
+        #[arg(long)]
+        check: Option<String>,
+        /// Machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print (or follow) a background run's log, or a handover loop's.
     Log {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
         run: String,
         /// Keep printing until the run ends.
         #[arg(long)]
@@ -76,8 +126,11 @@ pub enum RunCmd {
         #[arg(long)]
         tail: Option<usize>,
     },
-    /// Block until the run ends. Exit 0 only when it is verified.
+    /// Block until the run ends — or, given a handover, its loop. Exit 0
+    /// only when it is verified.
     Wait {
+        /// `RUN-001`, or `HANDOVER-001` / `<INTAKE>/HANDOVER-001`.
+        #[arg(value_name = "RUN|HANDOVER")]
         run: String,
         /// Give up after this many seconds (default 3600).
         #[arg(long, default_value = "3600")]
@@ -89,7 +142,7 @@ pub enum RunCmd {
 }
 
 fn project_root() -> Result<std::path::PathBuf> {
-    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zf init"))?;
+    let config = config::load().map_err(|_| anyhow!("Config not found. Run: zforge init"))?;
     Ok(config.project_root())
 }
 
@@ -97,6 +150,14 @@ pub fn run(args: RunArgs) -> Result<()> {
     let root = project_root()?;
     match args.cmd {
         Some(RunCmd::Status { run, json }) => status(&root, &run, json),
+        Some(RunCmd::Compare { runs, check, json }) => {
+            let facts = crate::run::compare::compare(&root, &runs, check.as_deref())?;
+            match json {
+                true => println!("{}", serde_json::to_string_pretty(&facts)?),
+                false => print!("{}", crate::run::compare::render(&facts)),
+            }
+            Ok(())
+        }
         Some(RunCmd::List { handover, json }) => list(&root, handover.as_deref(), json),
         Some(RunCmd::Cancel { run }) if is_handover(&run) => {
             let f = feature_ops::cancel(&root, &run)?;
@@ -111,11 +172,27 @@ pub fn run(args: RunArgs) -> Result<()> {
         }
         Some(RunCmd::Retry { run, background }) => {
             let old = Run::open(&root, &run)?;
+            // A retry runs the same pinned contract again; a run that got
+            // stuck on the same tests will most likely get stuck again.
+            if let Some(reason) = old.state()?.reason.filter(|r| r.starts_with("stuck:")) {
+                eprintln!(
+                    "{} {} {reason}\n  the retry uses the same contract; amend the intake and hand \
+                     over again if the tests or the contract are wrong",
+                    "warning:".yellow(),
+                    old.id
+                );
+            }
             let new = ops::retry(&root, &old)?;
             eprintln!("{} {} retries {}", "▶".cyan(), new.id, old.id);
             start(&root, &new, background)
         }
-        Some(RunCmd::Clean { run }) => {
+        Some(RunCmd::Clean {
+            run: None,
+            verified,
+            ..
+        }) => clean_all(&root, verified),
+        Some(RunCmd::PruneBranches { dry_run }) => prune_branches(&root, dry_run),
+        Some(RunCmd::Clean { run: Some(run), .. }) => {
             let r = Run::open(&root, &run)?;
             let saved = ops::clean(&root, &r)?;
             let meta = r.meta()?;
@@ -175,6 +252,9 @@ fn start(root: &Path, run: &Run, background: bool) -> Result<()> {
             checks.commands.len(),
             match checks.from {
                 crate::run::record::ChecksFrom::Breakdown => "breakdown",
+                crate::run::record::ChecksFrom::IntegrationCommand => {
+                    "project's integration command"
+                }
                 crate::run::record::ChecksFrom::Config => "project's test command",
             }
         ),
@@ -305,6 +385,89 @@ fn wait_feature(root: &Path, handover: &str, timeout_secs: u64, poll_ms: u64) ->
             bail!("{} is still running after {timeout_secs}s", h.manifest.id);
         }
         std::thread::sleep(std::time::Duration::from_millis(poll_ms));
+    }
+}
+
+/// `zforge run clean --all [--verified]`.
+fn clean_all(root: &Path, verified_only: bool) -> Result<()> {
+    let done = ops::clean_all(root, verified_only)?;
+    for c in &done.cleaned {
+        match &c.saved {
+            Some(commit) => println!(
+                "{} {} worktree removed; uncommitted work saved to {} as {}",
+                "✓".green(),
+                c.run,
+                c.branch,
+                &commit[..commit.len().min(12)]
+            ),
+            None => println!(
+                "{} {} worktree removed; branch {} kept",
+                "✓".green(),
+                c.run,
+                c.branch
+            ),
+        }
+    }
+    for (run, why) in &done.failed {
+        eprintln!("{} {run} not cleaned: {why}", "✗".red());
+    }
+    let freed: u64 = done.cleaned.iter().map(|c| c.bytes).sum();
+    println!(
+        "{} worktree(s) removed, {} freed{}",
+        done.cleaned.len(),
+        human_bytes(freed),
+        match done.failed.len() {
+            0 => String::new(),
+            n => format!(", {n} could not be"),
+        }
+    );
+    match done.failed.is_empty() {
+        true => Ok(()),
+        false => Err(anyhow!("{} worktree(s) not cleaned", done.failed.len())),
+    }
+}
+
+/// `zforge run prune-branches [--dry-run]`.
+fn prune_branches(root: &Path, dry_run: bool) -> Result<()> {
+    let p = ops::prune_branches(root, dry_run)?;
+    let verb = if dry_run { "would delete" } else { "deleted" };
+    for b in &p.deleted {
+        println!(
+            "{} {verb} {} ({}; runs {})",
+            "✓".green(),
+            b.branch,
+            &b.tip[..b.tip.len().min(12)],
+            b.runs.join(", ")
+        );
+    }
+    for (branch, why) in &p.kept {
+        println!("  kept {branch}: {why}");
+    }
+    println!(
+        "{} branch(es) {}, already in {}; {} kept",
+        p.deleted.len(),
+        if dry_run {
+            "would be deleted"
+        } else {
+            "deleted"
+        },
+        p.baseline,
+        p.kept.len()
+    );
+    Ok(())
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut v = n as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    match unit {
+        0 => format!("{n} B"),
+        _ => format!("{v:.1} {}", UNITS[unit]),
     }
 }
 
